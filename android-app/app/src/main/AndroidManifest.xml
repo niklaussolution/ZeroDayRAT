@@ -16,9 +16,10 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- SMS / Call log (Phase 4) — only requested if the admin enables these feature flags -->
+    <!-- SMS / Call log / Contacts (Phase 4) — only requested if the admin enables these feature flags -->
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <!-- Remote lock (Phase 6) -->
     <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />

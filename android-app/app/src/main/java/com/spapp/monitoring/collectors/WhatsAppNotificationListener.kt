@@ -12,18 +12,35 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * Listens to incoming system notifications for messaging apps (e.g. WhatsApp).
- * Captures incoming chat messages with sender name, text, and timestamp in real-time
+ * Listens to incoming and active system notifications for messaging apps (e.g. WhatsApp & WhatsApp Business).
+ * Captures chat messages with sender name, text, and timestamp in real-time
  * even when WhatsApp is running in the background.
  */
 class WhatsAppNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        try {
+            val activeNotifs = activeNotifications
+            if (activeNotifs != null) {
+                for (sbn in activeNotifs) {
+                    processNotification(sbn)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read active notifications on listener connect", e)
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
+        processNotification(sbn)
+    }
 
+    private fun processNotification(sbn: StatusBarNotification) {
         val pkg = sbn.packageName ?: return
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
@@ -31,36 +48,72 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         val extras = notification.extras ?: return
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+        val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val text = if (!bigText.isNullOrBlank()) bigText else normalText
+        val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        val postTime = if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
 
-        if (title.isNullOrBlank() || text.isNullOrBlank()) return
+        // Determine chat name: conversation title (groups) > title > fallback
+        val chatName = when {
+            !convoTitle.isNullOrBlank() -> convoTitle
+            !title.isNullOrBlank() && title != "WhatsApp" && title != "WhatsApp Business" -> title
+            else -> title ?: "WhatsApp"
+        }
 
-        // Skip non-message WhatsApp service notifications (e.g. "Checking for new messages", "WhatsApp Web is active")
-        if (text.contains("Checking for new messages", ignoreCase = true) ||
-            text.contains("WhatsApp Web is active", ignoreCase = true) ||
-            text.contains("Backup in progress", ignoreCase = true)
+        // Skip non-message service notifications
+        val checkStr = "${title.orEmpty()} ${text.orEmpty()}".lowercase()
+        if (checkStr.contains("checking for new messages") ||
+            checkStr.contains("whatsapp web is active") ||
+            checkStr.contains("backup in progress") ||
+            checkStr.contains("deleting messages")
         ) {
             return
         }
 
-        val postTime = if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+        val entries = mutableListOf<WhatsAppMessageEntry>()
 
-        scope.launch {
-            try {
-                val db = AppDatabase.getInstance(applicationContext)
-                db.whatsAppMessageDao().insertAll(
-                    listOf(
-                        WhatsAppMessageEntry(
-                            chatName = title,
-                            sender = title,
-                            messageText = text,
-                            isOutgoing = false,
-                            messageTimeEpochMs = postTime
-                        )
-                    )
+        // 1. InboxStyle / multi-message bundled notification lines
+        if (!textLines.isNullOrEmpty()) {
+            for (line in textLines) {
+                val lineStr = line?.toString()?.trim() ?: continue
+                if (lineStr.isBlank()) continue
+                val colonIdx = lineStr.indexOf(':')
+                val (sender, msg) = if (colonIdx > 0 && colonIdx < lineStr.length - 1) {
+                    val s = lineStr.substring(0, colonIdx).trim()
+                    val m = lineStr.substring(colonIdx + 1).trim()
+                    Pair(s, m)
+                } else {
+                    Pair(title ?: chatName, lineStr)
+                }
+                entries += WhatsAppMessageEntry(
+                    chatName = chatName,
+                    sender = sender,
+                    messageText = msg,
+                    isOutgoing = false,
+                    messageTimeEpochMs = postTime
                 )
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to record WhatsApp notification message", e)
+            }
+        } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
+            entries += WhatsAppMessageEntry(
+                chatName = chatName,
+                sender = title ?: chatName,
+                messageText = text,
+                isOutgoing = false,
+                messageTimeEpochMs = postTime
+            )
+        }
+
+        if (entries.isNotEmpty()) {
+            scope.launch {
+                try {
+                    val db = AppDatabase.getInstance(applicationContext)
+                    db.whatsAppMessageDao().insertAll(entries)
+                    RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to record WhatsApp notification message", e)
+                }
             }
         }
     }
