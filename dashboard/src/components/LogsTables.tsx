@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
-import type { CallLogEntry, SmsLogEntry } from "../api/types";
+import type { CallLogEntry, SmsLogEntry, WhatsAppMessage } from "../api/types";
 
 interface SmsThread {
   key: string;
@@ -18,27 +18,33 @@ const SCROLL_CLASS = "max-h-80 overflow-y-auto";
 const AUTO_REFRESH_MS = 20000; // "live update" — the device syncs in the background on its own schedule
 
 export default function LogsTables({ deviceId }: { deviceId: string }) {
-  const [tab, setTab] = useState<"calls" | "sms">("calls");
+  const [tab, setTab] = useState<"calls" | "sms" | "whatsapp">("calls");
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
   const [sms, setSms] = useState<SmsLogEntry[]>([]);
+  const [whatsapp, setWhatsapp] = useState<WhatsAppMessage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const [selectedMessage, setSelectedMessage] = useState<SmsLogEntry | null>(null);
+  const [selectedWaMessage, setSelectedWaMessage] = useState<WhatsAppMessage | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setSelectedMessage(null);
+      if (e.key === "Escape") {
+        setSelectedMessage(null);
+        setSelectedWaMessage(null);
+      }
     }
-    if (selectedMessage) {
+    if (selectedMessage || selectedWaMessage) {
       window.addEventListener("keydown", handleKeyDown);
       return () => window.removeEventListener("keydown", handleKeyDown);
     }
-  }, [selectedMessage]);
+  }, [selectedMessage, selectedWaMessage]);
 
   function handleCopy() {
-    if (selectedMessage?.body) {
-      navigator.clipboard.writeText(selectedMessage.body);
+    const text = selectedMessage?.body || selectedWaMessage?.message_text;
+    if (text) {
+      navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -46,8 +52,15 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
 
   function load() {
     setRefreshing(true);
-    Promise.all([devicesApi.callLog(deviceId), devicesApi.smsLog(deviceId)])
-      .then(([c, s]) => {
+    Promise.all([
+      devicesApi.callLog(deviceId),
+      devicesApi.smsLog(deviceId),
+      devicesApi.whatsAppMessages(deviceId).catch((err) => {
+        console.warn("WhatsApp messages fetch error in LogsTables:", err);
+        return [] as WhatsAppMessage[];
+      }),
+    ])
+      .then(([c, s, wa]) => {
         // Deduplicate SMS logs: if same direction, number, and timestamp, keep the one with body
         const uniqueSms = s.reduce<SmsLogEntry[]>((acc, current) => {
           const currentTime = new Date(current.message_at).getTime();
@@ -82,6 +95,7 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
 
         setCalls(uniqueCalls);
         setSms(uniqueSms);
+        setWhatsapp(wa || []);
       })
       .finally(() => setRefreshing(false));
   }
@@ -155,6 +169,7 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
         <div className="flex gap-4">
           <TabButton active={tab === "calls"} onClick={() => setTab("calls")} label={`Call Log (${calls.length})`} />
           <TabButton active={tab === "sms"} onClick={() => setTab("sms")} label={`SMS Log (${sms.length})`} />
+          <TabButton active={tab === "whatsapp"} onClick={() => setTab("whatsapp")} label={`WhatsApp Log (${whatsapp.length})`} />
         </div>
         <div className="flex items-center gap-3">
           {tab === "sms" && sms.length > 0 && (
@@ -448,6 +463,91 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
           </div>
         ))}
 
+      {tab === "whatsapp" &&
+        (whatsapp.length === 0 ? (
+          <div className="py-8 text-center text-xs text-gray-400 space-y-1">
+            <span className="text-2xl block">💬</span>
+            <p className="font-semibold text-gray-700">No WhatsApp messages synced yet.</p>
+            <p className="text-[11px] text-gray-400">
+              WhatsApp conversations and incoming messages will be logged here as they sync from the device.
+            </p>
+          </div>
+        ) : (
+          <div className={SCROLL_CLASS}>
+            <table className="w-full text-xs">
+              <thead className="text-gray-400 text-left sticky top-0 bg-white">
+                <tr>
+                  <th className="py-1 font-medium">Chat / Contact</th>
+                  <th className="py-1 font-medium">Sender</th>
+                  <th className="py-1 font-medium">Direction</th>
+                  <th className="py-1 font-medium">Message Preview</th>
+                  <th className="py-1 font-medium">Time</th>
+                  <th className="py-1 font-medium text-right pr-2">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {whatsapp.map((m) => (
+                  <tr key={m.id} className="hover:bg-gray-50/70 transition">
+                    <td className="py-2">
+                      <span className="font-semibold text-gray-900 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        {m.chat_name}
+                      </span>
+                    </td>
+                    <td className="py-2 text-gray-600 font-medium">
+                      {m.is_outgoing ? "Me" : m.sender || m.chat_name}
+                    </td>
+                    <td className="py-2">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                          m.is_outgoing
+                            ? "bg-blue-50 text-blue-700 border border-blue-200"
+                            : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        }`}
+                      >
+                        {m.is_outgoing ? "outgoing" : "incoming"}
+                      </span>
+                    </td>
+                    <td className="py-2 max-w-xs truncate text-gray-700">
+                      {m.media_type === "audio" && (
+                        <span className="mr-1 text-emerald-600 font-medium">🎙️ Voice Note:</span>
+                      )}
+                      {m.media_type === "image" && (
+                        <span className="mr-1 text-emerald-600 font-medium">📷 Photo:</span>
+                      )}
+                      <span>{m.message_text || "(Media / No text)"}</span>
+                    </td>
+                    <td className="py-2 text-gray-500 whitespace-nowrap">
+                      {new Date(m.message_time).toLocaleString()}
+                    </td>
+                    <td className="py-2 text-right pr-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedWaMessage(m);
+                          setCopied(false);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-accent hover:text-white hover:bg-accent border border-accent/30 rounded-md transition font-medium"
+                        title="Read message"
+                        aria-label={`Read WhatsApp message for ${m.chat_name}`}
+                      >
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path
+                            fillRule="evenodd"
+                            d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zm-4 0h-2v2h2V9z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                        <span>Read</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
       {/* Message Reader Modal */}
       {selectedMessage && (
         <div
@@ -536,6 +636,101 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
               <button
                 type="button"
                 onClick={() => setSelectedMessage(null)}
+                className="bg-primary text-white text-xs px-4 py-1.5 rounded hover:bg-primary-dark transition font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Message Reader Modal */}
+      {selectedWaMessage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+          onClick={() => setSelectedWaMessage(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl border border-gray-100 max-w-md w-full p-5 relative space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-base text-primary-dark">
+                      {selectedWaMessage.chat_name}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      Sender: {selectedWaMessage.is_outgoing ? "Me (Device)" : selectedWaMessage.sender || selectedWaMessage.chat_name}
+                    </span>
+                  </div>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                      selectedWaMessage.is_outgoing
+                        ? "bg-blue-50 text-blue-700 border border-blue-200"
+                        : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                    }`}
+                  >
+                    {selectedWaMessage.is_outgoing ? "outgoing" : "incoming"}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {new Date(selectedWaMessage.message_time).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedWaMessage(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Message Content
+              </label>
+              {selectedWaMessage.media_type && (
+                <div className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded inline-block">
+                  Attachment: {selectedWaMessage.media_type}
+                </div>
+              )}
+              {selectedWaMessage.message_text ? (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3.5 text-sm text-gray-800 whitespace-pre-wrap break-words max-h-60 overflow-y-auto leading-relaxed">
+                  {selectedWaMessage.message_text}
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+                  <div className="font-medium flex items-center gap-1.5">
+                    <span>ℹ️</span>
+                    <span>No message text recorded</span>
+                  </div>
+                  <p className="text-amber-700/90 text-[11px] leading-relaxed">
+                    This entry may be a media attachment or placeholder without message text.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t">
+              {selectedWaMessage.message_text ? (
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="text-xs text-accent hover:underline flex items-center gap-1 font-medium"
+                >
+                  {copied ? "✓ Copied to clipboard" : "📋 Copy message"}
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedWaMessage(null)}
                 className="bg-primary text-white text-xs px-4 py-1.5 rounded hover:bg-primary-dark transition font-medium"
               >
                 Close

@@ -260,5 +260,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_chat ON whatsapp_messages(device_id, chat_name, message_time DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_time ON whatsapp_messages(device_id, message_time DESC);
 
+DELETE FROM whatsapp_messages a USING whatsapp_messages b
+WHERE a.id < b.id
+  AND a.device_id = b.device_id
+  AND a.chat_name = b.chat_name
+  AND a.message_text = b.message_text
+  AND a.message_time = b.message_time
+  AND a.is_outgoing = b.is_outgoing;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
   ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);

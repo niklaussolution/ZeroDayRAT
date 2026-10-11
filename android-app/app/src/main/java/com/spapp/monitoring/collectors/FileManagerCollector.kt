@@ -129,8 +129,14 @@ class FileManagerCollector(private val context: Context) {
         if (!root.exists() || !root.isDirectory) return emptyList()
 
         val candidates = listOf(
+            File(root, "Android/media/com.whatsapp/WhatsApp/Media"),
             File(root, "Android/media/com.whatsapp/WhatsApp"),
-            File(root, "WhatsApp")
+            File(root, "Android/media/com.whatsapp"),
+            File(root, "WhatsApp/Media"),
+            File(root, "WhatsApp"),
+            File(root, "Android/media/com.whatsapp.w4b/WhatsApp Business/Media"),
+            File(root, "Android/media/com.whatsapp.w4b/WhatsApp Business"),
+            File(root, "Android/media/com.whatsapp.w4b")
         )
         val waRoot = candidates.firstOrNull { it.exists() && it.isDirectory } ?: return emptyList()
 

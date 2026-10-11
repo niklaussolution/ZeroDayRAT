@@ -620,23 +620,30 @@ router.post(
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.chatName || !e.messageText) continue;
-          const result = await client.query(
-            `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
-             RETURNING id`,
-            [
-              req.device.deviceId,
-              e.chatName,
-              e.sender || null,
-              e.messageText,
-              Boolean(e.isOutgoing),
-              e.messageTime || new Date().toISOString(),
-              e.mediaType || null,
-              e.mediaPath || null,
-            ]
+          const chatName = String(e.chatName).trim();
+          const messageText = String(e.messageText).trim();
+          const sender = e.sender ? String(e.sender).trim() : null;
+          const isOutgoing = Boolean(e.isOutgoing);
+          const messageTime = e.messageTime || new Date().toISOString();
+          const mediaType = e.mediaType || null;
+          const mediaPath = e.mediaPath || null;
+
+          const existing = await client.query(
+            `SELECT id FROM whatsapp_messages
+             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+             LIMIT 1`,
+            [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
           );
-          if (result.rows.length > 0) insertedCount++;
+
+          if (existing.rows.length === 0) {
+            const result = await client.query(
+              `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING id`,
+              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
+            );
+            if (result.rows.length > 0) insertedCount++;
+          }
         }
         await client.query("COMMIT");
         await touchLastSeen(req.device.deviceId);

