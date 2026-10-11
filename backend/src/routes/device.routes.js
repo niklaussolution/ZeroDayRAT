@@ -478,15 +478,22 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     if (!device) return res.status(404).json({ error: "Device not found" });
 
     const chatName = req.query.chat;
+    const days = req.query.days ? parseInt(req.query.days, 10) : null;
     let query = "SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path FROM whatsapp_messages WHERE device_id = $1";
     const params = [req.params.id];
+    let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      query += " AND (chat_name = $2 OR LOWER(TRIM(chat_name)) = LOWER($2) OR chat_name ILIKE $3) ORDER BY message_time ASC LIMIT 500";
+      query += ` AND (chat_name = $${idx} OR LOWER(TRIM(chat_name)) = LOWER($${idx}) OR chat_name ILIKE $${idx + 1})`;
       params.push(cleanChat, "%" + cleanChat + "%");
-    } else {
-      query += " ORDER BY message_time DESC LIMIT 500";
+      idx += 2;
     }
+    if (days && !isNaN(days) && days > 0) {
+      query += ` AND message_time >= (now() - ($${idx} || ' days')::interval)`;
+      params.push(days);
+      idx += 1;
+    }
+    query += " ORDER BY message_time ASC LIMIT 500";
 
     const result = await pool.query(query, params);
     res.json(result.rows);

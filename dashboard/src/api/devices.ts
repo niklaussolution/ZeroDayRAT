@@ -109,10 +109,13 @@ export const devicesApi = {
   whatsAppChats: (id: string) =>
     apiClient.get<WhatsAppChatSummary[]>(`/api/devices/${id}/whatsapp/chats`).then((r) => r.data),
 
-  whatsAppMessages: (id: string, chatName?: string) =>
+  whatsAppMessages: (id: string, chatName?: string, days?: number) =>
     apiClient
       .get<WhatsAppMessage[]>(`/api/devices/${id}/whatsapp/messages`, {
-        params: chatName ? { chat: chatName } : {},
+        params: {
+          ...(chatName ? { chat: chatName } : {}),
+          ...(days ? { days } : {}),
+        },
       })
       .then((r) => r.data),
 };

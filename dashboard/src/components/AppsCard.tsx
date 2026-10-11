@@ -154,12 +154,12 @@ function formatMessageDateTime(dateString: string): string {
   }
 }
 
-function isWithinLast5Days(dateString: string, refDate: Date = new Date()): boolean {
+function isWithinLast2Days(dateString: string, refDate: Date = new Date()): boolean {
   try {
     const time = new Date(dateString).getTime();
     if (isNaN(time)) return true;
-    const fiveDaysAgo = refDate.getTime() - 5 * 24 * 60 * 60 * 1000;
-    return time >= fiveDaysAgo;
+    const twoDaysAgo = refDate.getTime() - 2 * 24 * 60 * 60 * 1000;
+    return time >= twoDaysAgo;
   } catch {
     return true;
   }
@@ -228,7 +228,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Navigation / App State
   const [selectedApp, setSelectedApp] = useState<AvailableAppId>("whatsapp");
   const [activeView, setActiveView] = useState<"chats" | "files">("chats");
-  const [timeFilter, setTimeFilter] = useState<"5days" | "all">("5days");
+  const [timeFilter, setTimeFilter] = useState<"2days" | "all">("2days");
   const [chatCategory, setChatCategory] = useState<"chats" | "channels">("chats");
   const [dashboardLoginTime] = useState<Date>(() => new Date());
 
@@ -406,11 +406,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       if (isInitial) setMessagesLoading(true);
 
       devicesApi
-        .whatsAppMessages(deviceId, currentChat.chatName)
+        .whatsAppMessages(deviceId, currentChat.chatName, timeFilter === "2days" ? 2 : undefined)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
           const list = msgs || [];
-          const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast5Days(m.message_time, dashboardLoginTime));
+          const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast2Days(m.message_time, dashboardLoginTime));
           const effective = filtered.length > 0 ? filtered : list;
           const unified: UnifiedChatMessage[] = effective.map((m) => ({
             id: m.id,
@@ -1034,14 +1034,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
                           <button
                             type="button"
-                            onClick={() => setTimeFilter("5days")}
+                            onClick={() => setTimeFilter("2days")}
                             className={`px-2 py-0.5 rounded transition ${
-                              timeFilter === "5days"
+                              timeFilter === "2days"
                                 ? "bg-white text-gray-900 shadow-2xs font-semibold"
                                 : "text-gray-500 hover:text-gray-900"
                             }`}
                           >
-                            Last 5 Days
+                            Last 2 Days
                           </button>
                           <button
                             type="button"
@@ -1061,13 +1061,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </div>
                     </div>
 
-                    {/* 5-Day Real Activity & User Login Time Banner */}
+                    {/* 2-Day Real Activity & User Login Time Banner */}
                     <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm">📅</span>
                         <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
                           <span className="font-bold text-emerald-900 text-[11px]">
-                            Last 5 Days Chat Contents
+                            Last 2 Days WhatsApp Chat Contents
                           </span>
                           <span className="hidden sm:inline text-emerald-300">•</span>
                           <span className="text-[11px] text-emerald-800 truncate">
@@ -1096,16 +1096,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         <div className="text-center py-14 text-xs text-gray-400 space-y-2">
                           <span className="text-3xl block">💬</span>
                           <p className="font-semibold text-gray-700">
-                            {selectedChatSummary.totalMessages > 0 && timeFilter === "5days"
-                              ? "No messages exchanged in the last 5 days"
+                            {selectedChatSummary.totalMessages > 0 && timeFilter === "2days"
+                              ? "No messages exchanged in the last 2 days"
                               : "No messages recorded yet for this contact"}
                           </p>
                           <p className="text-[11px] text-gray-400 max-w-sm mx-auto">
                             {selectedChatSummary.totalMessages > 0
-                              ? "Older messages exist outside the 5-day window."
+                              ? "Older messages exist outside the 2-day window."
                               : "Incoming notifications and conversation messages will sync here automatically when received on the device."}
                           </p>
-                          {selectedChatSummary.totalMessages > 0 && timeFilter === "5days" && (
+                          {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
                             <button
                               type="button"
                               onClick={() => setTimeFilter("all")}
