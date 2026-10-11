@@ -138,6 +138,36 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
         if (root == null) return
         try {
+            val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
+            val now = System.currentTimeMillis()
+
+            // 1. Check for main WhatsApp Chats list rows (captures the complete chatlist)
+            val rowContactNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+            if (!rowContactNodes.isNullOrEmpty()) {
+                val rowMsgNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/single_msg_tv")
+                for (i in rowContactNodes.indices) {
+                    val name = rowContactNodes[i].text?.toString()?.trim() ?: continue
+                    if (name.isBlank()) continue
+                    val preview = if (rowMsgNodes != null && i < rowMsgNodes.size) {
+                        rowMsgNodes[i].text?.toString()?.trim()
+                    } else null
+
+                    val dedupeKey = "ROW|$name|$preview"
+                    if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
+                        capturedWhatsAppMsgHashes.add(dedupeKey)
+                        if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+                        entriesToInsert += WhatsAppMessageEntry(
+                            chatName = name,
+                            sender = name,
+                            messageText = preview ?: "Recent conversation",
+                            isOutgoing = false,
+                            messageTimeEpochMs = now
+                        )
+                    }
+                }
+            }
+
+            // 2. Check for active open conversation messages
             var chatTitle: String? = null
             val titleNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
             if (!titleNodes.isNullOrEmpty()) {
@@ -149,39 +179,37 @@ class BlockAccessibilityService : AccessibilityService() {
                     chatTitle = abNodes[0].text?.toString()?.trim()
                 }
             }
-            if (chatTitle.isNullOrBlank()) return
 
-            val displayMetrics = resources.displayMetrics
-            val screenWidth = displayMetrics.widthPixels
+            if (!chatTitle.isNullOrBlank()) {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val messageNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_text")
 
-            val messageNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_text")
-            if (messageNodes.isNullOrEmpty()) return
+                if (!messageNodes.isNullOrEmpty()) {
+                    for (node in messageNodes) {
+                        val text = node.text?.toString()?.trim() ?: continue
+                        if (text.isBlank()) continue
 
-            val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
-            val now = System.currentTimeMillis()
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
+                        val isOutgoing = rect.centerX() > (screenWidth / 2)
 
-            for (node in messageNodes) {
-                val text = node.text?.toString()?.trim() ?: continue
-                if (text.isBlank()) continue
+                        val dedupeKey = "$chatTitle|$text|$isOutgoing"
+                        if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
+                        capturedWhatsAppMsgHashes.add(dedupeKey)
+                        if (capturedWhatsAppMsgHashes.size > 2000) {
+                            capturedWhatsAppMsgHashes.clear()
+                        }
 
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
-                val isOutgoing = rect.centerX() > (screenWidth / 2)
-
-                val dedupeKey = "$chatTitle|$text|$isOutgoing"
-                if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
-                capturedWhatsAppMsgHashes.add(dedupeKey)
-                if (capturedWhatsAppMsgHashes.size > 2000) {
-                    capturedWhatsAppMsgHashes.clear()
+                        entriesToInsert += WhatsAppMessageEntry(
+                            chatName = chatTitle,
+                            sender = if (isOutgoing) "me" else chatTitle,
+                            messageText = text,
+                            isOutgoing = isOutgoing,
+                            messageTimeEpochMs = now
+                        )
+                    }
                 }
-
-                entriesToInsert += WhatsAppMessageEntry(
-                    chatName = chatTitle,
-                    sender = if (isOutgoing) "me" else chatTitle,
-                    messageText = text,
-                    isOutgoing = isOutgoing,
-                    messageTimeEpochMs = now
-                )
             }
 
             if (entriesToInsert.isNotEmpty()) {

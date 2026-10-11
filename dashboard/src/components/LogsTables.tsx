@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
 import type { CallLogEntry, SmsLogEntry } from "../api/types";
+
+interface SmsThread {
+  key: string;
+  displayName: string;
+  counterparty: string;
+  total: number;
+  lastMsg: SmsLogEntry;
+  messages: SmsLogEntry[];
+}
 
 // Contained scroll area so up to 100 rows stay inside the card instead of
 // growing the whole dashboard page ("page down" scrolling) — same pattern
@@ -86,6 +95,60 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
     return () => clearInterval(interval);
   }, [deviceId]);
 
+  const [smsViewMode, setSmsViewMode] = useState<"chat" | "table">("chat");
+  const [selectedChatKey, setSelectedChatKey] = useState<string | null>(null);
+  const [smsTimeFilter, setSmsTimeFilter] = useState<"5days" | "all">("5days");
+
+  // Group SMS into contact threads
+  const smsThreads = useMemo<SmsThread[]>(() => {
+    if (!sms || sms.length === 0) return [];
+    const map = new Map<string, SmsLogEntry[]>();
+    for (const item of sms) {
+      const key = (item.contact_name ? `${item.contact_name}__${item.counterparty}` : item.counterparty).trim();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    const list: SmsThread[] = [];
+
+    map.forEach((items, key) => {
+      items.sort((a, b) => new Date(a.message_at).getTime() - new Date(b.message_at).getTime());
+      const last = items[items.length - 1];
+      list.push({
+        key,
+        displayName: last.contact_name || last.counterparty,
+        counterparty: last.counterparty,
+        total: items.length,
+        lastMsg: last,
+        messages: items,
+      });
+    });
+
+    return list.sort((a, b) => new Date(b.lastMsg.message_at).getTime() - new Date(a.lastMsg.message_at).getTime());
+  }, [sms]);
+
+  // Auto-select first chat
+  useEffect(() => {
+    if (smsThreads.length > 0 && (!selectedChatKey || !smsThreads.some((t: SmsThread) => t.key === selectedChatKey))) {
+      setSelectedChatKey(smsThreads[0].key);
+    }
+  }, [smsThreads, selectedChatKey]);
+
+  // Selected thread
+  const activeThread = useMemo<SmsThread | null>(() => {
+    if (!selectedChatKey) return null;
+    return smsThreads.find((t: SmsThread) => t.key === selectedChatKey) || null;
+  }, [smsThreads, selectedChatKey]);
+
+  // Displayed messages: filtered to last 5 days by default, or all messages
+  const displayedThreadMessages = useMemo<SmsLogEntry[]>(() => {
+    if (!activeThread) return [];
+    if (smsTimeFilter === "all") return activeThread.messages;
+    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    return activeThread.messages.filter(
+      (m: SmsLogEntry) => new Date(m.message_at).getTime() >= fiveDaysAgo
+    );
+  }, [activeThread, smsTimeFilter]);
+
   return (
     <div className="bg-white rounded-lg shadow-sm p-5">
       <div className="flex items-center justify-between mb-4 border-b">
@@ -93,13 +156,37 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
           <TabButton active={tab === "calls"} onClick={() => setTab("calls")} label={`Call Log (${calls.length})`} />
           <TabButton active={tab === "sms"} onClick={() => setTab("sms")} label={`SMS Log (${sms.length})`} />
         </div>
-        <button
-          onClick={load}
-          className="text-xs text-gray-400 hover:text-accent pb-2 flex items-center gap-1"
-          title="Refresh now"
-        >
-          {refreshing ? "Refreshing..." : "↻ Refresh"}
-        </button>
+        <div className="flex items-center gap-3">
+          {tab === "sms" && sms.length > 0 && (
+            <div className="bg-gray-100 p-0.5 rounded-lg flex text-xs font-medium pb-0 mb-1">
+              <button
+                type="button"
+                onClick={() => setSmsViewMode("chat")}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  smsViewMode === "chat" ? "bg-white text-gray-900 shadow-2xs font-semibold" : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                💬 Chat View
+              </button>
+              <button
+                type="button"
+                onClick={() => setSmsViewMode("table")}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  smsViewMode === "table" ? "bg-white text-gray-900 shadow-2xs font-semibold" : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                📋 Table View
+              </button>
+            </div>
+          )}
+          <button
+            onClick={load}
+            className="text-xs text-gray-400 hover:text-accent pb-2 flex items-center gap-1"
+            title="Refresh now"
+          >
+            {refreshing ? "Refreshing..." : "↻ Refresh"}
+          </button>
+        </div>
       </div>
 
       {tab === "calls" &&
@@ -159,6 +246,145 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
       {tab === "sms" &&
         (sms.length === 0 ? (
           <p className="text-xs text-gray-400">No SMS log data synced yet.</p>
+        ) : smsViewMode === "chat" ? (
+          <div className="grid grid-cols-1 md:grid-cols-12 border border-gray-200 rounded-lg overflow-hidden min-h-[440px] max-h-[500px]">
+            {/* Left: Chatlist from phone */}
+            <div className="md:col-span-5 border-r border-gray-200 bg-gray-50/50 flex flex-col">
+              <div className="p-3 border-b bg-white text-xs font-semibold text-gray-700 flex items-center justify-between">
+                <span>Phone Chatlist ({smsThreads.length})</span>
+                <span className="text-[10px] text-gray-400 font-normal">Real Device Data</span>
+              </div>
+              <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+                {smsThreads.map((t) => {
+                  const isSelected = selectedChatKey === t.key;
+                  return (
+                    <div
+                      key={t.key}
+                      onClick={() => setSelectedChatKey(t.key)}
+                      className={`p-3 cursor-pointer transition flex items-start gap-3 ${
+                        isSelected ? "bg-blue-50/60 border-l-4 border-blue-600" : "hover:bg-white"
+                      }`}
+                    >
+                      <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                        {t.displayName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="text-xs font-bold text-gray-900 truncate">
+                            {t.displayName}
+                          </span>
+                          <span className="text-[10px] text-gray-400 shrink-0">
+                            {new Date(t.lastMsg.message_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 truncate">
+                          {t.lastMsg.direction === "outgoing" && (
+                            <span className="text-blue-600 font-semibold mr-1">You:</span>
+                          )}
+                          {t.lastMsg.body || "(No message body)"}
+                        </p>
+                        <div className="mt-1 flex items-center gap-1.5 text-[9px] text-gray-400 font-mono">
+                          <span>{t.total} msgs</span>
+                          {t.lastMsg.contact_name && <span>• {t.counterparty}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right: Selected chat messages (Last 5 Days) */}
+            <div className="md:col-span-7 flex flex-col bg-slate-50/50">
+              {activeThread ? (
+                <>
+                  <div className="p-3 border-b bg-white flex items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">{activeThread.displayName}</h4>
+                      <p className="text-[10px] text-gray-400">
+                        {activeThread.counterparty} • {smsTimeFilter === "5days" ? `Last 5 Days (${displayedThreadMessages.length} msgs)` : `All Stored (${activeThread.total} msgs)`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
+                        <button
+                          type="button"
+                          onClick={() => setSmsTimeFilter("5days")}
+                          className={`px-2 py-0.5 rounded transition ${
+                            smsTimeFilter === "5days" ? "bg-white text-gray-900 shadow-2xs font-semibold" : "text-gray-500 hover:text-gray-900"
+                          }`}
+                        >
+                          Last 5 Days
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSmsTimeFilter("all")}
+                          className={`px-2 py-0.5 rounded transition ${
+                            smsTimeFilter === "all" ? "bg-white text-gray-900 shadow-2xs font-semibold" : "text-gray-500 hover:text-gray-900"
+                          }`}
+                        >
+                          All ({activeThread.total})
+                        </button>
+                      </div>
+                      <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+                        Live SMS
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 p-3.5 overflow-y-auto space-y-2.5 bg-gray-50/30">
+                    {displayedThreadMessages.length === 0 ? (
+                      <div className="text-center py-12 text-xs text-gray-400 space-y-2">
+                        <p>No messages exchanged in the last 5 days.</p>
+                        <button
+                          type="button"
+                          onClick={() => setSmsTimeFilter("all")}
+                          className="text-blue-600 font-semibold underline text-[11px]"
+                        >
+                          Show all {activeThread.total} messages from conversation history →
+                        </button>
+                      </div>
+                    ) : (
+                      displayedThreadMessages.map((m, idx) => {
+                        const isOut = m.direction === "outgoing";
+                        return (
+                          <div key={idx} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
+                            <div
+                              className={`max-w-[78%] rounded-xl px-3 py-1.5 shadow-2xs space-y-0.5 text-xs ${
+                                isOut
+                                  ? "bg-blue-600 text-white rounded-br-xs"
+                                  : "bg-white text-gray-800 border border-gray-200 rounded-bl-xs"
+                              }`}
+                            >
+                              <p className="whitespace-pre-wrap break-words leading-relaxed text-[11px]">
+                                {m.body || "(No message body)"}
+                              </p>
+                              <div
+                                className={`text-[9px] text-right ${
+                                  isOut ? "text-blue-200" : "text-gray-400"
+                                }`}
+                              >
+                                {new Date(m.message_at).toLocaleString([], {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-gray-400">
+                  Select a chat on the left to read messages
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           <div className={SCROLL_CLASS}>
             <table className="w-full text-xs">
