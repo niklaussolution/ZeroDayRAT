@@ -2,6 +2,7 @@ const express = require("express");
 const { body, validationResult } = require("express-validator");
 const pool = require("../db/pool");
 const { requireDeviceAuth } = require("../middleware/deviceAuth.middleware");
+const { emitDeviceEvent } = require("../events/deviceEvents");
 
 const router = express.Router();
 router.use(requireDeviceAuth);
@@ -647,6 +648,14 @@ router.post(
         }
         await client.query("COMMIT");
         await touchLastSeen(req.device.deviceId);
+        if (insertedCount > 0) {
+          emitDeviceEvent(req.device.deviceId, {
+            type: "whatsapp_message",
+            chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
+            count: insertedCount,
+            timestamp: new Date().toISOString(),
+          });
+        }
         res.status(201).json({ inserted: insertedCount });
       } catch (err) {
         await client.query("ROLLBACK");

