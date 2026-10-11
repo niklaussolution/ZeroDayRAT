@@ -9,6 +9,15 @@ router.use(requireAuth);
 
 const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream"];
 
+async function checkDeviceAccess(deviceId, auth) {
+  if (auth.role === "super_admin") {
+    const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1", [deviceId]);
+    return res.rows[0] || null;
+  }
+  const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
+  return res.rows[0] || null;
+}
+
 /**
  * POST /api/devices/:id/commands
  * (Admin) Queues a remote command for a device — e.g. the dashboard's
@@ -26,11 +35,8 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
 
     try {
-      const device = await pool.query(
-        "SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2",
-        [req.params.id, req.auth.tenantId]
-      );
-      if (device.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+      const device = await checkDeviceAccess(req.params.id, req.auth);
+      if (!device) return res.status(404).json({ error: "Device not found" });
 
       const result = await pool.query(
         `INSERT INTO remote_commands (device_id, command_type, payload, status)
@@ -39,7 +45,7 @@ router.post(
         [req.params.id, req.body.commandType, req.body.payload || null]
       );
 
-      const pushResult = await sendSyncNudge(device.rows[0].fcm_token, {
+      const pushResult = await sendSyncNudge(device.fcm_token, {
         type: "command",
         commandType: req.body.commandType,
         commandId: result.rows[0].id,
@@ -59,11 +65,8 @@ router.post(
  */
 router.get("/:id/commands/:commandId", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
       "SELECT id, command_type, status, result, created_at, completed_at FROM remote_commands WHERE id = $1 AND device_id = $2",
@@ -83,11 +86,8 @@ router.get("/:id/commands/:commandId", async (req, res, next) => {
  */
 router.get("/:id/commands", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
       `SELECT id, command_type, status, created_at, completed_at FROM remote_commands
@@ -106,11 +106,8 @@ router.get("/:id/commands", async (req, res, next) => {
  */
 router.get("/:id/location-history", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     const result = await pool.query(
@@ -140,11 +137,8 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
 
     try {
-      const ownsDevice = await pool.query(
-        "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-        [req.params.id, req.auth.tenantId]
-      );
-      if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+      const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+      if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
       const result = await pool.query(
         `INSERT INTO geofences (device_id, name, latitude, longitude, radius_m)
@@ -160,11 +154,8 @@ router.post(
 
 router.get("/:id/geofences", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
       "SELECT * FROM geofences WHERE device_id = $1 ORDER BY created_at DESC",
@@ -178,11 +169,8 @@ router.get("/:id/geofences", async (req, res, next) => {
 
 router.delete("/:id/geofences/:geofenceId", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
       "DELETE FROM geofences WHERE id = $1 AND device_id = $2 RETURNING id",
@@ -201,11 +189,8 @@ router.delete("/:id/geofences/:geofenceId", async (req, res, next) => {
  */
 router.get("/:id/alerts", async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) return res.status(404).json({ error: "Device not found" });
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
       "SELECT id, alert_type, message, metadata, is_read, created_at FROM alerts WHERE device_id = $1 ORDER BY created_at DESC LIMIT 50",

@@ -27,11 +27,22 @@ function requireAuth(req, res, next) {
  * rather than through any registration endpoint — there is no public way to
  * create one over HTTP.
  */
-function requireSuperAdmin(req, res, next) {
-  if (!req.auth || req.auth.role !== "super_admin") {
-    return res.status(403).json({ error: "Super admin access required" });
+async function requireSuperAdmin(req, res, next) {
+  if (req.auth && req.auth.role === "super_admin") {
+    return next();
   }
-  next();
+  if (req.auth && req.auth.userId) {
+    try {
+      const firestore = require("../services/firestore.service");
+      const user = await firestore.getUserById(req.auth.userId);
+      if (user && user.role === "super_admin") {
+        req.auth.role = "super_admin";
+        req.auth.tenantId = null;
+        return next();
+      }
+    } catch (_) {}
+  }
+  return res.status(403).json({ error: "Super admin access required" });
 }
 
 module.exports = { requireAuth, requireSuperAdmin };

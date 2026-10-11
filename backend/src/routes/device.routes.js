@@ -128,11 +128,8 @@ router.get("/:id", requireAuth, async (req, res, next) => {
  */
 router.patch("/:id/feature-flags", requireAuth, async (req, res, next) => {
   try {
-    const ownsDevice = await pool.query(
-      "SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
-    if (ownsDevice.rows.length === 0) {
+    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
+    if (!ownsDevice) {
       return res.status(404).json({ error: "Device not found" });
     }
 
@@ -153,7 +150,7 @@ router.patch("/:id/feature-flags", requireAuth, async (req, res, next) => {
       values
     );
 
-    const push = await sendSyncNudge(ownsDevice.rows[0].fcm_token);
+    const push = await sendSyncNudge(ownsDevice.fcm_token);
     res.json({ ...result.rows[0], push });
   } catch (err) {
     next(err);
@@ -172,11 +169,14 @@ router.patch("/:id/feature-flags", requireAuth, async (req, res, next) => {
  */
 router.post("/:id/deactivate", requireAuth, async (req, res, next) => {
   try {
+    const access = await checkDeviceAccess(req.params.id, req.auth);
+    if (!access) return res.status(404).json({ error: "Device not found" });
+
     const result = await pool.query(
       `UPDATE devices SET status = 'revoked', updated_at = now()
-       WHERE id = $1 AND tenant_id = $2
+       WHERE id = $1
        RETURNING id, device_label, device_token, status`,
-      [req.params.id, req.auth.tenantId]
+      [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Device not found" });
     res.json(result.rows[0]);
@@ -202,19 +202,16 @@ router.post("/:id/deactivate", requireAuth, async (req, res, next) => {
  */
 router.delete("/:id", requireAuth, async (req, res, next) => {
   try {
-    const existing = await pool.query(
-      "SELECT status FROM devices WHERE id = $1 AND tenant_id = $2",
-      [req.params.id, req.auth.tenantId]
-    );
+    const access = await checkDeviceAccess(req.params.id, req.auth);
+    if (!access) return res.status(404).json({ error: "Device not found" });
+
+    const existing = await pool.query("SELECT status FROM devices WHERE id = $1", [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: "Device not found" });
     if (existing.rows[0].status !== "revoked") {
       return res.status(400).json({ error: "Deactivate this device before deleting it permanently" });
     }
 
-    await pool.query("DELETE FROM devices WHERE id = $1 AND tenant_id = $2", [
-      req.params.id,
-      req.auth.tenantId,
-    ]);
+    await pool.query("DELETE FROM devices WHERE id = $1", [req.params.id]);
     res.status(204).send();
   } catch (err) {
     next(err);
