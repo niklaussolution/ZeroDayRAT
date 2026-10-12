@@ -616,14 +616,6 @@ class SyncRunner(private val context: Context) {
     }
 
     private suspend fun syncWhatsAppMessages(bearer: String, db: AppDatabase) {
-        // Collect and sync real WhatsApp & device contacts to populate the complete chatlist
-        try {
-            val contacts = com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
-            if (contacts.isNotEmpty()) {
-                db.whatsAppMessageDao().insertAll(contacts)
-            }
-        } catch (_: Exception) {}
-
         val unsynced = db.whatsAppMessageDao().getUnsynced()
         if (unsynced.isEmpty()) return
 

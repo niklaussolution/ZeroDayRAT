@@ -460,6 +460,14 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
        FROM whatsapp_messages
        WHERE device_id = $1
          AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
+         AND message_text IS NOT NULL
+         AND message_text NOT ILIKE '%@s.whatsapp.net'
+         AND message_text NOT ILIKE '%@g.us'
+         AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
+         AND message_text !~ '^\+?[0-9\s-]{7,25}$'
+         AND message_text !~* '^Message \+?[0-9\s-]+$'
+         AND message_text !~ '^[0-9*#]+$'
+         AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'
        GROUP BY chat_name
        ORDER BY last_message_at DESC`,
       [req.params.id]
@@ -474,7 +482,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
 /**
  * GET /api/devices/:id/whatsapp/messages
  * Query param ?chat=... fetches conversation history for that WhatsApp chat.
- * Excludes SMS logs completely.
+ * Excludes SMS logs and contact dumps completely.
  */
 router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
   try {
@@ -483,7 +491,17 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
     const chatName = req.query.chat;
     const days = req.query.days ? parseInt(req.query.days, 10) : null;
-    let query = "SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path FROM whatsapp_messages WHERE device_id = $1";
+    let query = `SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path
+                 FROM whatsapp_messages
+                 WHERE device_id = $1
+                   AND message_text IS NOT NULL
+                   AND message_text NOT ILIKE '%@s.whatsapp.net'
+                   AND message_text NOT ILIKE '%@g.us'
+                   AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
+                   AND message_text !~ '^\+?[0-9\s-]{7,25}$'
+                   AND message_text !~* '^Message \+?[0-9\s-]+$'
+                   AND message_text !~ '^[0-9*#]+$'
+                   AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
