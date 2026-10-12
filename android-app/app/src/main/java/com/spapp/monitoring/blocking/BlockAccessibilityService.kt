@@ -91,25 +91,40 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val eventType = event.eventType
         val packageName = event.packageName?.toString() ?: return
         if (packageName == applicationContext.packageName) return // never block ourselves
 
-        if (packageName in browserPackages) {
-            recordUrlIfEnabled(event, rootInActiveWindow)
-            checkWebsiteRules()
-            startBrowserPolling()
-        } else {
-            stopBrowserPolling()
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (packageName in browserPackages) {
+                recordUrlIfEnabled(event, rootInActiveWindow)
+                checkWebsiteRules()
+                startBrowserPolling()
+            } else {
+                stopBrowserPolling()
+            }
+
+            if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
+                startWhatsAppPolling()
+            } else {
+                stopWhatsAppPolling()
+            }
+
+            checkAppRule(packageName)
         }
 
+        // Real-time WhatsApp capture:
+        // Trigger immediately when user taps (e.g. clicks Send button), when messages appear on screen,
+        // when scrolling through chats/conversation, or when window state changes
         if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
-            startWhatsAppPolling()
-        } else {
-            stopWhatsAppPolling()
+            if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+                eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                val nodeToInspect = rootInActiveWindow ?: event.source
+                recordWhatsAppChatIfForeground(nodeToInspect)
+            }
         }
-
-        checkAppRule(packageName)
     }
 
     /**
@@ -136,7 +151,7 @@ class BlockAccessibilityService : AccessibilityService() {
         whatsAppPollRunnable = null
     }
 
-    private fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
+    fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
         if (root == null) return
         try {
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
@@ -372,11 +387,14 @@ class BlockAccessibilityService : AccessibilityService() {
                     val textList = mutableListOf<AccessibilityNodeInfo>()
                     fun collectMessageTexts(node: AccessibilityNodeInfo?) {
                         if (node == null) return
+                        if (node.isEditable || node.className?.toString()?.contains("EditText") == true) return
                         val t = node.text?.toString()?.trim()
                         val rect = Rect()
                         node.getBoundsInScreen(rect)
-                        if (!t.isNullOrBlank() && !isTimeOrDate(t) && !isSystemLabel(t) && rect.top > 200 && rect.bottom < (displayMetrics.heightPixels - 120)) {
-                            if (t != chatTitle && !t.contains("end-to-end encrypted")) {
+                        if (!t.isNullOrBlank() && !isTimeOrDate(t) && !isSystemLabel(t) && rect.top > 120 && rect.bottom <= displayMetrics.heightPixels) {
+                            if (t != chatTitle && !t.contains("end-to-end encrypted") &&
+                                !t.equals("Type a message", ignoreCase = true) &&
+                                !t.equals("Message", ignoreCase = true)) {
                                 textList.add(node)
                             }
                         }
@@ -392,15 +410,17 @@ class BlockAccessibilityService : AccessibilityService() {
 
                 if (!messageNodes.isNullOrEmpty()) {
                     for (node in messageNodes) {
+                        if (node.isEditable || node.className?.toString()?.contains("EditText") == true) continue
                         val text = node.text?.toString()?.trim() ?: continue
                         if (text.isBlank() || isTimeOrDate(text) || isSystemLabel(text)) continue
+                        if (text.equals("Type a message", ignoreCase = true) || text.equals("Message", ignoreCase = true)) continue
 
                         val rect = Rect()
                         node.getBoundsInScreen(rect)
                         val isOutgoing = rect.centerX() > (screenWidth / 2)
 
-                        // Associate real bubble timestamp from parent/sibling nodes
-                        var bubbleTimeMs = now
+                        // Associate real bubble timestamp from parent/sibling or grandparent nodes
+                        var bubbleTimeMs = (now / 60_000) * 60_000
                         try {
                             val parent = node.parent
                             if (parent != null) {
@@ -408,6 +428,12 @@ class BlockAccessibilityService : AccessibilityService() {
                                 val timeText = siblingTexts.firstOrNull { isTimeOrDate(it) }
                                 if (timeText != null) {
                                     bubbleTimeMs = parseBubbleTime(timeText)
+                                } else {
+                                    val grandTexts = collectTexts(parent.parent)
+                                    val grandTime = grandTexts.firstOrNull { isTimeOrDate(it) }
+                                    if (grandTime != null) {
+                                        bubbleTimeMs = parseBubbleTime(grandTime)
+                                    }
                                 }
                             }
                         } catch (_: Exception) {}

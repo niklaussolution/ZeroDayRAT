@@ -22,6 +22,16 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        instance = this
+        processAllActiveNotifications()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (instance == this) instance = null
+    }
+
+    fun processAllActiveNotifications() {
         try {
             val activeNotifs = activeNotifications
             if (activeNotifs != null) {
@@ -30,9 +40,10 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to read active notifications on listener connect", e)
+            Log.e(TAG, "Failed to read active notifications", e)
         }
     }
+
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
@@ -148,5 +159,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "WhatsAppNotification"
+        @Volatile
+        var instance: WhatsAppNotificationListener? = null
+            private set
     }
 }

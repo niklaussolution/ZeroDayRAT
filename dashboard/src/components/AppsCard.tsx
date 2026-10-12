@@ -477,7 +477,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const whatsappChatSummariesRef = useRef(whatsappChatSummaries);
   whatsappChatSummariesRef.current = whatsappChatSummaries;
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!selectedChatId) {
@@ -572,10 +571,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       fetchCurrentChatRef.current = null;
     };
   }, [selectedChatId, deviceId, timeFilter, dashboardLoginTime]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeThreadMessages.length, selectedChatId]);
 
   // Grouped conversation messages by day (Today, Yesterday, etc.)
   const groupedMessages = useMemo(() => {
@@ -1368,7 +1363,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           </div>
                         ))
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
                   </>
                 ) : (

