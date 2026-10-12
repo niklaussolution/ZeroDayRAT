@@ -141,6 +141,44 @@ class BlockAccessibilityService : AccessibilityService() {
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
             val now = System.currentTimeMillis()
 
+            fun collectTexts(node: AccessibilityNodeInfo?): List<String> {
+                if (node == null) return emptyList()
+                val list = mutableListOf<String>()
+                fun walk(n: AccessibilityNodeInfo?) {
+                    if (n == null) return
+                    val t = n.text?.toString()?.trim()
+                    if (!t.isNullOrBlank()) {
+                        list.add(t)
+                    }
+                    for (i in 0 until n.childCount) {
+                        walk(n.getChild(i))
+                    }
+                }
+                walk(node)
+                return list
+            }
+
+            fun isTimeOrDate(s: String): Boolean {
+                val trimmed = s.trim()
+                return trimmed.matches(Regex("^[0-9]{1,2}:[0-9]{2}(\\s*[AaPpMm]{2})?$")) ||
+                       trimmed.equals("yesterday", ignoreCase = true) ||
+                       trimmed.matches(Regex("^[0-9]{1,2}[/.-][0-9]{1,2}([/.-][0-9]{2,4})?$")) ||
+                       trimmed in setOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+            }
+
+            fun isSystemLabel(s: String): Boolean {
+                val trimmed = s.trim().lowercase()
+                return trimmed in setOf("whatsapp", "whatsapp business", "chats", "updates", "calls", "communities", "settings", "search", "archived", "unread", "groups", "all", "type a message", "message", "status", "delivered", "read")
+            }
+
+            fun isBadge(s: String): Boolean {
+                val trimmed = s.trim()
+                return trimmed.matches(Regex("^[0-9]+$")) && (trimmed.toIntOrNull() ?: 0) in 1..999
+            }
+
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+
             // 1. Check for WhatsApp Chats list rows across standard and business IDs
             val rowIdCandidates = listOf(
                 "com.whatsapp:id/conversations_row_contact_name",
@@ -181,7 +219,7 @@ class BlockAccessibilityService : AccessibilityService() {
             if (!rowContactNodes.isNullOrEmpty()) {
                 for (i in rowContactNodes.indices) {
                     val name = rowContactNodes[i].text?.toString()?.trim() ?: continue
-                    if (name.isBlank() || name == "Chats" || name == "Updates" || name == "Calls") continue
+                    if (name.isBlank() || isSystemLabel(name)) continue
                     val preview = if (rowMsgNodes != null && i < rowMsgNodes.size) {
                         rowMsgNodes[i].text?.toString()?.trim()
                     } else null
@@ -197,6 +235,50 @@ class BlockAccessibilityService : AccessibilityService() {
                             isOutgoing = false,
                             messageTimeEpochMs = now
                         )
+                    }
+                }
+            } else {
+                // Fallback: traverse node tree to find conversation rows when view IDs are obfuscated
+                val candidateRows = mutableListOf<AccessibilityNodeInfo>()
+                fun findChatRows(node: AccessibilityNodeInfo?) {
+                    if (node == null) return
+                    val count = node.childCount
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    val w = rect.width()
+                    val h = rect.height()
+                    if ((node.isClickable || count in 1..10) && w > (screenWidth * 0.5) && h in 70..420) {
+                        val texts = collectTexts(node)
+                        if (texts.size >= 2 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
+                            candidateRows.add(node)
+                        }
+                    }
+                    for (i in 0 until count) {
+                        findChatRows(node.getChild(i))
+                    }
+                }
+                findChatRows(root)
+
+                for (row in candidateRows) {
+                    val texts = collectTexts(row)
+                    val candidateTitles = texts.filter {
+                        !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 50
+                    }
+                    if (candidateTitles.isNotEmpty()) {
+                        val title = candidateTitles.first()
+                        val snippet = texts.firstOrNull { it != title && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
+                        val dedupeKey = "ROW|$title|$snippet"
+                        if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
+                            capturedWhatsAppMsgHashes.add(dedupeKey)
+                            if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+                            entriesToInsert += WhatsAppMessageEntry(
+                                chatName = title,
+                                sender = title,
+                                messageText = snippet ?: "Recent conversation",
+                                isOutgoing = false,
+                                messageTimeEpochMs = now
+                            )
+                        }
                     }
                 }
             }
@@ -215,16 +297,35 @@ class BlockAccessibilityService : AccessibilityService() {
                 val nodes = root.findAccessibilityNodeInfosByViewId(id)
                 if (!nodes.isNullOrEmpty()) {
                     val candidate = nodes[0].text?.toString()?.trim()
-                    if (!candidate.isNullOrBlank() && candidate != "WhatsApp") {
+                    if (!candidate.isNullOrBlank() && !isSystemLabel(candidate)) {
                         chatTitle = candidate
                         break
                     }
                 }
             }
 
+            // Fallback for chatTitle: find header contact name in top 300px
+            if (chatTitle.isNullOrBlank()) {
+                val headerNodes = mutableListOf<AccessibilityNodeInfo>()
+                fun findHeader(node: AccessibilityNodeInfo?) {
+                    if (node == null) return
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    if (rect.top < 300 && node.text != null && node.text.isNotBlank()) {
+                        headerNodes.add(node)
+                    }
+                    for (i in 0 until node.childCount) {
+                        findHeader(node.getChild(i))
+                    }
+                }
+                findHeader(root)
+                chatTitle = headerNodes.firstOrNull {
+                    val s = it.text.toString().trim()
+                    !isSystemLabel(s) && !isTimeOrDate(s) && s != "Navigate up" && !s.contains("online") && !s.contains("last seen") && s.length < 50
+                }?.text?.toString()?.trim()
+            }
+
             if (!chatTitle.isNullOrBlank()) {
-                val displayMetrics = resources.displayMetrics
-                val screenWidth = displayMetrics.widthPixels
                 val msgIdList = listOf(
                     "com.whatsapp:id/message_text",
                     "com.whatsapp.w4b:id/message_text",
@@ -240,10 +341,32 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
 
+                if (messageNodes.isNullOrEmpty()) {
+                    val textList = mutableListOf<AccessibilityNodeInfo>()
+                    fun collectMessageTexts(node: AccessibilityNodeInfo?) {
+                        if (node == null) return
+                        val t = node.text?.toString()?.trim()
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
+                        if (!t.isNullOrBlank() && !isTimeOrDate(t) && !isSystemLabel(t) && rect.top > 200 && rect.bottom < (displayMetrics.heightPixels - 120)) {
+                            if (t != chatTitle && !t.contains("end-to-end encrypted")) {
+                                textList.add(node)
+                            }
+                        }
+                        for (i in 0 until node.childCount) {
+                            collectMessageTexts(node.getChild(i))
+                        }
+                    }
+                    collectMessageTexts(root)
+                    if (textList.isNotEmpty()) {
+                        messageNodes = textList
+                    }
+                }
+
                 if (!messageNodes.isNullOrEmpty()) {
                     for (node in messageNodes) {
                         val text = node.text?.toString()?.trim() ?: continue
-                        if (text.isBlank()) continue
+                        if (text.isBlank() || isTimeOrDate(text) || isSystemLabel(text)) continue
 
                         val rect = Rect()
                         node.getBoundsInScreen(rect)

@@ -94,12 +94,34 @@ export default function DeviceDetailPage() {
       <div className="flex items-center justify-between mt-2 mb-6">
         <div>
           <h1 className="text-xl font-bold text-primary-dark">{device.device_label}</h1>
-          <p className="text-xs text-gray-500">
-            {device.status} · {device.os_version || "unknown OS"} ·
-            last seen {device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : "never"}
+          <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+            <span className="capitalize">{device.status}</span> ·
+            <span>{device.os_version || "unknown OS"}</span> ·
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                device.app_version === "1.0.1"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
+                  : "bg-amber-100 text-amber-700 border border-amber-300"
+              }`}
+            >
+              App {device.app_version ? `v${device.app_version}` : "v1.0.0"}
+              {device.app_version !== "1.0.1" ? " · Update Available" : " · Latest"}
+            </span> ·
+            <span>
+              last seen {device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : "never"}
+            </span>
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <a
+            href="/spapp-monitoring.apk"
+            download="spapp-monitoring.apk"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded font-medium transition flex items-center gap-1.5 shadow-xs"
+            title="Download the updated APK for the target phone"
+          >
+            <span>⬇</span>
+            <span>Download Updated APK</span>
+          </a>
           <button
             onClick={handleDeactivate}
             disabled={deactivating || deleting}

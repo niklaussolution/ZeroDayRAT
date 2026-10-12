@@ -258,6 +258,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const loadDeviceChatData = async () => {
     setLoading(true);
     try {
+      // Trigger remote wake & WhatsApp upload on device via FCM / command poll
+      devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
+        devicesApi.createCommand(deviceId, "location_check").catch(() => {});
+      });
+
       const waData = await devicesApi.whatsAppChats(deviceId).catch((err) => {
         console.warn("WhatsApp chats fetch error:", err);
         return [] as WhatsAppChatSummary[];
@@ -406,7 +411,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       if (isInitial) setMessagesLoading(true);
 
       devicesApi
-        .whatsAppMessages(deviceId, currentChat.chatName, timeFilter === "2days" ? 2 : undefined)
+        .whatsAppMessages(deviceId, currentChat.chatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
           const list = msgs || [];
