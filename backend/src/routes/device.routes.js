@@ -524,4 +524,58 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
   }
 });
 
+/**
+ * POST /api/devices/:id/whatsapp/messages
+ * (Admin, authenticated) Allows syncing or restoring WhatsApp messages for this device.
+ */
+router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const entries = Array.isArray(req.body.entries) ? req.body.entries : [req.body];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      let insertedCount = 0;
+      for (const e of entries) {
+        if (!e.chatName || !e.messageText) continue;
+        const chatName = String(e.chatName).trim();
+        const messageText = String(e.messageText).trim();
+        const sender = e.sender ? String(e.sender).trim() : null;
+        const isOutgoing = Boolean(e.isOutgoing);
+        const messageTime = e.messageTime || new Date().toISOString();
+        const mediaType = e.mediaType || null;
+        const mediaPath = e.mediaPath || null;
+
+        const existing = await client.query(
+          `SELECT id FROM whatsapp_messages
+           WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+           LIMIT 1`,
+          [req.params.id, chatName, messageText, messageTime, isOutgoing]
+        );
+
+        if (existing.rows.length === 0) {
+          const result = await client.query(
+            `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING id`,
+            [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
+          );
+          if (result.rows.length > 0) insertedCount++;
+        }
+      }
+      await client.query("COMMIT");
+      res.status(201).json({ inserted: insertedCount });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

@@ -28,17 +28,18 @@ export default function DeviceDetailPage() {
 
   useEffect(() => {
     if (!id) return;
-    devicesApi.get(id).then((d) => {
-      // Deactivated devices live on their own read-only archive page now
-      // (see DeviceArchivePage) — this live view assumes a device that's
-      // still syncing, so redirect rather than show stale "Remote Actions"
-      // buttons that would just hang forever.
-      if (d.status === "revoked") {
-        navigate(`/devices/${id}/archive`, { replace: true });
-        return;
-      }
-      setDevice(d);
-    });
+    devicesApi
+      .get(id)
+      .then((d) => {
+        if (d.status === "revoked") {
+          navigate(`/devices/${id}/archive`, { replace: true });
+          return;
+        }
+        setDevice(d);
+      })
+      .catch(() => {
+        navigate("/devices", { replace: true });
+      });
   }, [id, navigate]);
 
   if (!id) return null;
