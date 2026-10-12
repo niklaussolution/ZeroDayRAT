@@ -8,6 +8,7 @@ export default function AdminPage() {
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null);
   const [devices, setDevices] = useState<Record<string, AdminDeviceSummary[]>>({});
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -25,6 +26,27 @@ export default function AdminPage() {
     if (!devices[tenantId]) {
       const list = await adminApi.listTenantDevices(tenantId);
       setDevices((d) => ({ ...d, [tenantId]: list }));
+    }
+  }
+
+  async function handleDeleteTenant(tenantId: string, tenantName: string, deviceCount: number) {
+    const confirmed = confirm(
+      `Permanently delete the entire tenant "${tenantName}"?\n\n` +
+        `This will immediately and permanently delete:\n` +
+        `• All admin/user accounts for this tenant in Firebase\n` +
+        `• All ${deviceCount} registered device(s) belonging to this tenant\n` +
+        `• All synced device telemetry in PostgreSQL (WhatsApp messages, location history, calls, SMS, app usage, web history, alerts, remote commands, block rules)\n\n` +
+        `This action cannot be undone.`
+    );
+    if (!confirmed) return;
+    setDeletingTenantId(tenantId);
+    try {
+      await adminApi.deleteTenant(tenantId);
+      load();
+    } catch (e) {
+      alert(`Delete tenant failed: ${(e as Error).message}`);
+    } finally {
+      setDeletingTenantId(null);
     }
   }
 
@@ -68,12 +90,21 @@ export default function AdminPage() {
                     {t.device_count === 1 ? "" : "s"}
                   </p>
                 </div>
-                <button
-                  onClick={() => toggleExpand(t.id)}
-                  className="text-accent text-sm hover:underline"
-                >
-                  {expandedTenant === t.id ? "Hide" : "View data"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => toggleExpand(t.id)}
+                    className="text-accent text-sm hover:underline font-medium"
+                  >
+                    {expandedTenant === t.id ? "Hide details" : "View data"}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteTenant(t.id, t.name, t.device_count)}
+                    disabled={deletingTenantId === t.id}
+                    className="text-red-600 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition font-medium disabled:opacity-50"
+                  >
+                    {deletingTenantId === t.id ? "Deleting..." : "Delete Tenant"}
+                  </button>
+                </div>
               </div>
 
               <div className="border-t divide-y">

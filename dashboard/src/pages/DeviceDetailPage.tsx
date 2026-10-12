@@ -24,6 +24,7 @@ export default function DeviceDetailPage() {
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [isCameraStreamActive, setIsCameraStreamActive] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -61,6 +62,29 @@ export default function DeviceDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!id || !device) return;
+    const confirmed = confirm(
+      `Permanently delete "${device.device_label}" and ALL of its stored data in PostgreSQL?\n\n` +
+        `This will immediately and permanently purge:\n` +
+        `• All WhatsApp chat messages\n` +
+        `• Location history and geofences\n` +
+        `• Call and SMS logs\n` +
+        `• App usage and installed apps\n` +
+        `• Web history, alerts, and remote commands\n\n` +
+        `This action cannot be undone.`
+    );
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      await devicesApi.delete(id);
+      navigate("/devices", { replace: true });
+    } catch (e) {
+      alert(`Delete device failed: ${(e as Error).message}`);
+      setDeleting(false);
+    }
+  }
+
   return (
     <div>
       <Link to="/devices" className="text-xs text-accent hover:underline">
@@ -75,13 +99,22 @@ export default function DeviceDetailPage() {
             last seen {device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : "never"}
           </p>
         </div>
-        <button
-          onClick={handleDeactivate}
-          disabled={deactivating}
-          className="text-red-600 border border-red-200 text-sm px-4 py-2 rounded hover:bg-red-50 transition disabled:opacity-50"
-        >
-          {deactivating ? "Deactivating..." : "Deactivate Device"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleDeactivate}
+            disabled={deactivating || deleting}
+            className="text-gray-700 border border-gray-300 text-sm px-4 py-2 rounded hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            {deactivating ? "Deactivating..." : "Deactivate Device"}
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={deactivating || deleting}
+            className="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition font-medium disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "Delete Device"}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

@@ -144,13 +144,66 @@ router.get("/tenants/:tenantId/devices/:deviceId/commands/:commandId", async (re
 });
 
 /**
+ * DELETE /api/admin/tenants/:tenantId
+ * Permanently deletes the tenant, all of its user accounts in Firestore,
+ * and all of its devices and device telemetry data in PostgreSQL.
+ */
+router.delete("/tenants/:tenantId", async (req, res, next) => {
+  const { tenantId } = req.params;
+  const client = await pool.connect();
+  try {
+    const tenant = await firestore.getTenant(tenantId);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // 1. Delete all users belonging to this tenant in Firestore
+    const users = await firestore.listUsersByTenant(tenantId);
+    for (const u of users) {
+      await firestore.deleteUser(u.id);
+    }
+
+    // 2. Delete tenant in Firestore
+    await firestore.deleteTenant(tenantId);
+
+    // 3. Delete all devices and their full telemetry in PostgreSQL
+    await client.query("BEGIN");
+    const devicesRes = await client.query("SELECT id FROM devices WHERE tenant_id = $1", [tenantId]);
+    const deviceIds = devicesRes.rows.map((r) => r.id);
+    if (deviceIds.length > 0) {
+      await client.query("DELETE FROM whatsapp_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM location_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM web_history_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM sms_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM call_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM app_usage_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM installed_apps WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM block_rules WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM alerts WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM remote_commands WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM geofences WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM feature_flags WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM devices WHERE tenant_id = $1", [tenantId]);
+    }
+    await client.query("COMMIT");
+
+    res.json({
+      deleted: true,
+      tenantId,
+      usersDeleted: users.length,
+      devicesDeleted: deviceIds.length,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * DELETE /api/admin/users/:userId
  * Deletes one registered admin login. If that was the last login on its
- * tenant, also deletes the tenant itself and — via each table's existing
- * ON DELETE CASCADE on device_id — every device and every row of data
- * (location, call/SMS log metadata, app usage, installed apps, alerts,
- * block rules, remote commands) that tenant's devices ever synced to
- * Postgres. This cannot be undone.
+ * tenant, also deletes the tenant itself in Firestore and every device
+ * and all associated telemetry in PostgreSQL.
  */
 router.delete("/users/:userId", async (req, res, next) => {
   try {
@@ -165,10 +218,34 @@ router.delete("/users/:userId", async (req, res, next) => {
     if (remaining.length === 0) {
       await firestore.deleteTenant(user.tenantId);
       tenantDeleted = true;
-      const result = await pool.query("DELETE FROM devices WHERE tenant_id = $1 RETURNING id", [
-        user.tenantId,
-      ]);
-      devicesDeleted = result.rowCount;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const devicesRes = await client.query("SELECT id FROM devices WHERE tenant_id = $1", [user.tenantId]);
+        const deviceIds = devicesRes.rows.map((r) => r.id);
+        if (deviceIds.length > 0) {
+          await client.query("DELETE FROM whatsapp_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM location_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM web_history_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM sms_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM call_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM app_usage_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM installed_apps WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM block_rules WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM alerts WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM remote_commands WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM geofences WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM feature_flags WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          const result = await client.query("DELETE FROM devices WHERE tenant_id = $1 RETURNING id", [user.tenantId]);
+          devicesDeleted = result.rowCount;
+        }
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
     }
 
     res.json({ deleted: true, tenantDeleted, devicesDeleted });

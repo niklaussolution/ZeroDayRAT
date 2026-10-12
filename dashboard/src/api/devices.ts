@@ -37,10 +37,10 @@ export const devicesApi = {
     apiClient.post<Device>(`/api/devices/${id}/deactivate`).then((r) => r.data),
 
   /**
-   * Permanent delete — only allowed once a device is already deactivated.
-   * Cascades through every table of synced data for this device on the
-   * backend (Postgres FKs, see schema.sql). Cannot be undone.
+   * Permanent delete — works for both active and deactivated devices.
+   * Purges all device data across all PostgreSQL tables.
    */
+  delete: (id: string) => apiClient.delete(`/api/devices/${id}`),
   purge: (id: string) => apiClient.delete(`/api/devices/${id}`),
 
   appUsage: (id: string, date?: string) =>

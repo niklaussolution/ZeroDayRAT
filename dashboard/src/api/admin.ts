@@ -14,4 +14,11 @@ export const adminApi = {
         `/api/admin/users/${userId}`
       )
       .then((r) => r.data),
+
+  deleteTenant: (tenantId: string) =>
+    apiClient
+      .delete<{ deleted: boolean; tenantId: string; usersDeleted: number; devicesDeleted: number }>(
+        `/api/admin/tenants/${tenantId}`
+      )
+      .then((r) => r.data),
 };

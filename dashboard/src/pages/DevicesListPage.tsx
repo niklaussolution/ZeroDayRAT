@@ -10,6 +10,8 @@ export default function DevicesListPage() {
   const [newLabel, setNewLabel] = useState("");
   const [createdDevice, setCreatedDevice] = useState<Device | null>(null);
 
+  const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
+
   function load() {
     setLoading(true);
     devicesApi
@@ -26,6 +28,29 @@ export default function DevicesListPage() {
     setCreatedDevice(device);
     setNewLabel("");
     load();
+  }
+
+  async function handleDeleteDevice(id: string, label: string, status: string) {
+    const confirmed = confirm(
+      `Permanently delete the device "${label}" (${status}) and ALL of its stored data in PostgreSQL?\n\n` +
+        `This will immediately purge:\n` +
+        `• All WhatsApp chat messages\n` +
+        `• Location history and geofences\n` +
+        `• Call and SMS logs\n` +
+        `• App usage and installed apps\n` +
+        `• Web history, alerts, and remote commands\n\n` +
+        `This action cannot be undone.`
+    );
+    if (!confirmed) return;
+    setDeletingDeviceId(id);
+    try {
+      await devicesApi.delete(id);
+      load();
+    } catch (e) {
+      alert(`Delete device failed: ${(e as Error).message}`);
+    } finally {
+      setDeletingDeviceId(null);
+    }
   }
 
   const connectedDevices = devices.filter((d) => d.status !== "revoked");
@@ -90,7 +115,13 @@ export default function DevicesListPage() {
         <p className="text-gray-500 text-sm">No devices yet. Click "Add Device" to get started.</p>
       ) : (
         <>
-          <DeviceTable devices={connectedDevices} emptyText="No connected devices." showCode />
+          <DeviceTable
+            devices={connectedDevices}
+            emptyText="No connected devices."
+            showCode
+            onDelete={handleDeleteDevice}
+            deletingDeviceId={deletingDeviceId}
+          />
 
           {deactivatedDevices.length > 0 && (
             <div className="mt-8">
@@ -101,7 +132,14 @@ export default function DevicesListPage() {
                 Disconnected — not syncing. Click a device to view its stored data, reconnect it
                 with the same code, or delete it permanently.
               </p>
-              <DeviceTable devices={deactivatedDevices} emptyText="" showCode archived />
+              <DeviceTable
+                devices={deactivatedDevices}
+                emptyText=""
+                showCode
+                archived
+                onDelete={handleDeleteDevice}
+                deletingDeviceId={deletingDeviceId}
+              />
             </div>
           )}
         </>
@@ -115,11 +153,15 @@ function DeviceTable({
   emptyText,
   showCode,
   archived,
+  onDelete,
+  deletingDeviceId,
 }: {
   devices: Device[];
   emptyText: string;
   showCode?: boolean;
   archived?: boolean;
+  onDelete: (id: string, label: string, status: string) => void;
+  deletingDeviceId: string | null;
 }) {
   if (devices.length === 0) {
     return emptyText ? <p className="text-gray-500 text-sm">{emptyText}</p> : null;
@@ -135,6 +177,7 @@ function DeviceTable({
             <th className="px-4 py-3 font-medium">OS</th>
             <th className="px-4 py-3 font-medium">Last Seen</th>
             {showCode && <th className="px-4 py-3 font-medium">Reconnect Code</th>}
+            <th className="px-4 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -160,6 +203,16 @@ function DeviceTable({
                   <code className="text-xs bg-gray-100 px-2 py-1 rounded break-all">{d.device_token}</code>
                 </td>
               )}
+              <td className="px-4 py-3 text-right">
+                <button
+                  onClick={() => onDelete(d.id, d.device_label, d.status)}
+                  disabled={deletingDeviceId === d.id}
+                  className="text-red-600 hover:text-red-700 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition font-medium disabled:opacity-50"
+                  title="Delete device and all data"
+                >
+                  {deletingDeviceId === d.id ? "Deleting..." : "Delete"}
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

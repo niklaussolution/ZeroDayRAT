@@ -187,34 +187,41 @@ router.post("/:id/deactivate", requireAuth, async (req, res, next) => {
 
 /**
  * DELETE /api/devices/:id
- * (Admin, authenticated) Permanently purges a deactivated device and every
- * row of data it ever synced — location history, app usage, web history,
- * SMS/call log metadata, installed apps, block rules, alerts, and remote
- * commands all cascade-delete with it (ON DELETE CASCADE on each table's
- * device_id FK, see schema.sql). This is the one truly destructive
- * operation in the device lifecycle, so it only works on a device that's
- * already 'revoked' (deactivated) — an active device must be deactivated
- * first, which is itself reversible. This cannot be undone.
- *
- * Note: device data has only ever lived in Postgres. Firestore only holds
- * tenant/admin-user accounts, never device sync data, so there is nothing
- * device-related to delete there.
+ * (Admin, authenticated) Permanently deletes any device (both active and
+ * deactivated/revoked) and every row of data it ever synced in PostgreSQL
+ * (WhatsApp messages, location history, app usage, web history, SMS/call
+ * logs, installed apps, block rules, alerts, geofences, feature flags,
+ * and remote commands). Cannot be undone.
  */
 router.delete("/:id", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
   try {
     const access = await checkDeviceAccess(req.params.id, req.auth);
     if (!access) return res.status(404).json({ error: "Device not found" });
 
-    const existing = await pool.query("SELECT status FROM devices WHERE id = $1", [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: "Device not found" });
-    if (existing.rows[0].status !== "revoked") {
-      return res.status(400).json({ error: "Deactivate this device before deleting it permanently" });
-    }
+    const deviceId = req.params.id;
+    await client.query("BEGIN");
+    await client.query("DELETE FROM whatsapp_messages WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM location_logs WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM web_history_logs WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM sms_logs WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM call_logs WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM app_usage_logs WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM installed_apps WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM block_rules WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM alerts WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM remote_commands WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM geofences WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM feature_flags WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM devices WHERE id = $1", [deviceId]);
+    await client.query("COMMIT");
 
-    await pool.query("DELETE FROM devices WHERE id = $1", [req.params.id]);
     res.status(204).send();
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
     next(err);
+  } finally {
+    client.release();
   }
 });
 
