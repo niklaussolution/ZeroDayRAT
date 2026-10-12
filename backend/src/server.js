@@ -92,8 +92,8 @@ pool
     WHERE message_text ILIKE '%@s.whatsapp.net'
        OR message_text ILIKE '%@g.us'
        OR message_text IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
-       OR message_text ~ '^\+?[0-9\s-]{7,25}$'
-       OR message_text ~* '^Message \+?[0-9\s-]+$'
+       OR message_text ~ '^[+]?[0-9 -]{7,25}$'
+       OR message_text ~* '^Message [+]?[0-9 -]+$'
        OR message_text ~ '^[0-9*#]+$'
        OR message_text ~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)';
 

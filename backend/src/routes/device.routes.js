@@ -464,8 +464,8 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          AND message_text NOT ILIKE '%@s.whatsapp.net'
          AND message_text NOT ILIKE '%@g.us'
          AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
-         AND message_text !~ '^\+?[0-9\s-]{7,25}$'
-         AND message_text !~* '^Message \+?[0-9\s-]+$'
+         AND message_text !~ '^[+]?[0-9 -]{7,25}$'
+         AND message_text !~* '^Message [+]?[0-9 -]+$'
          AND message_text !~ '^[0-9*#]+$'
          AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'
        GROUP BY chat_name
@@ -498,8 +498,8 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
                    AND message_text NOT ILIKE '%@s.whatsapp.net'
                    AND message_text NOT ILIKE '%@g.us'
                    AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
-                   AND message_text !~ '^\+?[0-9\s-]{7,25}$'
-                   AND message_text !~* '^Message \+?[0-9\s-]+$'
+                   AND message_text !~ '^[+]?[0-9 -]{7,25}$'
+                   AND message_text !~* '^Message [+]?[0-9 -]+$'
                    AND message_text !~ '^[0-9*#]+$'
                    AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'`;
     const params = [req.params.id];
