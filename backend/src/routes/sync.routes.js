@@ -648,14 +648,12 @@ router.post(
         }
         await client.query("COMMIT");
         await touchLastSeen(req.device.deviceId);
-        if (insertedCount > 0) {
-          emitDeviceEvent(req.device.deviceId, {
-            type: "whatsapp_message",
-            chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
-            count: insertedCount,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        emitDeviceEvent(req.device.deviceId, {
+          type: "whatsapp_message",
+          chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
+          count: insertedCount,
+          timestamp: new Date().toISOString(),
+        });
         res.status(201).json({ inserted: insertedCount });
       } catch (err) {
         await client.query("ROLLBACK");

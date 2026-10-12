@@ -422,7 +422,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             } catch (_: Exception) {}
                         }
 
-                        val dedupeKey = "$chatTitle|$text|$isOutgoing"
+                        val dedupeKey = "$chatTitle|$text|$isOutgoing|$bubbleTimeMs"
                         if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
                         capturedWhatsAppMsgHashes.add(dedupeKey)
                         if (capturedWhatsAppMsgHashes.size > 2000) {

