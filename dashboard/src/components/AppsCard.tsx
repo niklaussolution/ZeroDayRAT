@@ -268,12 +268,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         return [] as WhatsAppChatSummary[];
       });
 
-      // Filter out storage pseudo-buckets
+      // Filter out storage pseudo-buckets and bogus placeholder contacts
       const realWaChats = (waData || []).filter(
         (c) =>
           !["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(
             c.chat_name
-          )
+          ) &&
+          c.last_message !== "Recent contact" &&
+          c.last_message !== "WhatsApp Contact" &&
+          c.last_message !== "Recent conversation" &&
+          !(c.total_messages <= 1 && /^\+?[0-9\s-]{10,20}$/.test(c.last_message || "") && c.last_message_at && new Date(c.last_message_at).getFullYear() < 2025)
       );
 
       setWhatsappChats(realWaChats);
@@ -414,32 +418,64 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         .whatsAppMessages(deviceId, currentChat.chatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
-          const list = msgs || [];
+          const list = (msgs || []).filter(
+            (m) =>
+              m.message_text !== "Recent contact" &&
+              m.message_text !== "WhatsApp Contact" &&
+              m.message_text !== "Recent conversation"
+          );
           const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast2Days(m.message_time, dashboardLoginTime));
-          const effective = filtered.length > 0 ? filtered : list;
-          const unified: UnifiedChatMessage[] = effective.map((m) => ({
-            id: m.id,
-            sender: m.is_outgoing ? "Target Device" : m.sender || currentChat.chatName,
-            text: m.message_text,
-            isOutgoing: Boolean(m.is_outgoing),
-            timestamp: m.message_time,
-            mediaType: m.media_type,
-            mediaPath: m.media_path,
-          }));
+          const effective = filtered;
+
+          const unified: UnifiedChatMessage[] = effective.map((m) => {
+            const rawText = m.message_text || "";
+            const isTargetSent = Boolean(m.is_outgoing) ||
+                                 m.sender?.toLowerCase() === "me" ||
+                                 m.sender?.toLowerCase() === "you" ||
+                                 m.sender?.toLowerCase() === "target device" ||
+                                 rawText.startsWith("You: ") ||
+                                 rawText.startsWith("You reacted ");
+            const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
+            const isImage = m.media_type === "image" ||
+                            cleanText.includes("📷") ||
+                            cleanText.toLowerCase().includes("photo");
+
+            return {
+              id: m.id,
+              sender: isTargetSent ? "Target Device" : m.sender || currentChat.chatName,
+              text: cleanText,
+              isOutgoing: isTargetSent,
+              timestamp: m.message_time,
+              mediaType: isImage ? "image" : m.media_type,
+              mediaPath: m.media_path,
+            };
+          });
 
           // Fallback to preview last message if no thread items exist yet
           if (
             unified.length === 0 &&
             currentChat.lastMessage &&
-            currentChat.lastMessage !== "WhatsApp Contact"
+            currentChat.lastMessage !== "WhatsApp Contact" &&
+            currentChat.lastMessage !== "Recent contact" &&
+            currentChat.lastMessage !== "Recent conversation"
           ) {
-            unified.push({
-              id: `preview-${currentChat.id}`,
-              sender: currentChat.lastIsOutgoing ? "Target Device" : currentChat.chatName,
-              text: currentChat.lastMessage,
-              isOutgoing: Boolean(currentChat.lastIsOutgoing),
-              timestamp: currentChat.lastMessageAt || new Date().toISOString(),
-            });
+            const rawLast = currentChat.lastMessage;
+            const isTargetSent = Boolean(currentChat.lastIsOutgoing) ||
+                                 rawLast.startsWith("You: ") ||
+                                 rawLast.startsWith("You reacted ");
+            const cleanLast = rawLast.startsWith("You: ") ? rawLast.slice(5).trim() : rawLast;
+            const isImage = cleanLast.includes("📷") || cleanLast.toLowerCase().includes("photo");
+
+            if (timeFilter === "all" || isWithinLast2Days(currentChat.lastMessageAt || "", dashboardLoginTime)) {
+              unified.push({
+                id: `preview-${currentChat.id}`,
+                sender: isTargetSent ? "Target Device" : currentChat.chatName,
+                text: cleanLast,
+                isOutgoing: isTargetSent,
+                timestamp: currentChat.lastMessageAt || new Date().toISOString(),
+                mediaType: isImage ? "image" : null,
+              });
+            }
           }
 
           setActiveThreadMessages(unified);
@@ -1194,26 +1230,34 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                     {/* Media: Image Photo */}
                                     {m.mediaType === "image" && (
                                       <div className="py-1 space-y-1">
-                                        {m.mediaPath && m.mediaPath.startsWith("http") ? (
-                                          <img
-                                            src={m.mediaPath}
-                                            alt="Chat attachment"
-                                            className="w-full max-h-48 object-cover rounded-lg"
-                                          />
+                                        {m.mediaPath && (m.mediaPath.startsWith("http") || m.mediaPath.startsWith("data:image")) ? (
+                                          <div className="rounded-xl overflow-hidden border border-black/10 shadow-xs my-1 bg-black/5">
+                                            <img
+                                              src={m.mediaPath}
+                                              alt="Chat photo"
+                                              className="w-full max-h-72 object-contain cursor-pointer hover:opacity-95 transition"
+                                              onClick={() => window.open(m.mediaPath!, "_blank")}
+                                            />
+                                          </div>
                                         ) : (
-                                          <div className="flex items-center justify-between gap-3 border-b border-black/5 pb-1">
-                                            <span className="font-semibold text-xs flex items-center gap-1">
-                                              <span>📷</span>
-                                              <span>Photo Attachment</span>
-                                            </span>
+                                          <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20 space-y-1.5 my-1">
+                                            <div className="flex items-center justify-between gap-3">
+                                              <span className="font-semibold text-xs flex items-center gap-1.5 text-emerald-900">
+                                                <span className="text-base">📷</span>
+                                                <span>Photo Attachment</span>
+                                              </span>
+                                              {m.mediaPath && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
+                                                  className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2 py-0.5 rounded transition"
+                                                >
+                                                  Download ⬇
+                                                </button>
+                                              )}
+                                            </div>
                                             {m.mediaPath && (
-                                              <button
-                                                type="button"
-                                                onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
-                                                className="text-[10px] text-emerald-700 hover:underline font-semibold"
-                                              >
-                                                Download ⬇
-                                              </button>
+                                              <p className="text-[10px] text-gray-500 font-mono truncate">{m.mediaPath}</p>
                                             )}
                                           </div>
                                         )}
