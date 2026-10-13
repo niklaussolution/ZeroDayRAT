@@ -189,7 +189,10 @@ class BlockAccessibilityService : AccessibilityService() {
                     "whatsapp", "whatsapp business", "chats", "updates", "calls", "communities",
                     "settings", "search", "archived", "unread", "groups", "all", "type a message",
                     "message", "status", "delivered", "read", "navigate up", "back", "more options",
-                    "call", "video call", "voice call", "online", "typing...", "typing", "audio call"
+                    "call", "video call", "voice call", "online", "typing...", "typing", "audio call",
+                    "ask meta ai or search", "ask meta ai", "meta ai", "floating windows",
+                    "search unread chats", "not interested", "interested", "reels", "follow",
+                    "recent contact", "recent conversation", "tap to view conversation"
                 )
             }
 

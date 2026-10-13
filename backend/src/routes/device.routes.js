@@ -460,7 +460,44 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
        WHERE device_id = $1
          AND chat_name IS NOT NULL
          AND TRIM(chat_name) != ''
-         AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
+         AND LOWER(TRIM(chat_name)) NOT IN (
+           'whatsapp',
+           'whatsapp web',
+           'whatsapp status',
+           'checking for new messages',
+           'whatsapp audio',
+           'whatsapp photos',
+           'whatsapp documents',
+           'whatsapp video',
+           'whatsapp media',
+           'whatsapp images',
+           'whatsapp voice notes',
+            'ask meta ai or search',
+            'ask meta ai',
+            'meta ai',
+            'floating windows',
+            'search unread chats',
+            'not interested',
+            'interested',
+            'reels',
+            'follow',
+            'search',
+            'updates',
+            'chats',
+            'calls',
+            'communities',
+            'type a message',
+            'message',
+            'recent contact',
+            'recent conversation',
+            'tap to view conversation'
+         )
+         AND LOWER(chat_name) NOT LIKE '%messages from % chats%'
+          AND LOWER(chat_name) NOT LIKE '%joined using a group link%'
+          AND LOWER(chat_name) NOT LIKE '%left the group%'
+          AND LOWER(chat_name) NOT LIKE '%security code changed%'
+          AND LOWER(chat_name) NOT LIKE '%created group%'
+          AND LOWER(chat_name) NOT LIKE '%end-to-end encrypted%'
        GROUP BY chat_name
        ORDER BY MAX(message_time) DESC`,
       [req.params.id]
@@ -540,8 +577,7 @@ router.get("/:id/whatsapp/calls", requireAuth, async (req, res, next) => {
 
 /**
  * GET /api/devices/:id/whatsapp/messages
- * Query param ?chat=... fetches conversation history for that WhatsApp chat.
- * Excludes SMS logs and contact dumps completely.
+ * Query param ?chat=... fetches conversation history for that specific WhatsApp chat.
  */
 router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
   try {
@@ -559,12 +595,12 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      query += ` AND (chat_name = $${idx} OR LOWER(TRIM(chat_name)) = LOWER($${idx}) OR chat_name ILIKE $${idx + 1})`;
-      params.push(cleanChat, "%" + cleanChat + "%");
-      idx += 2;
+      query += ` AND (chat_name = $${idx} OR LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx})))`;
+      params.push(cleanChat);
+      idx += 1;
     }
     if (days && !isNaN(days) && days > 0) {
-      query += ` AND message_time >= (now() - ($${idx} || ' days')::interval)`;
+      query += ` AND message_time >= (NOW() - ($${idx} || ' days')::interval)`;
       params.push(days);
       idx += 1;
     }

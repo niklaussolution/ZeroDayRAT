@@ -159,33 +159,26 @@ function formatMessageDateTime(dateString: string): string {
   }
 }
 
-function isWithinLast2Days(dateString: string, refDate: Date = new Date()): boolean {
+export function isWithinLast2Days(dateString: string): boolean {
   try {
     const time = new Date(dateString).getTime();
     if (isNaN(time)) return true;
-    const twoDaysAgo = refDate.getTime() - 2 * 24 * 60 * 60 * 1000;
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
     return time >= twoDaysAgo;
   } catch {
     return true;
   }
 }
 
-function isWhatsAppChannel(chat: UnifiedChatSummary): boolean {
+function isWhatsAppChannel(chat: { chatName: string; subtitle?: string | null; lastMessage?: string | null }): boolean {
   const name = chat.chatName.toLowerCase().trim();
-  const sub = (chat.subtitle || "").toLowerCase().trim();
-  const last = (chat.lastMessage || "").toLowerCase().trim();
   return (
-    name.includes("channel") ||
-    name.includes("broadcast") ||
-    name.includes("updates") ||
-    name.includes("news") ||
-    name.includes("official") ||
-    name === "whatsapp" ||
+    name.includes("whatsapp channel") ||
+    name.includes("broadcast channel") ||
+    name.endsWith(" channel") ||
+    name.startsWith("channel:") ||
     name === "whatsapp status" ||
-    name.includes("community") ||
-    sub.includes("channel") ||
-    sub.includes("broadcast") ||
-    last.includes("broadcast")
+    name.includes("whatsapp community")
   );
 }
 
@@ -351,12 +344,69 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         }
       }
 
+      const isSystemNoise = (name: string | null | undefined): boolean => {
+        if (!name) return true;
+        const n = name.trim().toLowerCase();
+        return (
+          n === "" ||
+          n === "whatsapp" ||
+          n === "whatsapp web" ||
+          n === "whatsapp status" ||
+          n === "checking for new messages" ||
+          n === "ask meta ai or search" ||
+          n === "ask meta ai" ||
+          n === "meta ai" ||
+          n === "floating windows" ||
+          n === "search unread chats" ||
+          n === "not interested" ||
+          n === "interested" ||
+          n === "reels" ||
+          n === "follow" ||
+          n === "search" ||
+          n === "updates" ||
+          n === "chats" ||
+          n === "calls" ||
+          n === "communities" ||
+          n === "type a message" ||
+          n === "message" ||
+          n === "recent contact" ||
+          n === "recent conversation" ||
+          n === "tap to view conversation" ||
+          n.startsWith("whatsapp audio") ||
+          n.startsWith("whatsapp photo") ||
+          n.startsWith("whatsapp document") ||
+          n.startsWith("whatsapp video") ||
+          n.startsWith("whatsapp media") ||
+          n.startsWith("whatsapp image") ||
+          n.startsWith("whatsapp voice") ||
+          n.includes("messages from") ||
+          n.includes("joined using a group link") ||
+          n.includes("left the group") ||
+          n.includes("security code changed") ||
+          n.includes("created group") ||
+          n.includes("messages and calls are end-to-end encrypted")
+        );
+      };
+
+      const hasRealConversation = (chatName: string, text: string | null | undefined): boolean => {
+        const key = chatName.trim().toLowerCase();
+        const realMsg = latestRealByChat.get(key);
+        if (realMsg && realMsg.message_text && !isContactSyncPlaceholder(realMsg.message_text)) {
+          return true;
+        }
+        if (realMsg?.media_path) return true;
+        if (text && !isContactSyncPlaceholder(text) && text.trim().toLowerCase() !== key) {
+          return true;
+        }
+        return false;
+      };
+
       const cleanedChats: WhatsAppChatSummary[] = [];
       const seenChats = new Set<string>();
 
       for (const c of (waData || [])) {
         if (!c.chat_name || !c.chat_name.trim()) continue;
-        if (["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(c.chat_name)) continue;
+        if (isSystemNoise(c.chat_name)) continue;
         const key = c.chat_name.trim().toLowerCase();
         const realMsg = latestRealByChat.get(key);
 
@@ -365,6 +415,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         const latestTime = rTime > cTime ? realMsg!.message_time : (c.last_message_at || new Date().toISOString());
         const latestText = rTime > cTime ? (realMsg?.message_text || c.last_message) : (c.last_message || realMsg?.message_text || null);
         const latestOutgoing = rTime > cTime ? Boolean(realMsg?.is_outgoing) : Boolean(c.last_is_outgoing);
+
+        // Filter out contacts that have no genuine WhatsApp conversation (SMS/address book placeholders)
+        if (!hasRealConversation(c.chat_name, latestText)) continue;
 
         cleanedChats.push({
           chat_name: c.chat_name.trim(),
@@ -378,6 +431,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
       for (const [key, realMsg] of latestRealByChat.entries()) {
         if (!seenChats.has(key)) {
+          if (isSystemNoise(realMsg.chat_name)) continue;
+          if (!hasRealConversation(realMsg.chat_name, realMsg.message_text)) continue;
+
           cleanedChats.push({
             chat_name: realMsg.chat_name.trim(),
             total_messages: countRealByChat.get(key) || 1,
@@ -521,7 +577,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       }
 
       return {
-        id: `wa-${c.chat_name}`,
+        id: c.chat_name,
         chatName: c.chat_name,
         subtitle,
         lastMessage: c.last_message || "(No messages yet)",
@@ -623,43 +679,47 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       return;
     }
 
-    const currentChatName = selectedChatId.startsWith("wa-")
-      ? selectedChatId.slice(3)
-      : selectedChatId;
-
+    const currentChatName = selectedChatId;
     let isMounted = true;
+
     const fetchChatMessages = (isInitial: boolean) => {
       if (isInitial) setMessagesLoading(true);
 
+      const daysParam = timeFilter === "2days" ? 2 : undefined;
       devicesApi
-        .whatsAppMessages(deviceId, currentChatName)
+        .whatsAppMessages(deviceId, currentChatName, daysParam)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
-          // Filter out only synthetic placeholder markers so real messages (even numbers/OTPs) are kept
-          const list = (msgs || []).filter(
-            (m) =>
-              (!isContactSyncPlaceholder(m.message_text) && !isPhoneNumberString(m.message_text)) ||
-              Boolean(m.media_path)
-          );
-          const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast2Days(m.message_time, dashboardLoginTime));
-          const effective = filtered.length > 0 ? filtered : list;
 
-          const unified: UnifiedChatMessage[] = effective.map((m) => {
+          const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+          const filtered = (msgs || []).filter((m) => {
+            if (!m.message_text && !m.media_path) return false;
+            if (isContactSyncPlaceholder(m.message_text) && !m.media_path) return false;
+            if (timeFilter === "2days") {
+              const msgTime = new Date(m.message_time).getTime();
+              if (!isNaN(msgTime) && msgTime < twoDaysAgo) return false;
+            }
+            return true;
+          });
+
+          const unified: UnifiedChatMessage[] = filtered.map((m) => {
             const rawText = m.message_text || "";
-            const isTargetSent = Boolean(m.is_outgoing) ||
-                                 m.sender?.toLowerCase() === "me" ||
-                                 m.sender?.toLowerCase() === "you" ||
-                                 m.sender?.toLowerCase() === "target device" ||
-                                 rawText.startsWith("You: ") ||
-                                 rawText.startsWith("You reacted ");
+            const isTargetSent =
+              Boolean(m.is_outgoing) ||
+              m.sender?.toLowerCase() === "me" ||
+              m.sender?.toLowerCase() === "you" ||
+              m.sender?.toLowerCase() === "target device" ||
+              rawText.startsWith("You: ") ||
+              rawText.startsWith("You reacted ");
             const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
-            const isImage = m.media_type === "image" ||
-                            cleanText.includes("📷") ||
-                            cleanText.toLowerCase().includes("photo");
+            const isImage =
+              m.media_type === "image" ||
+              cleanText.includes("📷") ||
+              cleanText.toLowerCase().includes("photo");
 
             return {
               id: m.id,
-              sender: isTargetSent ? "Target Device" : m.sender || currentChatName,
+              sender: isTargetSent ? "Target Device" : (m.sender || currentChatName),
               text: cleanText,
               isOutgoing: isTargetSent,
               timestamp: m.message_time,
@@ -667,34 +727,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               mediaPath: m.media_path,
             };
           });
-
-          // Fallback to preview last message only if valid real text
-          const currentChat = whatsappChatSummariesRef.current.find((c) => c.id === selectedChatId);
-          if (
-            unified.length === 0 &&
-            currentChat?.lastMessage &&
-            !isContactSyncPlaceholder(currentChat.lastMessage) &&
-            !isPhoneNumberString(currentChat.lastMessage) &&
-            currentChat.lastMessage !== "Registered WhatsApp Contact"
-          ) {
-            const rawLast = currentChat.lastMessage;
-            const isTargetSent = Boolean(currentChat.lastIsOutgoing) ||
-                                 rawLast.startsWith("You: ") ||
-                                 rawLast.startsWith("You reacted ");
-            const cleanLast = rawLast.startsWith("You: ") ? rawLast.slice(5).trim() : rawLast;
-            const isImage = cleanLast.includes("📷") || cleanLast.toLowerCase().includes("photo");
-
-            if (timeFilter === "all" || isWithinLast2Days(currentChat.lastMessageAt || "", dashboardLoginTime)) {
-              unified.push({
-                id: `preview-${currentChat.id}`,
-                sender: isTargetSent ? "Target Device" : currentChat.chatName,
-                text: cleanLast,
-                isOutgoing: isTargetSent,
-                timestamp: currentChat.lastMessageAt || new Date().toISOString(),
-                mediaType: isImage ? "image" : null,
-              });
-            }
-          }
 
           setActiveThreadMessages(unified);
         })
@@ -714,7 +746,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       isMounted = false;
       fetchCurrentChatRef.current = null;
     };
-  }, [selectedChatId, deviceId, timeFilter, dashboardLoginTime]);
+  }, [selectedChatId, deviceId, timeFilter]);
 
   // Grouped conversation messages by day (Today, Yesterday, etc.)
   const groupedMessages = useMemo(() => {
