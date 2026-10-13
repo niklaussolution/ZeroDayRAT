@@ -136,6 +136,17 @@ export interface WhatsAppMessage {
   media_path?: string | null;
 }
 
+export interface WhatsAppCallEntry {
+  id: string;
+  name: string;
+  number: string;
+  timestamp: string;
+  direction: "incoming" | "outgoing" | "missed";
+  call_type: "voice" | "video";
+  duration_sec: number;
+  source: "whatsapp" | "device";
+}
+
 export interface InstalledApp {
   package_name: string;
   app_name: string | null;

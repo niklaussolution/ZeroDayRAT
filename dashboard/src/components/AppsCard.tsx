@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { WhatsAppChatSummary, WhatsAppMessage, CallLogEntry, SmsLogEntry } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, CallLogEntry } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -259,7 +259,26 @@ export function isPlaceholderOrNumber(text: string | null | undefined): boolean 
   return isContactSyncPlaceholder(text) || isPhoneNumberString(text);
 }
 
-export type ChatCategoryTab = "all" | "chats" | "contacts" | "channels";
+export function isWithinLast5Days(dateString: string): boolean {
+  try {
+    const time = new Date(dateString).getTime();
+    if (isNaN(time)) return true;
+    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    return time >= fiveDaysAgo;
+  } catch {
+    return true;
+  }
+}
+
+export function formatCallDuration(seconds: number, direction?: string): string {
+  if (direction === "missed" || seconds === 0) return "Missed";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins === 0) return `${secs}s`;
+  return `${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
+}
+
+export type ChatCategoryTab = "chats" | "channels" | "calls";
 
 // ============================================================================
 // MAIN APPSCARD COMPONENT
@@ -268,12 +287,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Navigation / App State
   const [selectedApp, setSelectedApp] = useState<AvailableAppId>("whatsapp");
   const [activeView, setActiveView] = useState<"chats" | "files">("chats");
-  const [timeFilter, setTimeFilter] = useState<"2days" | "all">("all");
-  const [chatCategory, setChatCategory] = useState<ChatCategoryTab>("all");
+  const [timeFilter, setTimeFilter] = useState<"2days" | "all">("2days");
+  const [chatCategory, setChatCategory] = useState<ChatCategoryTab>("chats");
   const [dashboardLoginTime] = useState<Date>(() => new Date());
 
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
+  const [whatsAppCalls, setWhatsAppCalls] = useState<WhatsAppCallEntry[]>([]);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
 
@@ -293,7 +314,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------
-  // 1. DATA LOADER: WHATSAPP CHATS, CONTACTS & REAL MESSAGES
+  // 1. DATA LOADER: WHATSAPP CHATS, CALLS & REAL MESSAGES
   // --------------------------------------------------------------------------
   const loadDeviceChatData = async (isManual = false) => {
     if (isManual) setLoading(true);
@@ -304,7 +325,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         });
       }
 
-      const [waData, allMsgs, callsData, smsData] = await Promise.all([
+      const [waData, allMsgs, callsResponse, rawCallLogs] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
           console.warn("WhatsApp chats fetch error:", err);
           return [] as WhatsAppChatSummary[];
@@ -313,11 +334,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           console.warn("WhatsApp all messages fetch error:", err);
           return [] as WhatsAppMessage[];
         }),
+        devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
         devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
-        devicesApi.smsLog(deviceId).catch(() => [] as SmsLogEntry[]),
       ]);
 
-      // Build real message index by chat name
+      // 1. Process Genuine WhatsApp Chats (from monitored phone, e.g. Team lead, Kavin Bro, Niklaus)
       const latestRealByChat = new Map<string, WhatsAppMessage>();
       const countRealByChat = new Map<string, number>();
       for (const m of (allMsgs || [])) {
@@ -333,7 +354,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       const cleanedChats: WhatsAppChatSummary[] = [];
       const seenChats = new Set<string>();
 
-      // 1. Process WhatsApp chats & contacts from device
       for (const c of (waData || [])) {
         if (!c.chat_name || !c.chat_name.trim()) continue;
         if (["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(c.chat_name)) continue;
@@ -356,7 +376,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         seenChats.add(key);
       }
 
-      // 2. Also ensure any chat present in allMsgs that wasn't in waData is included
       for (const [key, realMsg] of latestRealByChat.entries()) {
         if (!seenChats.has(key)) {
           cleanedChats.push({
@@ -370,41 +389,71 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         }
       }
 
-      // 3. Harvest human contacts from call logs & SMS logs so the complete phone address book is included
-      for (const call of (callsData || [])) {
-        const name = (call.contact_name?.trim() || call.counterparty?.trim());
-        if (!name || isAutomatedShortCode(name)) continue;
-        const key = name.toLowerCase();
-        if (!seenChats.has(key)) {
-          cleanedChats.push({
-            chat_name: name,
-            total_messages: 1,
-            last_message_at: call.called_at,
-            last_message: call.counterparty && call.counterparty !== name ? call.counterparty : "WhatsApp Contact",
-            last_is_outgoing: call.direction === "outgoing",
-          });
-          seenChats.add(key);
-        }
-      }
-
-      for (const sms of (smsData || [])) {
-        const name = (sms.contact_name?.trim() || sms.counterparty?.trim());
-        if (!name || isAutomatedShortCode(name)) continue;
-        const key = name.toLowerCase();
-        if (!seenChats.has(key)) {
-          cleanedChats.push({
-            chat_name: name,
-            total_messages: 1,
-            last_message_at: sms.message_at,
-            last_message: sms.counterparty && sms.counterparty !== name ? sms.counterparty : "WhatsApp Contact",
-            last_is_outgoing: sms.direction === "outgoing",
-          });
-          seenChats.add(key);
-        }
-      }
-
       cleanedChats.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
       setWhatsappChats(cleanedChats);
+
+      // 2. Process WhatsApp Calls (Strictly Last 5 Days)
+      const mergedCallsMap = new Map<string, WhatsAppCallEntry>();
+
+      if (callsResponse?.whatsapp_calls) {
+        for (const c of callsResponse.whatsapp_calls) {
+          if (isWithinLast5Days(c.timestamp)) {
+            mergedCallsMap.set(c.id, c);
+          }
+        }
+      }
+
+      if (callsResponse?.device_calls) {
+        for (const c of callsResponse.device_calls) {
+          if (isWithinLast5Days(c.timestamp)) {
+            mergedCallsMap.set(`dcall-${c.number}-${c.timestamp}`, c);
+          }
+        }
+      }
+
+      for (const call of (rawCallLogs || [])) {
+        if (isWithinLast5Days(call.called_at)) {
+          const key = `raw-${call.counterparty}-${call.called_at}`;
+          if (!mergedCallsMap.has(key)) {
+            mergedCallsMap.set(key, {
+              id: key,
+              name: call.contact_name || call.counterparty || "WhatsApp Contact",
+              number: call.counterparty || "",
+              timestamp: call.called_at,
+              direction: call.direction === "missed" ? "missed" : call.direction === "outgoing" ? "outgoing" : "incoming",
+              call_type: "voice",
+              duration_sec: call.duration_sec || 0,
+              source: "device",
+            });
+          }
+        }
+      }
+
+      for (const m of (allMsgs || [])) {
+        const text = (m.message_text || "").toLowerCase();
+        if ((text.includes("call") || text.includes("missed")) && isWithinLast5Days(m.message_time)) {
+          const key = `msg-${m.id}`;
+          if (!mergedCallsMap.has(key)) {
+            const isMissed = text.includes("missed");
+            const isOutgoing = Boolean(m.is_outgoing);
+            mergedCallsMap.set(key, {
+              id: key,
+              name: m.chat_name || "WhatsApp Contact",
+              number: isPhoneNumberString(m.chat_name) ? m.chat_name : (m.sender || ""),
+              timestamp: m.message_time,
+              direction: isMissed ? "missed" : isOutgoing ? "outgoing" : "incoming",
+              call_type: text.includes("video") ? "video" : "voice",
+              duration_sec: 0,
+              source: "whatsapp",
+            });
+          }
+        }
+      }
+
+      const sortedCalls = Array.from(mergedCallsMap.values()).sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      setWhatsAppCalls(sortedCalls);
       setLastSyncedTime(new Date());
     } catch (e) {
       console.error("Failed to load device chat data", e);
@@ -417,7 +466,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   loadRef.current = loadDeviceChatData;
 
   // Real-time EventSource push + 3-second live auto-refresh polling
-  // Ensures incoming and outgoing messages update dynamically without page reloads
   useEffect(() => {
     loadRef.current();
 
@@ -440,14 +488,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           }
         } catch (_) {}
       };
-      eventSource.onerror = () => {
-        // SSE disconnected or proxy buffered — fallback to interval polling
-      };
+      eventSource.onerror = () => {};
     } catch (err) {
       console.warn("Real-time SSE subscription error:", err);
     }
 
-    // 3s interval polling to ensure 100% dynamic live updates for sent/received chats
     const pollInterval = setInterval(() => {
       loadRef.current();
       if (fetchCurrentChatRef.current) {
@@ -468,80 +513,53 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     if (!whatsappChats || whatsappChats.length === 0) return [];
     return whatsappChats.map((c) => {
       const isChannel = isWhatsAppChannel({ chatName: c.chat_name, subtitle: "", lastMessage: c.last_message } as any);
-      const isPlaceholder = isContactSyncPlaceholder(c.last_message);
-      const isPhone = isPhoneNumberString(c.last_message);
-      const isContact = !isChannel && (c.total_messages <= 1 && (isPlaceholder || isPhone));
+      const isPhone = isPhoneNumberString(c.chat_name);
 
-      let subtitle = "WhatsApp Contact";
+      let subtitle = isPhone ? c.chat_name : "WhatsApp Chat";
       if (isChannel) {
         subtitle = "WhatsApp Channel / Broadcast";
-      } else if (isPhone) {
-        subtitle = c.last_message!;
-      } else if (isPhoneNumberString(c.chat_name)) {
-        subtitle = "WhatsApp Contact";
       }
 
-      let displayLastMessage = c.last_message;
-      if (!displayLastMessage || isPlaceholder) {
-        displayLastMessage = isPhone ? c.last_message : "Registered WhatsApp Contact";
-      }
-
-      const summaryObj: UnifiedChatSummary = {
+      return {
         id: `wa-${c.chat_name}`,
         chatName: c.chat_name,
         subtitle,
-        lastMessage: displayLastMessage,
+        lastMessage: c.last_message || "(No messages yet)",
         lastMessageAt: c.last_message_at,
         lastIsOutgoing: c.last_is_outgoing,
         totalMessages: c.total_messages,
         source: "whatsapp",
-        isContactOnly: isContact,
       };
-      return summaryObj;
     });
   }, [whatsappChats]);
 
-  // Separate into All Chats/Contacts, Active Chats, Contacts list, and Channels
-  const { allPersonalAndContacts, activeChats, allContacts, channelChats } = useMemo(() => {
-    const allPersonal: UnifiedChatSummary[] = [];
-    const active: UnifiedChatSummary[] = [];
-    const contacts: UnifiedChatSummary[] = [];
+  // Separate into Chats (personal/group chats) and Channels (broadcasts)
+  const { whatsappPersonalChats, channelChats } = useMemo(() => {
+    const personal: UnifiedChatSummary[] = [];
     const channels: UnifiedChatSummary[] = [];
 
     for (const c of whatsappChatSummaries) {
       if (isWhatsAppChannel(c)) {
         channels.push(c);
       } else {
-        allPersonal.push(c);
-        if (c.isContactOnly) {
-          contacts.push(c);
-        } else {
-          active.push(c);
-        }
+        personal.push(c);
       }
     }
 
-    // Sort contacts alphabetically A-Z for easy directory browsing
-    const sortedContacts = [...allPersonal].sort((a, b) => a.chatName.localeCompare(b.chatName));
-
     return {
-      allPersonalAndContacts: allPersonal,
-      activeChats: active,
-      allContacts: sortedContacts,
+      whatsappPersonalChats: personal,
       channelChats: channels,
     };
   }, [whatsappChatSummaries]);
 
-  // Active Chats for the currently selected category tab (all, chats, contacts, channels)
+  // Active Chats for the currently selected category tab (chats, channels)
   const activeCategoryChats = useMemo<UnifiedChatSummary[]>(() => {
     if (selectedApp === "whatsapp") {
-      if (chatCategory === "all") return allPersonalAndContacts;
-      if (chatCategory === "chats") return activeChats;
-      if (chatCategory === "contacts") return allContacts;
+      if (chatCategory === "chats") return whatsappPersonalChats;
       if (chatCategory === "channels") return channelChats;
     }
     return [];
-  }, [selectedApp, chatCategory, allPersonalAndContacts, activeChats, allContacts, channelChats]);
+  }, [selectedApp, chatCategory, whatsappPersonalChats, channelChats]);
 
   // Filtered Chats by search within the currently active category
   const displayedChats = useMemo<UnifiedChatSummary[]>(() => {
@@ -555,16 +573,42 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     );
   }, [activeCategoryChats, chatSearch]);
 
-  // Auto-select first chat when category tab, search, or app changes
+  // Filtered Calls by search for the "calls" tab
+  const displayedCalls = useMemo<WhatsAppCallEntry[]>(() => {
+    if (!chatSearch.trim()) return whatsAppCalls;
+    const q = chatSearch.toLowerCase();
+    return whatsAppCalls.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.number.toLowerCase().includes(q) ||
+        c.direction.toLowerCase().includes(q)
+    );
+  }, [whatsAppCalls, chatSearch]);
+
+  // Auto-selection for active items
   useEffect(() => {
-    if (displayedChats.length > 0) {
-      if (!selectedChatId || !displayedChats.some((c) => c.id === selectedChatId)) {
-        setSelectedChatId(displayedChats[0].id);
+    if (chatCategory === "calls") {
+      if (displayedCalls.length > 0) {
+        if (!selectedCallId || !displayedCalls.some((c) => c.id === selectedCallId)) {
+          setSelectedCallId(displayedCalls[0].id);
+        }
+      } else {
+        setSelectedCallId(null);
       }
     } else {
-      setSelectedChatId(null);
+      if (displayedChats.length > 0) {
+        if (!selectedChatId || !displayedChats.some((c) => c.id === selectedChatId)) {
+          setSelectedChatId(displayedChats[0].id);
+        }
+      } else {
+        setSelectedChatId(null);
+      }
     }
-  }, [chatCategory, displayedChats, selectedApp]);
+  }, [chatCategory, displayedChats, displayedCalls]);
+
+  const selectedCallSummary = useMemo(() => {
+    return whatsAppCalls.find((c) => c.id === selectedCallId) || null;
+  }, [whatsAppCalls, selectedCallId]);
 
   // --------------------------------------------------------------------------
   // 3. LOAD CHAT CONVERSATION MESSAGES (LIVE POLLING & LAST 5 DAYS)
@@ -906,7 +950,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
             {SUPPORTED_APPS.map((app) => {
               const isSelected = selectedApp === app.id;
-              const count = app.id === "whatsapp" ? allPersonalAndContacts.length : 0;
+              const count = app.id === "whatsapp" ? whatsappPersonalChats.length : 0;
 
               return (
                 <button
@@ -958,7 +1002,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </span>
                       {app.isSupported && (
                         <span className="text-[10px] text-gray-400 font-medium">
-                          {count} {count === 1 ? "contact & chat" : "contacts & chats"}
+                          {count} {count === 1 ? "chat" : "chats"}
                         </span>
                       )}
                     </div>
@@ -971,10 +1015,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1 shrink-0">
             <p className="font-semibold flex items-center gap-1">
               <span>📱</span>
-              <span>WhatsApp Chats & Contacts</span>
+              <span>WhatsApp Chats & Activity</span>
             </p>
             <p className="text-[10px] text-emerald-700 leading-tight">
-              Shows all WhatsApp contacts, active conversations, and media storage on this device.
+              Shows WhatsApp chats (Team lead, Kavin Bro, etc.), broadcast channels, and last 5 days calls from this device.
             </p>
           </div>
         </div>
@@ -1031,13 +1075,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     <input
                       type="text"
                       placeholder={
-                        chatCategory === "contacts"
-                          ? "Search WhatsApp contacts..."
-                          : chatCategory === "chats"
-                          ? "Search active chats..."
+                        chatCategory === "calls"
+                          ? "Search WhatsApp calls & numbers..."
                           : chatCategory === "channels"
                           ? "Search channels..."
-                          : "Search contacts & chats..."
+                          : "Search WhatsApp chats..."
                       }
                       value={chatSearch}
                       onChange={(e) => setChatSearch(e.target.value)}
@@ -1055,80 +1097,40 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     )}
                   </div>
 
-                  {/* Category Selector Below Search Bar: All | Chats | Contacts | Channels */}
-                  <div className="bg-gray-200/70 p-1 rounded-lg grid grid-cols-4 text-[11px] font-semibold gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setChatCategory("all")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
-                        chatCategory === "all"
-                          ? "bg-white text-emerald-900 shadow-xs font-bold"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <span className="truncate">All</span>
-                      <span
-                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
-                          chatCategory === "all"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-gray-300/80 text-gray-700"
-                        }`}
-                      >
-                        {allPersonalAndContacts.length}
-                      </span>
-                    </button>
+                  {/* Exactly 3 Tabs: Chats | Channels | Calls */}
+                  <div className="bg-gray-200/70 p-1 rounded-lg grid grid-cols-3 text-[11px] font-semibold gap-1">
                     <button
                       type="button"
                       onClick={() => setChatCategory("chats")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
                         chatCategory === "chats"
                           ? "bg-white text-emerald-900 shadow-xs font-bold"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      <span className="truncate">Chats</span>
+                      <span className="truncate">💬 Chats</span>
                       <span
-                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
                           chatCategory === "chats"
                             ? "bg-emerald-100 text-emerald-800"
                             : "bg-gray-300/80 text-gray-700"
                         }`}
                       >
-                        {activeChats.length}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChatCategory("contacts")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
-                        chatCategory === "contacts"
-                          ? "bg-white text-sky-900 shadow-xs font-bold"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <span className="truncate">Contacts</span>
-                      <span
-                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
-                          chatCategory === "contacts"
-                            ? "bg-sky-100 text-sky-800"
-                            : "bg-gray-300/80 text-gray-700"
-                        }`}
-                      >
-                        {allContacts.length}
+                        {whatsappPersonalChats.length}
                       </span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setChatCategory("channels")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
                         chatCategory === "channels"
                           ? "bg-white text-purple-900 shadow-xs font-bold"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      <span className="truncate">Channels</span>
+                      <span className="truncate">📢 Channels</span>
                       <span
-                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
                           chatCategory === "channels"
                             ? "bg-purple-100 text-purple-800"
                             : "bg-gray-300/80 text-gray-700"
@@ -1137,492 +1139,846 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         {channelChats.length}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatCategory("calls")}
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
+                        chatCategory === "calls"
+                          ? "bg-white text-blue-900 shadow-xs font-bold"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <span className="truncate">📞 Calls</span>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                          chatCategory === "calls"
+                            ? "bg-blue-100 text-blue-800"
+                            : "bg-gray-300/80 text-gray-700"
+                        }`}
+                      >
+                        {whatsAppCalls.length}
+                      </span>
+                    </button>
                   </div>
 
                   <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 pt-0.5">
                     <span>
-                      {displayedChats.length}{" "}
-                      {displayedChats.length === 1
-                        ? chatCategory === "contacts"
-                          ? "contact"
-                          : chatCategory === "channels"
-                          ? "channel"
-                          : "item"
-                        : chatCategory === "contacts"
-                        ? "contacts"
+                      {chatCategory === "calls"
+                        ? `${displayedCalls.length} ${displayedCalls.length === 1 ? "call" : "calls"} (last 5 days)`
                         : chatCategory === "channels"
-                        ? "channels"
-                        : "items"}{" "}
-                      on device
+                        ? `${displayedChats.length} ${displayedChats.length === 1 ? "channel" : "channels"}`
+                        : `${displayedChats.length} ${displayedChats.length === 1 ? "chat" : "chats"}`}
                     </span>
                     <span className="font-semibold text-emerald-600 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Live
+                      Live Real-Time
                     </span>
                   </div>
                 </div>
 
-                {/* Chats & Contacts List */}
+                {/* List Container: Calls View or Chats/Channels View */}
                 <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-100 overscroll-contain">
-                  {loading && activeCategoryChats.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-gray-400 space-y-1">
-                      <span className="animate-spin text-lg block">↻</span>
-                      <p>
-                        Loading real{" "}
-                        {chatCategory === "contacts"
-                          ? "contacts"
-                          : chatCategory === "channels"
-                          ? "channels"
-                          : "chats & contacts"}{" "}
-                        from device...
-                      </p>
-                    </div>
-                  ) : displayedChats.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-gray-400 space-y-2">
-                      <span className="text-2xl block">
-                        {chatCategory === "contacts" ? "👥" : chatCategory === "channels" ? "📢" : "💬"}
-                      </span>
-                      <p className="font-semibold text-gray-700">
-                        {chatCategory === "contacts"
-                          ? "No WhatsApp contacts found"
-                          : chatCategory === "channels"
-                          ? "No WhatsApp channels found"
-                          : "No chats or contacts found"}
-                      </p>
-                      <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
-                        {chatCategory === "contacts"
-                          ? "Contacts from WhatsApp and device address book will appear here."
-                          : chatCategory === "channels"
-                          ? "WhatsApp channels, community updates, and broadcasts on the device appear here."
-                          : "WhatsApp contacts and conversation messages saved from this phone appear here."}
-                      </p>
-                      {chatCategory !== "channels" && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveView("files")}
-                          className="mt-2 text-[11px] font-semibold text-emerald-600 hover:underline inline-flex items-center gap-1"
-                        >
-                          Browse WhatsApp Storage Files & Backups →
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    displayedChats.map((c) => {
-                      const isSelected = selectedChatId === c.id;
-                      const isChannelItem = isWhatsAppChannel(c);
-                      const isContactItem = Boolean(c.isContactOnly);
-                      return (
-                        <div
-                          key={c.id}
-                          onClick={() => setSelectedChatId(c.id)}
-                          className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
-                            isSelected
-                              ? "bg-emerald-50/60 border-l-4 border-emerald-500 shadow-2xs"
-                              : "hover:bg-gray-50/80"
-                          }`}
-                        >
-                          {/* Avatar */}
+                  {chatCategory === "calls" ? (
+                    /* ================= CALLS LIST (LAST 5 DAYS) ================= */
+                    loading && whatsAppCalls.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-gray-400 space-y-1">
+                        <span className="animate-spin text-lg block">↻</span>
+                        <p>Loading WhatsApp calls from last 5 days...</p>
+                      </div>
+                    ) : displayedCalls.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-gray-400 space-y-2">
+                        <span className="text-2xl block">📞</span>
+                        <p className="font-semibold text-gray-700">No calls in the last 5 days</p>
+                        <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
+                          Incoming, outgoing, and missed WhatsApp calls recorded from this phone in the last 5 days will appear here.
+                        </p>
+                      </div>
+                    ) : (
+                      displayedCalls.map((call) => {
+                        const isSelected = selectedCallId === call.id;
+                        const isMissed = call.direction === "missed";
+                        const isOutgoing = call.direction === "outgoing";
+
+                        return (
                           <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
-                              isChannelItem
-                                ? "bg-gradient-to-br from-purple-500 to-indigo-600"
-                                : isContactItem
-                                ? "bg-gradient-to-br from-sky-500 to-teal-600"
-                                : "bg-gradient-to-br from-emerald-500 to-teal-600"
+                            key={call.id}
+                            onClick={() => setSelectedCallId(call.id)}
+                            className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
+                              isSelected
+                                ? "bg-blue-50/70 border-l-4 border-blue-500 shadow-2xs"
+                                : "hover:bg-gray-50/80"
                             }`}
                           >
-                            {isChannelItem ? "📢" : isContactItem ? "👤" : c.chatName.charAt(0).toUpperCase()}
-                            <span
-                              className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                                isChannelItem ? "bg-indigo-400" : isContactItem ? "bg-sky-400" : "bg-emerald-400"
+                            {/* Call Avatar & Direction Indicator */}
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
+                                isMissed
+                                  ? "bg-rose-500"
+                                  : isOutgoing
+                                  ? "bg-blue-600"
+                                  : "bg-emerald-600"
                               }`}
-                            />
-                          </div>
-
-                          {/* Chat / Channel / Contact Information */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-1 mb-0.5">
-                              <h4 className="text-xs font-bold text-gray-900 truncate">
-                                {c.chatName}
-                              </h4>
-                              <span className="text-[10px] text-gray-400 shrink-0 font-medium">
-                                {formatChatTime(c.lastMessageAt)}
-                              </span>
+                            >
+                              {isMissed ? "📵" : call.call_type === "video" ? "📹" : "📞"}
+                              <span
+                                className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                                  isMissed ? "bg-rose-400" : isOutgoing ? "bg-blue-400" : "bg-emerald-400"
+                                }`}
+                              />
                             </div>
 
-                            {c.subtitle && c.subtitle !== "WhatsApp Contact" && (
-                              <p className="text-[10px] text-gray-500 font-mono truncate mb-0.5">
-                                {c.subtitle}
-                              </p>
-                            )}
+                            {/* Call Details */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1 mb-0.5">
+                                <h4 className="text-xs font-bold text-gray-900 truncate">
+                                  {call.name || call.number || "WhatsApp Contact"}
+                                </h4>
+                                <span className="text-[10px] text-gray-400 shrink-0 font-medium">
+                                  {formatChatTime(call.timestamp)}
+                                </span>
+                              </div>
 
-                            {/* Two-line preview */}
-                            <p
-                              className="text-[11px] text-gray-600 line-clamp-2 leading-snug flex items-start gap-1"
-                              title={c.lastMessage || ""}
+                              {call.number && call.number !== call.name && (
+                                <p className="text-[10px] text-gray-500 font-mono truncate mb-0.5">
+                                  {call.number}
+                                </p>
+                              )}
+
+                              {/* Direction & Status info */}
+                              <div className="flex items-center gap-1.5 text-[11px] text-gray-600 leading-snug">
+                                {isMissed ? (
+                                  <span className="text-rose-600 font-semibold flex items-center gap-1 text-[11px]">
+                                    <span>📵</span>
+                                    <span>Missed {call.call_type === "video" ? "video call" : "voice call"}</span>
+                                  </span>
+                                ) : isOutgoing ? (
+                                  <span className="text-blue-600 font-semibold flex items-center gap-1 text-[11px]">
+                                    <span>↗</span>
+                                    <span>Outgoing {call.call_type === "video" ? "video call" : "voice call"}</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[11px]">
+                                    <span>↙</span>
+                                    <span>Incoming {call.call_type === "video" ? "video call" : "voice call"}</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="mt-1 flex items-center gap-1.5">
+                                {call.duration_sec > 0 && (
+                                  <span className="text-[9px] font-mono font-medium bg-gray-100 text-gray-700 px-1.5 py-0.2 rounded">
+                                    ⏱ {formatCallDuration(call.duration_sec)}
+                                  </span>
+                                )}
+                                <span
+                                  className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
+                                    isMissed
+                                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                                      : isOutgoing
+                                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  }`}
+                                >
+                                  {isMissed ? "Missed" : isOutgoing ? "Outgoing" : "Incoming"}
+                                </span>
+                                <span className="text-[9px] font-semibold text-gray-500 bg-gray-50 border border-gray-200 px-1 py-0.2 rounded">
+                                  Last 5 Days
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )
+                  ) : (
+                    /* ================= CHATS & CHANNELS LIST ================= */
+                    loading && activeCategoryChats.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-gray-400 space-y-1">
+                        <span className="animate-spin text-lg block">↻</span>
+                        <p>
+                          Loading {chatCategory === "channels" ? "channels" : "chats"} from phone...
+                        </p>
+                      </div>
+                    ) : displayedChats.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-gray-400 space-y-2">
+                        <span className="text-2xl block">
+                          {chatCategory === "channels" ? "📢" : "💬"}
+                        </span>
+                        <p className="font-semibold text-gray-700">
+                          {chatCategory === "channels"
+                            ? "No WhatsApp channels found"
+                            : "No WhatsApp chats found"}
+                        </p>
+                        <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
+                          {chatCategory === "channels"
+                            ? "WhatsApp broadcast channels and community updates from this phone appear here."
+                            : "WhatsApp chats (e.g. Team lead, Kavin Bro, Niklaus) from this phone appear here."}
+                        </p>
+                      </div>
+                    ) : (
+                      displayedChats.map((c) => {
+                        const isSelected = selectedChatId === c.id;
+                        const isChannelItem = isWhatsAppChannel(c);
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={() => setSelectedChatId(c.id)}
+                            className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
+                              isSelected
+                                ? "bg-emerald-50/60 border-l-4 border-emerald-500 shadow-2xs"
+                                : "hover:bg-gray-50/80"
+                            }`}
+                          >
+                            {/* Avatar */}
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
+                                isChannelItem
+                                  ? "bg-gradient-to-br from-purple-500 to-indigo-600"
+                                  : "bg-gradient-to-br from-emerald-500 to-teal-600"
+                              }`}
                             >
-                              {!isContactItem && c.lastIsOutgoing ? (
-                                <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
-                                  ↗ Sent:
-                                </span>
-                              ) : !isContactItem && c.lastMessage && c.lastMessage !== "Registered WhatsApp Contact" ? (
-                                <span className="text-sky-600 font-bold text-[10px] shrink-0" title="Received from Contact">
-                                  ↙ Recv:
-                                </span>
-                              ) : null}
-                              <span className="truncate">
-                                {isContactItem
-                                  ? (c.subtitle && c.subtitle !== "WhatsApp Contact" ? c.subtitle : "WhatsApp Contact")
-                                  : (c.lastMessage || "(No messages yet)")}
-                              </span>
-                            </p>
+                              {isChannelItem ? "📢" : c.chatName.charAt(0).toUpperCase()}
+                              <span
+                                className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                                  isChannelItem ? "bg-indigo-400" : "bg-emerald-400"
+                                }`}
+                              />
+                            </div>
 
-                            <div className="mt-1 flex items-center gap-1.5">
-                              {isContactItem ? (
-                                <span className="text-[9px] font-semibold bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.2 rounded">
-                                  👤 Contact
+                            {/* Chat / Channel Information */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1 mb-0.5">
+                                <h4 className="text-xs font-bold text-gray-900 truncate">
+                                  {c.chatName}
+                                </h4>
+                                <span className="text-[10px] text-gray-400 shrink-0 font-medium">
+                                  {formatChatTime(c.lastMessageAt)}
                                 </span>
-                              ) : (
+                              </div>
+
+                              {c.subtitle && c.subtitle !== "WhatsApp Contact" && (
+                                <p className="text-[10px] text-gray-500 font-mono truncate mb-0.5">
+                                  {c.subtitle}
+                                </p>
+                              )}
+
+                              {/* Two-line preview */}
+                              <p
+                                className="text-[11px] text-gray-600 line-clamp-2 leading-snug flex items-start gap-1"
+                                title={c.lastMessage || ""}
+                              >
+                                {c.lastIsOutgoing ? (
+                                  <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
+                                    ↗ Sent:
+                                  </span>
+                                ) : c.lastMessage ? (
+                                  <span className="text-sky-600 font-bold text-[10px] shrink-0" title="Received from Contact">
+                                    ↙ Recv:
+                                  </span>
+                                ) : null}
+                                <span className="truncate">
+                                  {c.lastMessage || "(No messages yet)"}
+                                </span>
+                              </p>
+
+                              <div className="mt-1 flex items-center gap-1.5">
                                 <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
                                   {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
                                 </span>
-                              )}
-                              <span
-                                className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
-                                  isChannelItem
-                                    ? "bg-purple-50 text-purple-700 border-purple-200"
-                                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                }`}
-                              >
-                                {isChannelItem ? "Channel" : "WhatsApp"}
-                              </span>
+                                <span
+                                  className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
+                                    isChannelItem
+                                      ? "bg-purple-50 text-purple-700 border-purple-200"
+                                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  }`}
+                                >
+                                  {isChannelItem ? "Channel" : "WhatsApp Chat"}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })
+                        );
+                      })
+                    )
                   )}
                 </div>
               </div>
 
               {/* ----------------------------------------------------------- */}
-              {/* COLUMN 3: SELECTED CHAT CONVERSATION (LAST 5 DAYS DATA)      */}
+              {/* COLUMN 3: SELECTED CONVERSATION OR CALL DETAILS VIEW        */}
               {/* ----------------------------------------------------------- */}
               <div className="flex-1 min-w-0 flex flex-col bg-slate-100/60 h-full min-h-0 overflow-hidden">
-                {selectedChatSummary ? (
-                  <>
-                    {/* Conversation Header */}
-                    <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs shrink-0">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
-                            isWhatsAppChannel(selectedChatSummary)
-                              ? "bg-purple-600"
-                              : selectedChatSummary.isContactOnly
-                              ? "bg-sky-600"
-                              : "bg-emerald-600"
-                          }`}
-                        >
-                          {isWhatsAppChannel(selectedChatSummary)
-                            ? "📢"
-                            : selectedChatSummary.isContactOnly
-                            ? "👤"
-                            : selectedChatSummary.chatName.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="text-xs font-bold text-gray-900 truncate">
-                            {selectedChatSummary.chatName}
-                          </h3>
-                          <p className="text-[10px] text-gray-400 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                            <span className="truncate">
-                              {selectedChatSummary.subtitle || "WhatsApp Contact"} •{" "}
-                              {selectedChatSummary.isContactOnly ? "Contact Directory" : "Conversation Activity"}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
-                          <button
-                            type="button"
-                            onClick={() => setTimeFilter("2days")}
-                            className={`px-2 py-0.5 rounded transition ${
-                              timeFilter === "2days"
-                                ? "bg-white text-gray-900 shadow-2xs font-semibold"
-                                : "text-gray-500 hover:text-gray-900"
+                {chatCategory === "calls" ? (
+                  /* ========================================================= */
+                  /* CALL DETAILS & 5-DAY CALL HISTORY VIEW                    */
+                  /* ========================================================= */
+                  selectedCallSummary ? (
+                    <>
+                      {/* Call Header */}
+                      <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs shrink-0">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
+                              selectedCallSummary.direction === "missed"
+                                ? "bg-rose-500"
+                                : selectedCallSummary.direction === "outgoing"
+                                ? "bg-blue-600"
+                                : "bg-emerald-600"
                             }`}
                           >
-                            Last 2 Days
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setTimeFilter("all")}
-                            className={`px-2 py-0.5 rounded transition ${
-                              timeFilter === "all"
-                                ? "bg-white text-gray-900 shadow-2xs font-semibold"
-                                : "text-gray-500 hover:text-gray-900"
-                            }`}
-                          >
-                            All ({selectedChatSummary.totalMessages})
-                          </button>
-                        </div>
-                        <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
-                          {activeThreadMessages.length} msgs
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* 2-Day Real Activity & User Login Time Banner */}
-                    <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-sm">📅</span>
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
-                          <span className="font-bold text-emerald-900 text-[11px]">
-                            Last 2 Days WhatsApp Chat Contents
-                          </span>
-                          <span className="hidden sm:inline text-emerald-300">•</span>
-                          <span className="text-[11px] text-emerald-800 truncate">
-                            Dashboard Login:{" "}
-                            <strong className="font-semibold text-emerald-950">
-                              {formatMessageDateTime(dashboardLoginTime.toISOString())}
-                            </strong>
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] font-semibold text-emerald-800 bg-white px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1 shadow-2xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Live Real-Time
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Messages Scroll Canvas */}
-                    <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-4 bg-[#efeae2]/40 bg-[radial-gradient(#d1d5db_1px,transparent_1px)] [background-size:16px_16px]">
-                      {messagesLoading ? (
-                        <div className="text-center py-12 text-xs text-gray-400">
-                          Loading messages...
-                        </div>
-                      ) : activeThreadMessages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-                          <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6 space-y-4">
-                            {/* Avatar */}
-                            <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
-                              {selectedChatSummary.chatName.charAt(0).toUpperCase()}
-                            </div>
-
-                            {/* Name & Phone Info */}
-                            <div>
-                              <h3 className="text-base font-bold text-gray-900 truncate">
-                                {selectedChatSummary.chatName}
-                              </h3>
-                              {selectedChatSummary.subtitle && selectedChatSummary.subtitle !== "WhatsApp Contact" && (
-                                <p className="text-xs font-mono text-gray-500 mt-0.5">
-                                  {selectedChatSummary.subtitle}
-                                </p>
-                              )}
-                              <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                WhatsApp Synced Contact
+                            {selectedCallSummary.direction === "missed" ? "📵" : selectedCallSummary.call_type === "video" ? "📹" : "📞"}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-xs font-bold text-gray-900 truncate">
+                              {selectedCallSummary.name || selectedCallSummary.number || "WhatsApp Contact"}
+                            </h3>
+                            <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5 truncate">
+                              {selectedCallSummary.number && <span>{selectedCallSummary.number}</span>}
+                              <span>•</span>
+                              <span className="capitalize font-sans font-medium text-gray-600">
+                                {selectedCallSummary.direction} {selectedCallSummary.call_type === "video" ? "Video Call" : "Voice Call"}
                               </span>
-                            </div>
+                            </p>
+                          </div>
+                        </div>
 
-                            <div className="border-t border-gray-100 pt-3 text-left space-y-2 text-xs">
-                              <div className="flex items-center justify-between text-gray-500">
-                                <span>Contact Name</span>
-                                <strong className="text-gray-800 truncate max-w-[180px]">
-                                  {selectedChatSummary.chatName}
-                                </strong>
-                              </div>
-                              {selectedChatSummary.subtitle && selectedChatSummary.subtitle !== "WhatsApp Contact" && (
-                                <div className="flex items-center justify-between text-gray-500">
-                                  <span>Phone / ID</span>
-                                  <strong className="text-gray-800 font-mono">
-                                    {selectedChatSummary.subtitle}
-                                  </strong>
-                                </div>
-                              )}
-                              <div className="flex items-center justify-between text-gray-500">
-                                <span>Status</span>
-                                <span className="text-emerald-600 font-medium">In WhatsApp Address Book</span>
-                              </div>
-                              <div className="flex items-center justify-between text-gray-500">
-                                <span>Last Activity</span>
-                                <span className="text-gray-700 font-medium">
-                                  {formatMessageDateTime(selectedChatSummary.lastMessageAt || "")}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                              selectedCallSummary.direction === "missed"
+                                ? "bg-rose-50 text-rose-700 border-rose-200"
+                                : selectedCallSummary.direction === "outgoing"
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}
+                          >
+                            {selectedCallSummary.direction === "missed"
+                              ? "📵 Missed Call"
+                              : selectedCallSummary.direction === "outgoing"
+                              ? "↗ Outgoing Call"
+                              : "↙ Incoming Call"}
+                          </span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                            Last 5 Days
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 5-Day Call History Banner */}
+                      <div className="px-3.5 py-2 bg-gradient-to-r from-blue-50 via-sky-50/70 to-blue-50 border-b border-blue-100 flex flex-wrap items-center justify-between gap-2 text-xs text-blue-950 shrink-0 shadow-2xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm">📞</span>
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
+                            <span className="font-bold text-blue-900 text-[11px]">
+                              WhatsApp Call Record (Last 5 Days History)
+                            </span>
+                            <span className="hidden sm:inline text-blue-300">•</span>
+                            <span className="text-[11px] text-blue-800 truncate">
+                              Dashboard Login:{" "}
+                              <strong className="font-semibold text-blue-950">
+                                {formatMessageDateTime(dashboardLoginTime.toISOString())}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] font-semibold text-blue-800 bg-white px-2 py-0.5 rounded-full border border-blue-200 flex items-center gap-1 shadow-2xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                            Live Real-Time
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Call Details Canvas */}
+                      <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-4 bg-slate-50/70">
+                        {/* Selected Call Detail Card */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 space-y-4">
+                          <div className="flex items-center gap-4">
+                            <div
+                              className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-md text-white shrink-0 ${
+                                selectedCallSummary.direction === "missed"
+                                  ? "bg-gradient-to-br from-rose-500 to-red-600"
+                                  : selectedCallSummary.direction === "outgoing"
+                                  ? "bg-gradient-to-br from-blue-500 to-indigo-600"
+                                  : "bg-gradient-to-br from-emerald-500 to-teal-600"
+                              }`}
+                            >
+                              {selectedCallSummary.direction === "missed" ? "📵" : selectedCallSummary.call_type === "video" ? "📹" : "📞"}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h3 className="text-base font-bold text-gray-900 truncate">
+                                {selectedCallSummary.name || selectedCallSummary.number || "WhatsApp Contact"}
+                              </h3>
+                              <p className="text-xs font-mono text-gray-500 mt-0.5">
+                                {selectedCallSummary.number || "Phone number hidden/unavailable"}
+                              </p>
+                              <div className="flex items-center gap-2 mt-2">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
+                                    selectedCallSummary.direction === "missed"
+                                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                                      : selectedCallSummary.direction === "outgoing"
+                                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  }`}
+                                >
+                                  {selectedCallSummary.direction === "missed"
+                                    ? "Missed Call"
+                                    : selectedCallSummary.direction === "outgoing"
+                                    ? "Outgoing Call"
+                                    : "Incoming Call"}
+                                </span>
+                                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                                  WhatsApp Call Log
                                 </span>
                               </div>
                             </div>
+                          </div>
 
-                            <div className="bg-emerald-50/50 rounded-xl p-3 text-[11px] text-emerald-800/80 leading-relaxed text-left border border-emerald-100/60">
-                              💡 This contact is synced from the device's WhatsApp contact directory. When new messages are sent or received, they will appear live in this thread.
+                          {/* Call Information Metadata Grid */}
+                          <div className="border-t border-gray-100 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                            <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-1">
+                              <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Call Timestamp</span>
+                              <p className="font-semibold text-gray-800">
+                                {formatMessageDateTime(selectedCallSummary.timestamp)}
+                              </p>
+                              <p className="text-[10px] text-gray-500">
+                                {formatChatTime(selectedCallSummary.timestamp)}
+                              </p>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => loadDeviceChatData(true)}
-                              className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs"
-                            >
-                              <span>↻</span>
-                              <span>Check for New Messages</span>
-                            </button>
+                            <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-1">
+                              <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Duration</span>
+                              <p className="font-semibold text-gray-800 font-mono">
+                                {selectedCallSummary.duration_sec > 0
+                                  ? formatCallDuration(selectedCallSummary.duration_sec)
+                                  : selectedCallSummary.direction === "missed"
+                                  ? "0s (Missed / Unanswered)"
+                                  : "Completed Call"}
+                              </p>
+                              <p className="text-[10px] text-gray-500">
+                                {selectedCallSummary.direction === "missed" ? "Not answered by target" : "Call connected"}
+                              </p>
+                            </div>
 
-                            {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
-                              <button
-                                type="button"
-                                onClick={() => setTimeFilter("all")}
-                                className="text-emerald-700 font-semibold underline text-[11px] block mx-auto pt-1"
-                              >
-                                Show all stored messages →
-                              </button>
-                            )}
+                            <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-1">
+                              <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Call Medium & Type</span>
+                              <p className="font-semibold text-gray-800 capitalize">
+                                WhatsApp {selectedCallSummary.call_type === "video" ? "Video Call" : "Voice Call"}
+                              </p>
+                              <p className="text-[10px] text-gray-500">
+                                Direction: {selectedCallSummary.direction}
+                              </p>
+                            </div>
+
+                            <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-1">
+                              <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Sync Source</span>
+                              <p className="font-semibold text-gray-800">
+                                {selectedCallSummary.source === "whatsapp" ? "WhatsApp Call Notification" : "Device Call Log"}
+                              </p>
+                              <p className="text-[10px] text-blue-600 font-medium">
+                                Last 5 Days Activity Window
+                              </p>
+                            </div>
                           </div>
                         </div>
-                      ) : (
-                        groupedMessages.map((group) => (
-                          <div key={group.dateLabel} className="space-y-3">
-                            {/* Date Badge */}
-                            <div className="flex items-center justify-center my-2">
-                              <span className="text-[10px] font-semibold px-3 py-1 rounded-full bg-white/90 text-gray-600 shadow-2xs border border-gray-200/70 uppercase tracking-wide">
-                                {group.dateLabel}
-                              </span>
-                            </div>
 
-                            {/* Chat Speech Bubbles - SENDER (Target) vs RECEIVER (Contact) */}
-                            {group.items.map((m) => {
-                              const isTargetSent = m.isOutgoing;
-                              return (
+                        {/* Recent 5-Day Calls with this Contact */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+                              <span>📋</span>
+                              <span>All Calls with this Contact (Last 5 Days)</span>
+                            </h4>
+                            <span className="text-[10px] font-semibold text-gray-500">
+                              {
+                                whatsAppCalls.filter(
+                                  (c) =>
+                                    (c.number && c.number === selectedCallSummary.number) ||
+                                    c.name === selectedCallSummary.name
+                                ).length
+                              }{" "}
+                              recorded
+                            </span>
+                          </div>
+
+                          <div className="divide-y divide-gray-100">
+                            {whatsAppCalls
+                              .filter(
+                                (c) =>
+                                  (c.number && c.number === selectedCallSummary.number) ||
+                                  c.name === selectedCallSummary.name
+                              )
+                              .map((c) => (
                                 <div
-                                  key={m.id}
-                                  className={`flex w-full my-2.5 ${isTargetSent ? "justify-end" : "justify-start"}`}
+                                  key={c.id}
+                                  onClick={() => setSelectedCallId(c.id)}
+                                  className={`py-2 px-2 rounded-lg flex items-center justify-between text-xs cursor-pointer transition ${
+                                    c.id === selectedCallSummary.id ? "bg-blue-50 font-semibold" : "hover:bg-gray-50"
+                                  }`}
                                 >
-                                  <div
-                                    className={`max-w-[85%] sm:max-w-[78%] md:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-xs space-y-1 text-xs relative ${
-                                      isTargetSent
-                                        ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-300/60"
-                                        : "bg-white text-gray-900 rounded-bl-xs border border-gray-200"
-                                    }`}
-                                  >
-                                    {/* Verification Header: Sent by Target vs Received from Contact */}
-                                    <div
-                                      className={`flex items-center justify-between gap-3 pb-1 border-b text-[10px] ${
-                                        isTargetSent
-                                          ? "border-emerald-600/10 text-emerald-800"
-                                          : "border-gray-100 text-gray-700"
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs text-white ${
+                                        c.direction === "missed"
+                                          ? "bg-rose-500"
+                                          : c.direction === "outgoing"
+                                          ? "bg-blue-600"
+                                          : "bg-emerald-600"
                                       }`}
                                     >
-                                      <span className="font-bold flex items-center gap-1 truncate">
-                                        <span className="text-sm font-black">{isTargetSent ? "↗" : "↙"}</span>
-                                        <span className="truncate">
-                                          {isTargetSent
-                                            ? "Sent by Target (Monitored Phone)"
-                                            : `Received from: ${m.sender || selectedChatSummary.chatName}`}
-                                        </span>
-                                      </span>
-                                      <span
-                                        className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
-                                          isTargetSent
-                                            ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
-                                            : "bg-sky-50 text-sky-800 border-sky-200"
-                                        }`}
-                                      >
-                                        {isTargetSent ? "Sent by Target" : "Received from Contact"}
-                                      </span>
-                                    </div>
-
-                                    {/* Media: Audio Voice Note */}
-                                    {m.mediaType === "audio" && (
-                                      <div className="py-1 flex items-center justify-between gap-3 border-b border-black/5 pb-1 mb-1">
-                                        <span className="font-semibold text-xs flex items-center gap-1">
-                                          <span>🎙️</span>
-                                          <span>Voice Note (.opus)</span>
-                                        </span>
-                                        {m.mediaPath && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleDownloadMedia(m.mediaPath!, "voice_note.opus")}
-                                            className="text-[10px] text-emerald-700 hover:underline font-semibold"
-                                          >
-                                            Download ⬇
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* Media: Image Photo */}
-                                    {m.mediaType === "image" && (
-                                      <div className="py-1 space-y-1">
-                                        {m.mediaPath && (m.mediaPath.startsWith("http") || m.mediaPath.startsWith("data:image")) ? (
-                                          <div className="rounded-xl overflow-hidden border border-black/10 shadow-xs my-1 bg-black/5">
-                                            <img
-                                              src={m.mediaPath}
-                                              alt="Chat photo"
-                                              className="w-full max-h-72 object-contain cursor-pointer hover:opacity-95 transition"
-                                              onClick={() => window.open(m.mediaPath!, "_blank")}
-                                            />
-                                          </div>
-                                        ) : (
-                                          <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20 space-y-1.5 my-1">
-                                            <div className="flex items-center justify-between gap-3">
-                                              <span className="font-semibold text-xs flex items-center gap-1.5 text-emerald-900">
-                                                <span className="text-base">📷</span>
-                                                <span>Photo Attachment</span>
-                                              </span>
-                                              {m.mediaPath && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
-                                                  className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2 py-0.5 rounded transition"
-                                                >
-                                                  Download ⬇
-                                                </button>
-                                              )}
-                                            </div>
-                                            {m.mediaPath && (
-                                              <p className="text-[10px] text-gray-500 font-mono truncate">{m.mediaPath}</p>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* Message Text Content - Showing FULL content without truncation */}
-                                    <p className="whitespace-pre-wrap break-words leading-relaxed text-[13px] text-gray-900 select-text font-normal">
-                                      {m.text}
-                                    </p>
-
-                                    {/* Message Footer: Timestamp & Delivery Status */}
-                                    <div
-                                      className={`flex items-center justify-end gap-1.5 text-[10px] pt-1 font-medium ${
-                                        isTargetSent ? "text-emerald-800/80" : "text-gray-400"
-                                      }`}
-                                    >
-                                      <span>{formatMessageTime(m.timestamp)}</span>
-                                      {isTargetSent && (
-                                        <span className="text-[#34b7f1] font-bold text-[11px] tracking-tighter" title="Sent by Target (Delivered)">
-                                          ✓✓
-                                        </span>
-                                      )}
+                                      {c.direction === "missed" ? "📵" : c.call_type === "video" ? "📹" : "📞"}
+                                    </span>
+                                    <div>
+                                      <p className="text-gray-900 text-xs capitalize">
+                                        {c.direction} {c.call_type === "video" ? "Video" : "Voice"}
+                                      </p>
+                                      <p className="text-[10px] text-gray-400">
+                                        {formatMessageDateTime(c.timestamp)}
+                                      </p>
                                     </div>
                                   </div>
+                                  <div className="text-right">
+                                    {c.duration_sec > 0 && (
+                                      <span className="text-[10px] font-mono text-gray-600 block">
+                                        ⏱ {formatCallDuration(c.duration_sec)}
+                                      </span>
+                                    )}
+                                    <span
+                                      className={`text-[9px] font-bold uppercase ${
+                                        c.direction === "missed"
+                                          ? "text-rose-600"
+                                          : c.direction === "outgoing"
+                                          ? "text-blue-600"
+                                          : "text-emerald-600"
+                                      }`}
+                                    >
+                                      {c.direction}
+                                    </span>
+                                  </div>
                                 </div>
-                              );
-                            })}
+                              ))}
                           </div>
-                        ))
-                      )}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
+                      <span className="text-4xl block">📞</span>
+                      <p className="text-sm font-semibold text-gray-700">No Call Selected</p>
+                      <p className="text-xs text-gray-400 max-w-sm">
+                        Select a call from the list on the left to view full call details and 5-day history.
+                      </p>
                     </div>
-                  </>
+                  )
                 ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
-                    <span className="text-4xl block">💬</span>
-                    <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
-                    <p className="text-xs text-gray-400 max-w-sm">
-                      Select a chat on the left panel to display the conversation thread and messages from the last 5 days.
-                    </p>
-                  </div>
+                  /* ========================================================= */
+                  /* CHATS & CHANNELS CONVERSATION VIEW (LAST 2 DAYS DATA)     */
+                  /* ========================================================= */
+                  selectedChatSummary ? (
+                    <>
+                      {/* Conversation Header */}
+                      <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shadow-2xs shrink-0">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
+                              isWhatsAppChannel(selectedChatSummary)
+                                ? "bg-purple-600"
+                                : "bg-emerald-600"
+                            }`}
+                          >
+                            {isWhatsAppChannel(selectedChatSummary)
+                              ? "📢"
+                              : selectedChatSummary.chatName.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-xs font-bold text-gray-900 truncate">
+                              {selectedChatSummary.chatName}
+                            </h3>
+                            <p className="text-[10px] text-gray-400 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                              <span className="truncate">
+                                {selectedChatSummary.subtitle || "WhatsApp Chat"} • Conversation Activity
+                              </span>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
+                            <button
+                              type="button"
+                              onClick={() => setTimeFilter("2days")}
+                              className={`px-2 py-0.5 rounded transition ${
+                                timeFilter === "2days"
+                                  ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                                  : "text-gray-500 hover:text-gray-900"
+                              }`}
+                            >
+                              Last 2 Days
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTimeFilter("all")}
+                              className={`px-2 py-0.5 rounded transition ${
+                                timeFilter === "all"
+                                  ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                                  : "text-gray-500 hover:text-gray-900"
+                              }`}
+                            >
+                              All ({selectedChatSummary.totalMessages})
+                            </button>
+                          </div>
+                          <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            {activeThreadMessages.length} msgs
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 2-Day Real Activity & User Login Time Banner */}
+                      <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm">📅</span>
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
+                            <span className="font-bold text-emerald-900 text-[11px]">
+                              Last 2 Days WhatsApp Chat Contents
+                            </span>
+                            <span className="hidden sm:inline text-emerald-300">•</span>
+                            <span className="text-[11px] text-emerald-800 truncate">
+                              Dashboard Login:{" "}
+                              <strong className="font-semibold text-emerald-950">
+                                {formatMessageDateTime(dashboardLoginTime.toISOString())}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] font-semibold text-emerald-800 bg-white px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1 shadow-2xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Live Real-Time
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Messages Scroll Canvas */}
+                      <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-4 bg-[#efeae2]/40 bg-[radial-gradient(#d1d5db_1px,transparent_1px)] [background-size:16px_16px]">
+                        {messagesLoading ? (
+                          <div className="text-center py-12 text-xs text-gray-400">
+                            Loading messages...
+                          </div>
+                        ) : activeThreadMessages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                            <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6 space-y-4">
+                              {/* Avatar */}
+                              <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
+                                {selectedChatSummary.chatName.charAt(0).toUpperCase()}
+                              </div>
+
+                              {/* Name & Info */}
+                              <div>
+                                <h3 className="text-base font-bold text-gray-900 truncate">
+                                  {selectedChatSummary.chatName}
+                                </h3>
+                                {selectedChatSummary.subtitle && selectedChatSummary.subtitle !== "WhatsApp Contact" && (
+                                  <p className="text-xs font-mono text-gray-500 mt-0.5">
+                                    {selectedChatSummary.subtitle}
+                                  </p>
+                                )}
+                                <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  WhatsApp Monitored Chat
+                                </span>
+                              </div>
+
+                              <div className="border-t border-gray-100 pt-3 text-left space-y-2 text-xs">
+                                <div className="flex items-center justify-between text-gray-500">
+                                  <span>Chat Name</span>
+                                  <strong className="text-gray-800 truncate max-w-[180px]">
+                                    {selectedChatSummary.chatName}
+                                  </strong>
+                                </div>
+                                <div className="flex items-center justify-between text-gray-500">
+                                  <span>Last Activity</span>
+                                  <span className="text-gray-700 font-medium">
+                                    {formatMessageDateTime(selectedChatSummary.lastMessageAt || "")}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-gray-500">
+                                  <span>Total Logged</span>
+                                  <span className="text-gray-700 font-medium">
+                                    {selectedChatSummary.totalMessages} messages
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="bg-emerald-50/50 rounded-xl p-3 text-[11px] text-emerald-800/80 leading-relaxed text-left border border-emerald-100/60">
+                                💡 Showing conversation from the last 2 days. When new incoming or outgoing messages occur, they update live in real-time.
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => loadDeviceChatData(true)}
+                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs"
+                              >
+                                <span>↻</span>
+                                <span>Check for New Messages</span>
+                              </button>
+
+                              {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setTimeFilter("all")}
+                                  className="text-emerald-700 font-semibold underline text-[11px] block mx-auto pt-1"
+                                >
+                                  Show all stored messages →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          groupedMessages.map((group) => (
+                            <div key={group.dateLabel} className="space-y-3">
+                              {/* Date Badge */}
+                              <div className="flex items-center justify-center my-2">
+                                <span className="text-[10px] font-semibold px-3 py-1 rounded-full bg-white/90 text-gray-600 shadow-2xs border border-gray-200/70 uppercase tracking-wide">
+                                  {group.dateLabel}
+                                </span>
+                              </div>
+
+                              {/* Chat Speech Bubbles - SENDER (Target) vs RECEIVER (Contact) */}
+                              {group.items.map((m) => {
+                                const isTargetSent = m.isOutgoing;
+                                return (
+                                  <div
+                                    key={m.id}
+                                    className={`flex w-full my-2.5 ${isTargetSent ? "justify-end" : "justify-start"}`}
+                                  >
+                                    <div
+                                      className={`max-w-[85%] sm:max-w-[78%] md:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-xs space-y-1 text-xs relative ${
+                                        isTargetSent
+                                          ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-300/60"
+                                          : "bg-white text-gray-900 rounded-bl-xs border border-gray-200"
+                                      }`}
+                                    >
+                                      {/* Verification Header: Sent by Target vs Received from Contact */}
+                                      <div
+                                        className={`flex items-center justify-between gap-3 pb-1 border-b text-[10px] ${
+                                          isTargetSent
+                                            ? "border-emerald-600/10 text-emerald-800"
+                                            : "border-gray-100 text-gray-700"
+                                        }`}
+                                      >
+                                        <span className="font-bold flex items-center gap-1 truncate">
+                                          <span className="text-sm font-black">{isTargetSent ? "↗" : "↙"}</span>
+                                          <span className="truncate">
+                                            {isTargetSent
+                                              ? "Sent by Target (Monitored Phone)"
+                                              : `Received from: ${m.sender || selectedChatSummary.chatName}`}
+                                          </span>
+                                        </span>
+                                        <span
+                                          className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
+                                            isTargetSent
+                                              ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
+                                              : "bg-sky-50 text-sky-800 border-sky-200"
+                                          }`}
+                                        >
+                                          {isTargetSent ? "Sent by Target" : "Received from Contact"}
+                                        </span>
+                                      </div>
+
+                                      {/* Media: Audio Voice Note */}
+                                      {m.mediaType === "audio" && (
+                                        <div className="py-1 flex items-center justify-between gap-3 border-b border-black/5 pb-1 mb-1">
+                                          <span className="font-semibold text-xs flex items-center gap-1">
+                                            <span>🎙️</span>
+                                            <span>Voice Note (.opus)</span>
+                                          </span>
+                                          {m.mediaPath && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDownloadMedia(m.mediaPath!, "voice_note.opus")}
+                                              className="text-[10px] text-emerald-700 hover:underline font-semibold"
+                                            >
+                                              Download ⬇
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Media: Image Photo */}
+                                      {m.mediaType === "image" && (
+                                        <div className="py-1 space-y-1">
+                                          {m.mediaPath && (m.mediaPath.startsWith("http") || m.mediaPath.startsWith("data:image")) ? (
+                                            <div className="rounded-xl overflow-hidden border border-black/10 shadow-xs my-1 bg-black/5">
+                                              <img
+                                                src={m.mediaPath}
+                                                alt="Chat photo"
+                                                className="w-full max-h-72 object-contain cursor-pointer hover:opacity-95 transition"
+                                                onClick={() => window.open(m.mediaPath!, "_blank")}
+                                              />
+                                            </div>
+                                          ) : (
+                                            <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20 space-y-1.5 my-1">
+                                              <div className="flex items-center justify-between gap-3">
+                                                <span className="font-semibold text-xs flex items-center gap-1.5 text-emerald-900">
+                                                  <span className="text-base">📷</span>
+                                                  <span>Photo Attachment</span>
+                                                </span>
+                                                {m.mediaPath && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
+                                                    className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2 py-0.5 rounded transition"
+                                                  >
+                                                    Download ⬇
+                                                  </button>
+                                                )}
+                                              </div>
+                                              {m.mediaPath && (
+                                                <p className="text-[10px] text-gray-500 font-mono truncate">{m.mediaPath}</p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Message Text Content */}
+                                      <p className="whitespace-pre-wrap break-words leading-relaxed text-[13px] text-gray-900 select-text font-normal">
+                                        {m.text}
+                                      </p>
+
+                                      {/* Message Footer: Timestamp & Delivery Status */}
+                                      <div
+                                        className={`flex items-center justify-end gap-1.5 text-[10px] pt-1 font-medium ${
+                                          isTargetSent ? "text-emerald-800/80" : "text-gray-400"
+                                        }`}
+                                      >
+                                        <span>{formatMessageTime(m.timestamp)}</span>
+                                        {isTargetSent && (
+                                          <span className="text-[#34b7f1] font-bold text-[11px] tracking-tighter" title="Sent by Target (Delivered)">
+                                            ✓✓
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
+                      <span className="text-4xl block">💬</span>
+                      <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
+                      <p className="text-xs text-gray-400 max-w-sm">
+                        Select a chat from the left panel to display the conversation thread and messages from the last 2 days.
+                      </p>
+                    </div>
+                  )
                 )}
               </div>
             </>

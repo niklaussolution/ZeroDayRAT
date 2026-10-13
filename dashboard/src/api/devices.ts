@@ -14,6 +14,7 @@ import type {
   WebHistoryEntry,
   WhatsAppChatSummary,
   WhatsAppMessage,
+  WhatsAppCallEntry,
 } from "./types";
 
 export const devicesApi = {
@@ -117,5 +118,12 @@ export const devicesApi = {
           ...(days ? { days } : {}),
         },
       })
+      .then((r) => r.data),
+
+  whatsAppCalls: (id: string) =>
+    apiClient
+      .get<{ whatsapp_calls: WhatsAppCallEntry[]; device_calls: WhatsAppCallEntry[] }>(
+        `/api/devices/${id}/whatsapp/calls`
+      )
       .then((r) => r.data),
 };

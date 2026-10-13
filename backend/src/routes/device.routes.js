@@ -450,81 +450,89 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    const waResult = await pool.query(
-      `WITH wa_chats AS (
-         SELECT chat_name,
-                COUNT(*)::int AS total_messages,
-                MAX(message_time) AS last_message_at,
-                (ARRAY_AGG(message_text ORDER BY message_time DESC))[1] AS last_message,
-                (ARRAY_AGG(is_outgoing ORDER BY message_time DESC))[1] AS last_is_outgoing
-         FROM whatsapp_messages
-         WHERE device_id = $1
-           AND chat_name IS NOT NULL
-           AND TRIM(chat_name) != ''
-           AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
-         GROUP BY chat_name
-       ),
-       contact_sources AS (
-         SELECT TRIM(contact_name) AS chat_name,
-                1 AS total_messages,
-                MAX(called_at) AS last_message_at,
-                COALESCE(MAX(counterparty), 'WhatsApp Contact') AS last_message,
-                false AS last_is_outgoing
-         FROM call_logs
-         WHERE device_id = $1
-           AND contact_name IS NOT NULL
-           AND TRIM(contact_name) != ''
-           AND contact_name NOT ILIKE '%BNK%'
-           AND contact_name NOT ILIKE '%BANK%'
-           AND contact_name NOT ILIKE '%AIRTEL%'
-           AND contact_name NOT ILIKE '%JIO%'
-           AND contact_name NOT ILIKE '%OTP%'
-           AND contact_name NOT ILIKE '%PROMO%'
-         GROUP BY TRIM(contact_name)
-         UNION ALL
-         SELECT TRIM(contact_name) AS chat_name,
-                1 AS total_messages,
-                MAX(message_at) AS last_message_at,
-                COALESCE(MAX(counterparty), 'WhatsApp Contact') AS last_message,
-                false AS last_is_outgoing
-         FROM sms_logs
-         WHERE device_id = $1
-           AND contact_name IS NOT NULL
-           AND TRIM(contact_name) != ''
-           AND contact_name NOT ILIKE '%BNK%'
-           AND contact_name NOT ILIKE '%BANK%'
-           AND contact_name NOT ILIKE '%AIRTEL%'
-           AND contact_name NOT ILIKE '%JIO%'
-           AND contact_name NOT ILIKE '%OTP%'
-           AND contact_name NOT ILIKE '%PROMO%'
-         GROUP BY TRIM(contact_name)
-       ),
-       all_contacts AS (
-         SELECT * FROM wa_chats
-         UNION ALL
-         SELECT cs.*
-         FROM contact_sources cs
-         WHERE NOT EXISTS (
-           SELECT 1 FROM wa_chats wc
-           WHERE LOWER(TRIM(wc.chat_name)) = LOWER(TRIM(cs.chat_name))
-         )
-       )
-       SELECT DISTINCT ON (LOWER(TRIM(chat_name)))
-              chat_name,
-              total_messages,
-              last_message_at,
-              last_message,
-              last_is_outgoing
-       FROM all_contacts
-       ORDER BY LOWER(TRIM(chat_name)), total_messages DESC, last_message_at DESC`,
+    const result = await pool.query(
+      `SELECT chat_name,
+              COUNT(*)::int AS total_messages,
+              MAX(message_time) AS last_message_at,
+              (ARRAY_AGG(message_text ORDER BY message_time DESC))[1] AS last_message,
+              (ARRAY_AGG(is_outgoing ORDER BY message_time DESC))[1] AS last_is_outgoing
+       FROM whatsapp_messages
+       WHERE device_id = $1
+         AND chat_name IS NOT NULL
+         AND TRIM(chat_name) != ''
+         AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
+       GROUP BY chat_name
+       ORDER BY MAX(message_time) DESC`,
       [req.params.id]
     );
 
-    const sortedRows = (waResult.rows || []).sort(
-      (a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/devices/:id/whatsapp/calls
+ * Returns last 5 days WhatsApp call history with numbers, direction, duration and timestamp.
+ */
+router.get("/:id/whatsapp/calls", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    // 1. Fetch call events detected in WhatsApp messages
+    const waCallsResult = await pool.query(
+      `SELECT id::text,
+              chat_name AS name,
+              COALESCE(sender, chat_name) AS number,
+              message_text,
+              is_outgoing,
+              message_time AS timestamp,
+              CASE
+                WHEN LOWER(message_text) LIKE '%missed%' THEN 'missed'
+                WHEN is_outgoing = true THEN 'outgoing'
+                ELSE 'incoming'
+              END AS direction,
+              CASE
+                WHEN LOWER(message_text) LIKE '%video%' THEN 'video'
+                ELSE 'voice'
+              END AS call_type,
+              0 AS duration_sec,
+              'whatsapp' AS source
+       FROM whatsapp_messages
+       WHERE device_id = $1
+         AND message_time >= NOW() - INTERVAL '5 days'
+         AND (
+           LOWER(message_text) LIKE '%call%'
+           OR LOWER(message_text) LIKE '%missed%'
+           OR media_type = 'call'
+         )
+       ORDER BY message_time DESC`,
+      [req.params.id]
     );
 
-    res.json(sortedRows);
+    // 2. Fetch call logs from last 5 days
+    const callLogResult = await pool.query(
+      `SELECT id::text,
+              COALESCE(contact_name, counterparty) AS name,
+              counterparty AS number,
+              called_at AS timestamp,
+              direction,
+              duration_sec,
+              'voice' AS call_type,
+              'device' AS source
+       FROM call_logs
+       WHERE device_id = $1
+         AND called_at >= NOW() - INTERVAL '5 days'
+       ORDER BY called_at DESC`,
+      [req.params.id]
+    );
+
+    res.json({
+      whatsapp_calls: waCallsResult.rows,
+      device_calls: callLogResult.rows,
+    });
   } catch (err) {
     next(err);
   }
