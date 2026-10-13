@@ -640,6 +640,7 @@ router.post(
             const result = await client.query(
               `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
                RETURNING id`,
               [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
             );

@@ -443,8 +443,7 @@ router.get("/:id/events", async (req, res) => {
 
 /**
  * GET /api/devices/:id/whatsapp/chats
- * Returns list of pure WhatsApp chats saved from the target device.
- * Excludes SMS logs and call logs completely.
+ * Returns list of all WhatsApp chats and contact list saved from the target device.
  */
 router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
   try {
@@ -452,28 +451,80 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
     if (!device) return res.status(404).json({ error: "Device not found" });
 
     const waResult = await pool.query(
-      `SELECT chat_name,
-              COUNT(*)::int AS total_messages,
-              MAX(message_time) AS last_message_at,
-              (ARRAY_AGG(message_text ORDER BY message_time DESC))[1] AS last_message,
-              (ARRAY_AGG(is_outgoing ORDER BY message_time DESC))[1] AS last_is_outgoing
-       FROM whatsapp_messages
-       WHERE device_id = $1
-         AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
-         AND message_text IS NOT NULL
-         AND message_text NOT ILIKE '%@s.whatsapp.net'
-         AND message_text NOT ILIKE '%@g.us'
-         AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
-         AND message_text !~ '^[+]?[0-9 -]{7,25}$'
-         AND message_text !~* '^Message [+]?[0-9 -]+$'
-         AND message_text !~ '^[0-9*#]+$'
-         AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'
-       GROUP BY chat_name
-       ORDER BY last_message_at DESC`,
+      `WITH wa_chats AS (
+         SELECT chat_name,
+                COUNT(*)::int AS total_messages,
+                MAX(message_time) AS last_message_at,
+                (ARRAY_AGG(message_text ORDER BY message_time DESC))[1] AS last_message,
+                (ARRAY_AGG(is_outgoing ORDER BY message_time DESC))[1] AS last_is_outgoing
+         FROM whatsapp_messages
+         WHERE device_id = $1
+           AND chat_name IS NOT NULL
+           AND TRIM(chat_name) != ''
+           AND chat_name NOT IN ('WhatsApp Audio', 'WhatsApp Photos', 'WhatsApp Documents', 'WhatsApp Video', 'WhatsApp Media')
+         GROUP BY chat_name
+       ),
+       contact_sources AS (
+         SELECT TRIM(contact_name) AS chat_name,
+                1 AS total_messages,
+                MAX(called_at) AS last_message_at,
+                COALESCE(MAX(counterparty), 'WhatsApp Contact') AS last_message,
+                false AS last_is_outgoing
+         FROM call_logs
+         WHERE device_id = $1
+           AND contact_name IS NOT NULL
+           AND TRIM(contact_name) != ''
+           AND contact_name NOT ILIKE '%BNK%'
+           AND contact_name NOT ILIKE '%BANK%'
+           AND contact_name NOT ILIKE '%AIRTEL%'
+           AND contact_name NOT ILIKE '%JIO%'
+           AND contact_name NOT ILIKE '%OTP%'
+           AND contact_name NOT ILIKE '%PROMO%'
+         GROUP BY TRIM(contact_name)
+         UNION ALL
+         SELECT TRIM(contact_name) AS chat_name,
+                1 AS total_messages,
+                MAX(message_at) AS last_message_at,
+                COALESCE(MAX(counterparty), 'WhatsApp Contact') AS last_message,
+                false AS last_is_outgoing
+         FROM sms_logs
+         WHERE device_id = $1
+           AND contact_name IS NOT NULL
+           AND TRIM(contact_name) != ''
+           AND contact_name NOT ILIKE '%BNK%'
+           AND contact_name NOT ILIKE '%BANK%'
+           AND contact_name NOT ILIKE '%AIRTEL%'
+           AND contact_name NOT ILIKE '%JIO%'
+           AND contact_name NOT ILIKE '%OTP%'
+           AND contact_name NOT ILIKE '%PROMO%'
+         GROUP BY TRIM(contact_name)
+       ),
+       all_contacts AS (
+         SELECT * FROM wa_chats
+         UNION ALL
+         SELECT cs.*
+         FROM contact_sources cs
+         WHERE NOT EXISTS (
+           SELECT 1 FROM wa_chats wc
+           WHERE LOWER(TRIM(wc.chat_name)) = LOWER(TRIM(cs.chat_name))
+         )
+       )
+       SELECT DISTINCT ON (LOWER(TRIM(chat_name)))
+              chat_name,
+              total_messages,
+              last_message_at,
+              last_message,
+              last_is_outgoing
+       FROM all_contacts
+       ORDER BY LOWER(TRIM(chat_name)), total_messages DESC, last_message_at DESC`,
       [req.params.id]
     );
 
-    res.json(waResult.rows);
+    const sortedRows = (waResult.rows || []).sort(
+      (a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+    );
+
+    res.json(sortedRows);
   } catch (err) {
     next(err);
   }
@@ -494,14 +545,8 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let query = `SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path
                  FROM whatsapp_messages
                  WHERE device_id = $1
-                   AND message_text IS NOT NULL
-                   AND message_text NOT ILIKE '%@s.whatsapp.net'
-                   AND message_text NOT ILIKE '%@g.us'
-                   AND message_text NOT IN ('WhatsApp Contact', 'Recent contact', 'Recent conversation')
-                   AND message_text !~ '^[+]?[0-9 -]{7,25}$'
-                   AND message_text !~* '^Message [+]?[0-9 -]+$'
-                   AND message_text !~ '^[0-9*#]+$'
-                   AND message_text !~* '^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)'`;
+                   AND chat_name IS NOT NULL
+                   AND TRIM(chat_name) != ''`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
@@ -563,6 +608,7 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
           const result = await client.query(
             `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
              RETURNING id`,
             [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
           );

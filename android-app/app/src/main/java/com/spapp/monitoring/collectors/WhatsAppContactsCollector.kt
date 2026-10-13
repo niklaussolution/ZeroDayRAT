@@ -152,6 +152,82 @@ class WhatsAppContactsCollector(private val context: Context) {
             }
         }
 
+        // 4. Call Log human contacts
+        if (hasCallLogPermission()) {
+            try {
+                val projection = arrayOf(
+                    CallLog.Calls.CACHED_NAME,
+                    CallLog.Calls.NUMBER,
+                    CallLog.Calls.DATE
+                )
+                context.contentResolver.query(
+                    CallLog.Calls.CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    "${CallLog.Calls.DATE} DESC LIMIT 100"
+                )?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                    val numIdx = cursor.getColumnIndex(CallLog.Calls.NUMBER)
+                    val dateIdx = cursor.getColumnIndex(CallLog.Calls.DATE)
+                    while (cursor.moveToNext()) {
+                        val name = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() else null
+                        val num = if (numIdx >= 0) cursor.getString(numIdx)?.trim() else null
+                        val date = if (dateIdx >= 0) cursor.getLong(dateIdx) else now
+                        val displayName = if (!name.isNullOrBlank()) name else num
+                        if (!displayName.isNullOrBlank() && !isAutomatedShortCode(displayName)) {
+                            val key = displayName.lowercase()
+                            if (!contactMap.containsKey(key)) {
+                                contactMap[key] = WhatsAppMessageEntry(
+                                    chatName = displayName,
+                                    sender = displayName,
+                                    messageText = if (!num.isNullOrBlank() && num != displayName) num else "Tap to view conversation",
+                                    isOutgoing = false,
+                                    messageTimeEpochMs = date
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 5. SMS human counterparts
+        if (hasSmsPermission()) {
+            try {
+                val projection = arrayOf(
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.DATE
+                )
+                context.contentResolver.query(
+                    Telephony.Sms.CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    "${Telephony.Sms.DATE} DESC LIMIT 100"
+                )?.use { cursor ->
+                    val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+                    val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
+                    while (cursor.moveToNext()) {
+                        val addr = if (addrIdx >= 0) cursor.getString(addrIdx)?.trim() else null
+                        val date = if (dateIdx >= 0) cursor.getLong(dateIdx) else now
+                        if (!addr.isNullOrBlank() && !isAutomatedShortCode(addr)) {
+                            val key = addr.lowercase()
+                            if (!contactMap.containsKey(key)) {
+                                contactMap[key] = WhatsAppMessageEntry(
+                                    chatName = addr,
+                                    sender = addr,
+                                    messageText = "Tap to view conversation",
+                                    isOutgoing = false,
+                                    messageTimeEpochMs = date
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
         return contactMap.values.toList()
     }
 

