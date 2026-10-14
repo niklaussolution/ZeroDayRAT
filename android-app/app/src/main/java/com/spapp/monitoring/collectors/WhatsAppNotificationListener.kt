@@ -109,8 +109,43 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
         val entries = mutableListOf<WhatsAppMessageEntry>()
 
-        // 1. InboxStyle / multi-message bundled notification lines
-        if (!textLines.isNullOrEmpty()) {
+        // 1. Android MessagingStyle bundled messages (android.messages & android.historicMessages)
+        val messageBundles = extras.getParcelableArray("android.messages")
+        val historicBundles = extras.getParcelableArray("android.historicMessages")
+        val allBundles = mutableListOf<android.os.Bundle>()
+        if (historicBundles != null) {
+            for (item in historicBundles) {
+                if (item is android.os.Bundle) allBundles.add(item)
+            }
+        }
+        if (messageBundles != null) {
+            for (item in messageBundles) {
+                if (item is android.os.Bundle) allBundles.add(item)
+            }
+        }
+
+        if (allBundles.isNotEmpty()) {
+            for (b in allBundles) {
+                val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                if (bText.isBlank()) continue
+                val bTime = b.getLong("time", postTime)
+                val senderName = b.getCharSequence("sender")?.toString()?.trim()
+                    ?: title ?: chatName
+                val isOutgoing = senderName.equals("me", ignoreCase = true) ||
+                                 senderName.equals("you", ignoreCase = true)
+
+                entries += WhatsAppMessageEntry(
+                    chatName = chatName,
+                    sender = if (isOutgoing) "me" else senderName,
+                    messageText = bText,
+                    isOutgoing = isOutgoing,
+                    messageTimeEpochMs = if (bTime > 0) bTime else postTime,
+                    mediaType = mediaType,
+                    mediaPath = mediaPath
+                )
+            }
+        } else if (!textLines.isNullOrEmpty()) {
+            // 2. InboxStyle / multi-message bundled notification lines fallback
             for (line in textLines) {
                 val lineStr = line?.toString()?.trim() ?: continue
                 if (lineStr.isBlank()) continue
@@ -155,6 +190,109 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 }
             }
         }
+    }
+
+    /**
+     * Extracts all messages for a specific chat from current active notifications
+     * filtered to those within the given cutoff time (e.g. last 2 days).
+     */
+    fun extractMessagesForChat(chatName: String, cutoffTimeMs: Long): List<WhatsAppMessageEntry> {
+        val results = mutableListOf<WhatsAppMessageEntry>()
+        val activeNotifs = try { activeNotifications } catch (_: Exception) { null } ?: return emptyList()
+
+        for (sbn in activeNotifs) {
+            val pkg = sbn.packageName ?: continue
+            if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") continue
+            val notification = sbn.notification ?: continue
+            val extras = notification.extras ?: continue
+
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+            val cleanChatName = chatName.trim()
+
+            val matchesChat = (convoTitle != null && convoTitle.contains(cleanChatName, ignoreCase = true)) ||
+                              (title != null && title.contains(cleanChatName, ignoreCase = true)) ||
+                              (subText != null && subText.contains(cleanChatName, ignoreCase = true)) ||
+                              cleanChatName.contains(title.orEmpty(), ignoreCase = true) ||
+                              cleanChatName.contains(convoTitle.orEmpty(), ignoreCase = true)
+
+            if (!matchesChat) continue
+
+            val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+
+            val messageBundles = extras.getParcelableArray("android.messages")
+            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val allBundles = mutableListOf<android.os.Bundle>()
+            if (historicBundles != null) {
+                for (item in historicBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+            if (messageBundles != null) {
+                for (item in messageBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+
+            if (allBundles.isNotEmpty()) {
+                for (b in allBundles) {
+                    val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                    if (bText.isBlank()) continue
+                    val bTime = b.getLong("time", postTime)
+                    if (bTime < cutoffTimeMs) continue
+
+                    val senderName = b.getCharSequence("sender")?.toString()?.trim()
+                        ?: title ?: cleanChatName
+                    val isOutgoing = senderName.equals("me", ignoreCase = true) ||
+                                     senderName.equals("you", ignoreCase = true)
+
+                    results += WhatsAppMessageEntry(
+                        chatName = cleanChatName,
+                        sender = if (isOutgoing) "me" else senderName,
+                        messageText = bText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = bTime
+                    )
+                }
+            } else {
+                val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                if (!textLines.isNullOrEmpty()) {
+                    for (line in textLines) {
+                        val lineStr = line?.toString()?.trim() ?: continue
+                        if (lineStr.isBlank()) continue
+                        if (postTime < cutoffTimeMs) continue
+                        val colonIdx = lineStr.indexOf(':')
+                        val (s, m) = if (colonIdx > 0 && colonIdx < lineStr.length - 1) {
+                            Pair(lineStr.substring(0, colonIdx).trim(), lineStr.substring(colonIdx + 1).trim())
+                        } else {
+                            Pair(title ?: cleanChatName, lineStr)
+                        }
+                        results += WhatsAppMessageEntry(
+                            chatName = cleanChatName,
+                            sender = s,
+                            messageText = m,
+                            isOutgoing = false,
+                            messageTimeEpochMs = postTime
+                        )
+                    }
+                } else {
+                    val singleText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+                        ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+                    if (!singleText.isNullOrBlank() && postTime >= cutoffTimeMs) {
+                        results += WhatsAppMessageEntry(
+                            chatName = cleanChatName,
+                            sender = title ?: cleanChatName,
+                            messageText = singleText,
+                            isOutgoing = false,
+                            messageTimeEpochMs = postTime
+                        )
+                    }
+                }
+            }
+        }
+
+        return results
     }
 
     companion object {

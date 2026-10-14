@@ -298,6 +298,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [activeThreadMessages, setActiveThreadMessages] = useState<UnifiedChatMessage[]>([]);
   const fetchCurrentChatRef = useRef<((isInitial: boolean) => void) | null>(null);
 
+  // Mobile app chat request state
+  const [requestingChat, setRequestingChat] = useState<string | null>(null);
+  const [mobileRequestStatus, setMobileRequestStatus] = useState<{
+    chat: string;
+    text: string;
+    state: "pending" | "success" | "error";
+  } | null>(null);
+
   // WhatsApp Storage Files State
   const [files, setFiles] = useState<FileEntryDtoLocal[] | null>(null);
   const [filesLoading, setFilesLoading] = useState(false);
@@ -388,19 +396,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         );
       };
 
-      const hasRealConversation = (chatName: string, text: string | null | undefined): boolean => {
-        const key = chatName.trim().toLowerCase();
-        const realMsg = latestRealByChat.get(key);
-        if (realMsg && realMsg.message_text && !isContactSyncPlaceholder(realMsg.message_text)) {
-          return true;
-        }
-        if (realMsg?.media_path) return true;
-        if (text && !isContactSyncPlaceholder(text) && text.trim().toLowerCase() !== key) {
-          return true;
-        }
-        return false;
-      };
-
       const cleanedChats: WhatsAppChatSummary[] = [];
       const seenChats = new Set<string>();
 
@@ -416,12 +411,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         const latestText = rTime > cTime ? (realMsg?.message_text || c.last_message) : (c.last_message || realMsg?.message_text || null);
         const latestOutgoing = rTime > cTime ? Boolean(realMsg?.is_outgoing) : Boolean(c.last_is_outgoing);
 
-        // Filter out contacts that have no genuine WhatsApp conversation (SMS/address book placeholders)
-        if (!hasRealConversation(c.chat_name, latestText)) continue;
-
         cleanedChats.push({
           chat_name: c.chat_name.trim(),
-          total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 1),
+          total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 0),
           last_message_at: latestTime,
           last_message: latestText,
           last_is_outgoing: latestOutgoing,
@@ -432,7 +424,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       for (const [key, realMsg] of latestRealByChat.entries()) {
         if (!seenChats.has(key)) {
           if (isSystemNoise(realMsg.chat_name)) continue;
-          if (!hasRealConversation(realMsg.chat_name, realMsg.message_text)) continue;
 
           cleanedChats.push({
             chat_name: realMsg.chat_name.trim(),
@@ -576,15 +567,21 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         subtitle = "WhatsApp Channel / Broadcast";
       }
 
+      const hasRealMessage = c.last_message && !isContactSyncPlaceholder(c.last_message);
+      const displayLastMsg = hasRealMessage
+        ? c.last_message
+        : "Click chat to get last 2 days conversation";
+
       return {
         id: c.chat_name,
         chatName: c.chat_name,
         subtitle,
-        lastMessage: c.last_message || "(No messages yet)",
+        lastMessage: displayLastMsg,
         lastMessageAt: c.last_message_at,
         lastIsOutgoing: c.last_is_outgoing,
         totalMessages: c.total_messages,
         source: "whatsapp",
+        isContactOnly: !hasRealMessage,
       };
     });
   }, [whatsappChats]);
@@ -665,6 +662,91 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const selectedCallSummary = useMemo(() => {
     return whatsAppCalls.find((c) => c.id === selectedCallId) || null;
   }, [whatsAppCalls, selectedCallId]);
+
+  // --------------------------------------------------------------------------
+  // REQUEST CHAT CONTENTS FROM MOBILE APP (LAST 2 DAYS)
+  // --------------------------------------------------------------------------
+  const requestChatFromMobileApp = async (chatName: string) => {
+    if (!chatName || !chatName.trim()) return;
+    const cleanName = chatName.trim();
+    setRequestingChat(cleanName);
+    setMobileRequestStatus({
+      chat: cleanName,
+      text: `Requesting chat contents for last 2 days from mobile app...`,
+      state: "pending",
+    });
+
+    try {
+      const cmd = await devicesApi.createCommand(deviceId, "get_whatsapp_chat", {
+        chatName: cleanName,
+        days: 2,
+      });
+
+      if (cmd?.id) {
+        setMobileRequestStatus({
+          chat: cleanName,
+          text: `Request sent to mobile app. Waiting for device to extract last 2 days conversation...`,
+          state: "pending",
+        });
+
+        let finished = false;
+        for (let i = 0; i < 8; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            const checked = await devicesApi.getCommand(deviceId, cmd.id);
+            if (checked.status === "acked") {
+              finished = true;
+              const ackMsg =
+                (checked.result as any)?.message ||
+                `Retrieved chat contents for "${cleanName}" from mobile app (last 2 days)`;
+              setMobileRequestStatus({
+                chat: cleanName,
+                text: `✓ ${ackMsg}`,
+                state: "success",
+              });
+              break;
+            } else if (checked.status === "failed") {
+              finished = true;
+              const failMsg =
+                (checked.result as any)?.message || "Mobile application was unable to retrieve chat contents";
+              setMobileRequestStatus({
+                chat: cleanName,
+                text: `⚠️ ${failMsg}`,
+                state: "error",
+              });
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (!finished) {
+          setMobileRequestStatus({
+            chat: cleanName,
+            text: `Command queued on device. Loading available conversation contents...`,
+            state: "success",
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn("Failed to dispatch get_whatsapp_chat command:", err);
+      setMobileRequestStatus({
+        chat: cleanName,
+        text: `Command dispatched to device. Loading conversation...`,
+        state: "pending",
+      });
+    } finally {
+      setRequestingChat(null);
+      if (fetchCurrentChatRef.current) {
+        fetchCurrentChatRef.current(false);
+      }
+      loadRef.current();
+    }
+  };
+
+  const handleSelectChat = (c: UnifiedChatSummary) => {
+    setSelectedChatId(c.id);
+    requestChatFromMobileApp(c.chatName);
+  };
 
   // --------------------------------------------------------------------------
   // 3. LOAD CHAT CONVERSATION MESSAGES (LIVE POLLING & LAST 5 DAYS)
@@ -1351,10 +1433,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       displayedChats.map((c) => {
                         const isSelected = selectedChatId === c.id;
                         const isChannelItem = isWhatsAppChannel(c);
+                        const isRequestingThis = requestingChat === c.chatName;
                         return (
                           <div
                             key={c.id}
-                            onClick={() => setSelectedChatId(c.id)}
+                            onClick={() => handleSelectChat(c)}
                             className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
                               isSelected
                                 ? "bg-emerald-50/60 border-l-4 border-emerald-500 shadow-2xs"
@@ -1403,20 +1486,26 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                   <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
                                     ↗ Sent:
                                   </span>
-                                ) : c.lastMessage ? (
+                                ) : c.lastMessage && !c.isContactOnly ? (
                                   <span className="text-sky-600 font-bold text-[10px] shrink-0" title="Received from Contact">
                                     ↙ Recv:
                                   </span>
                                 ) : null}
-                                <span className="truncate">
+                                <span className={c.isContactOnly ? "text-emerald-700 italic font-medium truncate" : "truncate"}>
                                   {c.lastMessage || "(No messages yet)"}
                                 </span>
                               </p>
 
-                              <div className="mt-1 flex items-center gap-1.5">
-                                <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
-                                  {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
-                                </span>
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                {isRequestingThis ? (
+                                  <span className="text-[9px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded animate-pulse flex items-center gap-1">
+                                    <span className="animate-spin text-[8px]">↻</span> Requesting from phone...
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
+                                    {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
+                                  </span>
+                                )}
                                 <span
                                   className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
                                     isChannelItem
@@ -1737,6 +1826,20 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => requestChatFromMobileApp(selectedChatSummary.chatName)}
+                            disabled={requestingChat === selectedChatSummary.chatName}
+                            className="text-xs font-semibold px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition flex items-center gap-1.5 shadow-xs disabled:opacity-60"
+                            title="Send request to mobile application to get chat contents for last 2 days"
+                          >
+                            <span className={requestingChat === selectedChatSummary.chatName ? "animate-spin" : ""}>
+                              {requestingChat === selectedChatSummary.chatName ? "↻" : "📲"}
+                            </span>
+                            <span className="hidden sm:inline">
+                              {requestingChat === selectedChatSummary.chatName ? "Requesting..." : "Request from Phone (2 Days)"}
+                            </span>
+                          </button>
                           <div className="bg-gray-100 p-0.5 rounded-md flex text-[10px] font-medium">
                             <button
                               type="button"
@@ -1766,6 +1869,37 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           </span>
                         </div>
                       </div>
+
+                      {/* Real-time Mobile Request Status Banner */}
+                      {mobileRequestStatus && mobileRequestStatus.chat === selectedChatSummary.chatName && (
+                        <div
+                          className={`px-3.5 py-2 text-xs font-medium flex items-center justify-between gap-2 border-b transition-all shrink-0 ${
+                            mobileRequestStatus.state === "pending"
+                              ? "bg-amber-50 text-amber-900 border-amber-200"
+                              : mobileRequestStatus.state === "success"
+                              ? "bg-emerald-50 text-emerald-900 border-emerald-200"
+                              : "bg-rose-50 text-rose-900 border-rose-200"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {mobileRequestStatus.state === "pending" && (
+                              <span className="animate-spin text-amber-600">↻</span>
+                            )}
+                            {mobileRequestStatus.state === "success" && <span>✓</span>}
+                            {mobileRequestStatus.state === "error" && <span>⚠️</span>}
+                            <span>{mobileRequestStatus.text}</span>
+                          </div>
+                          {mobileRequestStatus.state !== "pending" && (
+                            <button
+                              type="button"
+                              onClick={() => setMobileRequestStatus(null)}
+                              className="text-gray-400 hover:text-gray-600 text-xs px-1"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {/* 2-Day Real Activity & User Login Time Banner */}
                       <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
@@ -1836,7 +1970,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                   </span>
                                 </div>
                                 <div className="flex items-center justify-between text-gray-500">
-                                  <span>Total Logged</span>
+                                  <span>Total Stored</span>
                                   <span className="text-gray-700 font-medium">
                                     {selectedChatSummary.totalMessages} messages
                                   </span>
@@ -1844,16 +1978,23 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               </div>
 
                               <div className="bg-emerald-50/50 rounded-xl p-3 text-[11px] text-emerald-800/80 leading-relaxed text-left border border-emerald-100/60">
-                                💡 Showing conversation from the last 2 days. When new incoming or outgoing messages occur, they update live in real-time.
+                                💡 Shows conversation contents from the last 2 days. Click below to send a request to the mobile phone to get the latest conversation.
                               </div>
 
                               <button
                                 type="button"
-                                onClick={() => loadDeviceChatData(true)}
-                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs"
+                                onClick={() => requestChatFromMobileApp(selectedChatSummary.chatName)}
+                                disabled={requestingChat === selectedChatSummary.chatName}
+                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-60"
                               >
-                                <span>↻</span>
-                                <span>Check for New Messages</span>
+                                <span className={requestingChat === selectedChatSummary.chatName ? "animate-spin" : ""}>
+                                  {requestingChat === selectedChatSummary.chatName ? "↻" : "📲"}
+                                </span>
+                                <span>
+                                  {requestingChat === selectedChatSummary.chatName
+                                    ? "Requesting from Mobile App..."
+                                    : "Request Last 2 Days Conversation from Mobile App"}
+                                </span>
                               </button>
 
                               {selectedChatSummary.totalMessages > 0 && timeFilter === "2days" && (
@@ -1862,7 +2003,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                   onClick={() => setTimeFilter("all")}
                                   className="text-emerald-700 font-semibold underline text-[11px] block mx-auto pt-1"
                                 >
-                                  Show all stored messages →
+                                  Show all stored messages ({selectedChatSummary.totalMessages}) →
                                 </button>
                               )}
                             </div>

