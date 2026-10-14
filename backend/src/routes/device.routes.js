@@ -707,7 +707,15 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
     const chatName = req.query.chat;
     const days = req.query.days ? parseInt(req.query.days, 10) : null;
-    let query = `SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path
+    let query = `SELECT id, chat_name, sender, message_text,
+                        CASE
+                          WHEN is_outgoing = true THEN true
+                          WHEN LOWER(TRIM(sender)) IN ('me', 'you', 'target device') THEN true
+                          WHEN message_text LIKE 'You: %' THEN true
+                          WHEN message_text LIKE 'You reacted %' THEN true
+                          ELSE false
+                        END AS is_outgoing,
+                        message_time, media_type, media_path
                  FROM whatsapp_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL
@@ -756,7 +764,15 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     if (result.rows.length === 0 && chatName) {
       const fallbackResult = await pool.query(
         `SELECT * FROM (
-           SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path
+           SELECT id, chat_name, sender, message_text,
+                  CASE
+                    WHEN is_outgoing = true THEN true
+                    WHEN LOWER(TRIM(sender)) IN ('me', 'you', 'target device') THEN true
+                    WHEN message_text LIKE 'You: %' THEN true
+                    WHEN message_text LIKE 'You reacted %' THEN true
+                    ELSE false
+                  END AS is_outgoing,
+                  message_time, media_type, media_path
            FROM whatsapp_messages
            WHERE device_id = $1
              AND chat_name IS NOT NULL

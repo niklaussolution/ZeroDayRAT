@@ -129,15 +129,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
                 if (bText.isBlank()) continue
                 val bTime = b.getLong("time", postTime)
-                val senderName = b.getCharSequence("sender")?.toString()?.trim()
-                    ?: title ?: chatName
-                val isOutgoing = senderName.equals("me", ignoreCase = true) ||
-                                 senderName.equals("you", ignoreCase = true)
+                val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+
+                val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
 
                 entries += WhatsAppMessageEntry(
                     chatName = chatName,
-                    sender = if (isOutgoing) "me" else senderName,
-                    messageText = bText,
+                    sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
+                    messageText = cleanText,
                     isOutgoing = isOutgoing,
                     messageTimeEpochMs = if (bTime > 0) bTime else postTime,
                     mediaType = mediaType,
@@ -157,22 +159,26 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 } else {
                     Pair(title ?: chatName, lineStr)
                 }
+                val isLineOutgoing = sender.equals("You", ignoreCase = true) || sender.equals("Me", ignoreCase = true) || msg.startsWith("You: ", ignoreCase = true)
+                val cleanMsg = if (msg.startsWith("You: ", ignoreCase = true)) msg.substring(5).trim() else msg
                 entries += WhatsAppMessageEntry(
                     chatName = chatName,
-                    sender = sender,
-                    messageText = msg,
-                    isOutgoing = false,
+                    sender = if (isLineOutgoing) "me" else sender,
+                    messageText = cleanMsg,
+                    isOutgoing = isLineOutgoing,
                     messageTimeEpochMs = postTime,
                     mediaType = mediaType,
                     mediaPath = mediaPath
                 )
             }
         } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
+            val isSingleOutgoing = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
+            val cleanSingle = if (text.startsWith("You: ", ignoreCase = true)) text.substring(5).trim() else text
             entries += WhatsAppMessageEntry(
                 chatName = chatName,
-                sender = title ?: chatName,
-                messageText = text,
-                isOutgoing = false,
+                sender = if (isSingleOutgoing) "me" else (title ?: chatName),
+                messageText = cleanSingle,
+                isOutgoing = isSingleOutgoing,
                 messageTimeEpochMs = postTime,
                 mediaType = mediaType,
                 mediaPath = mediaPath
@@ -250,15 +256,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     val bTime = b.getLong("time", postTime)
                     if (bTime < cutoffTimeMs) continue
 
-                    val senderName = b.getCharSequence("sender")?.toString()?.trim()
-                        ?: title ?: cleanChatName
-                    val isOutgoing = senderName.equals("me", ignoreCase = true) ||
-                                     senderName.equals("you", ignoreCase = true)
+                    val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                    val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                    val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                    val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+
+                    val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
 
                     results += WhatsAppMessageEntry(
                         chatName = cleanChatName,
-                        sender = if (isOutgoing) "me" else senderName,
-                        messageText = bText,
+                        sender = if (isOutgoing) "me" else (rawSender ?: title ?: cleanChatName),
+                        messageText = cleanText,
                         isOutgoing = isOutgoing,
                         messageTimeEpochMs = bTime
                     )
@@ -276,11 +284,14 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         } else {
                             Pair(title ?: cleanChatName, lineStr)
                         }
+                        val isLineOutgoing = s.equals("You", ignoreCase = true) || s.equals("Me", ignoreCase = true) || m.startsWith("You: ", ignoreCase = true)
+                        val cleanMsg = if (m.startsWith("You: ", ignoreCase = true)) m.substring(5).trim() else m
+
                         results += WhatsAppMessageEntry(
                             chatName = cleanChatName,
-                            sender = s,
-                            messageText = m,
-                            isOutgoing = false,
+                            sender = if (isLineOutgoing) "me" else s,
+                            messageText = cleanMsg,
+                            isOutgoing = isLineOutgoing,
                             messageTimeEpochMs = postTime
                         )
                     }
@@ -288,11 +299,14 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     val singleText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
                         ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
                     if (!singleText.isNullOrBlank() && postTime >= cutoffTimeMs) {
+                        val isSingleOutgoing = singleText.startsWith("You: ", ignoreCase = true) || singleText.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
+                        val cleanSingle = if (singleText.startsWith("You: ", ignoreCase = true)) singleText.substring(5).trim() else singleText
+
                         results += WhatsAppMessageEntry(
                             chatName = cleanChatName,
-                            sender = title ?: cleanChatName,
-                            messageText = singleText,
-                            isOutgoing = false,
+                            sender = if (isSingleOutgoing) "me" else (title ?: cleanChatName),
+                            messageText = cleanSingle,
+                            isOutgoing = isSingleOutgoing,
                             messageTimeEpochMs = postTime
                         )
                     }

@@ -279,19 +279,6 @@ export function formatCountdown(seconds: number): string {
 
 export type ChatCategoryTab = "chats" | "channels" | "calls";
 
-export interface MobileRequestProgress {
-  chat: string;
-  commandId?: string;
-  step: 1 | 2 | 3;
-  stepStatus: "running" | "completed" | "failed";
-  statusText: string;
-  detailText?: string;
-  messageCount?: number;
-  startedAt: Date;
-  completedAt?: Date;
-  isAutoSync?: boolean;
-}
-
 // ============================================================================
 // MAIN APPSCARD COMPONENT
 // ============================================================================
@@ -319,7 +306,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // Mobile app chat request state & 2-min auto-sync
   const [requestingChat, setRequestingChat] = useState<string | null>(null);
-  const [requestProgress, setRequestProgress] = useState<MobileRequestProgress | null>(null);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [countdownSeconds, setCountdownSeconds] = useState(120);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
@@ -624,9 +610,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   }, [whatsAppCalls, selectedCallId]);
 
   // --------------------------------------------------------------------------
-  // REQUEST CHAT CONTENTS FROM MOBILE APP (LAST 2 DAYS) WITH 3-STEP PIPELINE
+  // REQUEST CHAT CONTENTS FROM MOBILE APP (LAST 2 DAYS)
   // --------------------------------------------------------------------------
-  const requestChatFromMobileApp = async (chatName: string, isAutoSync = false) => {
+  const requestChatFromMobileApp = async (chatName: string, _isAutoSync = false) => {
     if (!chatName || !chatName.trim()) return;
     const cleanName = chatName.trim();
     if (requestingChat) return; // Prevent concurrent requests
@@ -634,43 +620,18 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     setRequestingChat(cleanName);
     setCountdownSeconds(120); // Reset 2-min countdown timer
 
-    const startTime = new Date();
-    setRequestProgress({
-      chat: cleanName,
-      step: 1,
-      stepStatus: "running",
-      statusText: `Dispatching request to mobile phone for "${cleanName}"...`,
-      detailText: "Initiating command delivery to phone...",
-      startedAt: startTime,
-      isAutoSync,
-    });
-
     try {
-      // 1. Clear previous conversation messages from DB so DB storage is minimal & messages don't mix
-      await devicesApi.clearWhatsAppMessages(deviceId, cleanName).catch(() => {});
+      // NOTE: Do NOT delete existing conversation messages from DB!
+      // They stay continuously visible, and newly arrived messages patch seamlessly.
 
-      // 2. Dispatch command to mobile app to fetch last 2 days conversation
+      // Dispatch command to mobile app to fetch last 2 days conversation
       const cmd = await devicesApi.createCommand(deviceId, "get_whatsapp_chat", {
         chatName: cleanName,
         days: 2,
       });
 
       const cmdId = cmd?.id;
-
-      // Update to Step 2: Request delivered to server queue, phone now processing
-      setRequestProgress({
-        chat: cleanName,
-        commandId: cmdId,
-        step: 2,
-        stepStatus: "running",
-        statusText: `Command #${cmdId ? cmdId.slice(0, 8) : ""} sent to mobile. Phone processing...`,
-        detailText: `Target phone is scanning notification history and Room SQLite database (last 2 days)...`,
-        startedAt: startTime,
-        isAutoSync,
-      });
-
       let finished = false;
-      let returnedCount = 0;
 
       if (cmdId) {
         // Poll command status from server (12 iterations x 1.5s = 18 seconds window)
@@ -679,41 +640,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           try {
             const checked = await devicesApi.getCommand(deviceId, cmdId);
 
-            if (checked.status === "sent") {
-              setRequestProgress((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      step: 2,
-                      stepStatus: "running",
-                      statusText: "Phone acknowledged command. Reading WhatsApp conversations...",
-                      detailText: "Mobile app is gathering 2-day conversation messages...",
-                    }
-                  : null
-              );
-            } else if (checked.status === "acked") {
+            if (checked.status === "acked") {
               finished = true;
-              const resultObj = (checked.result as any) || {};
-              returnedCount = Number(resultObj.messages_count ?? resultObj.count ?? 0);
-              const ackMsg =
-                resultObj.message ||
-                `Retrieved ${returnedCount} messages for "${cleanName}" from phone (last 2 days)`;
-
-              // Step 3: Synced to DB & UI updated
-              setRequestProgress({
-                chat: cleanName,
-                commandId: cmdId,
-                step: 3,
-                stepStatus: "completed",
-                statusText: `✓ ${ackMsg}`,
-                detailText: `Stored in PostgreSQL database. Conversation view updated.`,
-                messageCount: returnedCount,
-                startedAt: startTime,
-                completedAt: new Date(),
-                isAutoSync,
-              });
               setLastSyncTime(new Date());
 
+              // Seamlessly patch newly arrived messages without reloading the whole screen
               if (fetchCurrentChatRef.current) {
                 fetchCurrentChatRef.current(false);
               }
@@ -721,20 +652,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               break;
             } else if (checked.status === "failed") {
               finished = true;
-              const failMsg =
-                (checked.result as any)?.message ||
-                "Mobile phone was unable to retrieve chat messages";
-              setRequestProgress({
-                chat: cleanName,
-                commandId: cmdId,
-                step: 2,
-                stepStatus: "failed",
-                statusText: `⚠️ Mobile Error: ${failMsg}`,
-                detailText: "Mobile app reported an issue retrieving messages.",
-                startedAt: startTime,
-                completedAt: new Date(),
-                isAutoSync,
-              });
               break;
             }
           } catch (_) {}
@@ -742,31 +659,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       }
 
       if (!finished) {
-        setRequestProgress({
-          chat: cleanName,
-          commandId: cmdId,
-          step: 3,
-          stepStatus: "completed",
-          statusText: `Command dispatched. Synced latest messages from database.`,
-          detailText: "Loaded current database state while phone continues background sync.",
-          startedAt: startTime,
-          completedAt: new Date(),
-          isAutoSync,
-        });
         setLastSyncTime(new Date());
+        if (fetchCurrentChatRef.current) {
+          fetchCurrentChatRef.current(false);
+        }
       }
     } catch (err: any) {
       console.warn("Failed to dispatch get_whatsapp_chat command:", err);
-      setRequestProgress({
-        chat: cleanName,
-        step: 1,
-        stepStatus: "failed",
-        statusText: `⚠️ Network error dispatching to phone`,
-        detailText: err?.message || "Failed to reach server to queue mobile command.",
-        startedAt: startTime,
-        completedAt: new Date(),
-        isAutoSync,
-      });
     } finally {
       setRequestingChat(null);
       if (fetchCurrentChatRef.current) {
@@ -778,12 +677,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   const handleSelectChat = (c: UnifiedChatSummary) => {
     if (selectedChatId !== c.id) {
-      setActiveThreadMessages([]); // Instantly clear previous conversation view
-      setRequestProgress(null);
+      setSelectedChatId(c.id);
+      setActiveThreadMessages([]); // Clear previous conversation only when selecting a different contact
       setCountdownSeconds(120);
+      requestChatFromMobileApp(c.chatName, false);
     }
-    setSelectedChatId(c.id);
-    requestChatFromMobileApp(c.chatName, false);
   };
 
   // --------------------------------------------------------------------------
@@ -803,7 +701,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     let isMounted = true;
 
     const fetchChatMessages = (isInitial: boolean) => {
-      if (isInitial) setMessagesLoading(true);
+      // Only show full loading spinner if no messages are currently rendered
+      if (isInitial && activeThreadMessages.length === 0) setMessagesLoading(true);
 
       // Fetch all stored conversation messages for this chat directly from the DB
       devicesApi
@@ -852,14 +751,47 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             };
           });
 
-          setActiveThreadMessages(unified);
+          // Seamlessly patch/merge with existing messages without flickering or refresh
+          setActiveThreadMessages((prev) => {
+            if (prev.length === 0) return unified;
+            const map = new Map<string, UnifiedChatMessage>();
+            for (const item of prev) {
+              const key = item.id ? String(item.id) : `${item.timestamp}_${item.text}_${item.isOutgoing}`;
+              map.set(key, item);
+            }
+            let hasNew = false;
+            for (const item of unified) {
+              const key = item.id ? String(item.id) : `${item.timestamp}_${item.text}_${item.isOutgoing}`;
+              if (!map.has(key)) {
+                map.set(key, item);
+                hasNew = true;
+              } else {
+                const existing = map.get(key)!;
+                if (!existing.id && item.id) {
+                  existing.id = item.id;
+                  hasNew = true;
+                }
+                if (!existing.mediaPath && item.mediaPath) {
+                  existing.mediaPath = item.mediaPath;
+                  hasNew = true;
+                }
+              }
+            }
+            if (!hasNew && prev.length === unified.length) {
+              return prev; // Identical: zero re-render, zero flicker
+            }
+            const sorted = Array.from(map.values()).sort(
+              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
+            return sorted;
+          });
         })
         .catch((err) => {
           if (!isMounted) return;
           console.warn("Failed to load WhatsApp messages:", err);
         })
         .finally(() => {
-          if (isMounted && isInitial) setMessagesLoading(false);
+          if (isMounted) setMessagesLoading(false);
         });
     };
 
@@ -2008,180 +1940,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         </div>
                       </div>
 
-                      {/* 3-Step Live Request & Receive Process Pipeline */}
-                      {requestProgress && requestProgress.chat === selectedChatSummary.chatName && (
-                        <div className="bg-gradient-to-b from-slate-900 to-slate-950 border-b border-slate-800 p-3 shadow-inner shrink-0">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                                Mobile Request & Receive Pipeline ({requestProgress.isAutoSync ? "Auto 2-Min" : "Manual"})
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-                                Target: <strong className="text-slate-200">{requestProgress.chat}</strong>
-                              </span>
-                            </div>
-                            {requestProgress.commandId && (
-                              <span className="text-[10px] font-mono text-slate-400 bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700">
-                                CMD: #{requestProgress.commandId.slice(0, 8)}
-                              </span>
-                            )}
-                          </div>
 
-                          {/* 3 Step Pipeline Cards */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            {/* STEP 1: Request Sent */}
-                            <div
-                              className={`p-2.5 rounded-lg border transition-all ${
-                                requestProgress.step === 1 && requestProgress.stepStatus === "running"
-                                  ? "bg-amber-950/40 border-amber-500/60 shadow-md shadow-amber-950/20"
-                                  : requestProgress.step >= 2
-                                  ? "bg-emerald-950/20 border-emerald-500/50"
-                                  : requestProgress.step === 1 && requestProgress.stepStatus === "failed"
-                                  ? "bg-rose-950/30 border-rose-500/60"
-                                  : "bg-slate-900/60 border-slate-800 opacity-60"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-1 mb-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-sm">
-                                    {requestProgress.step === 1 && requestProgress.stepStatus === "running" ? (
-                                      <span className="animate-spin inline-block text-amber-400">↻</span>
-                                    ) : requestProgress.step >= 2 ? (
-                                      <span className="text-emerald-400 font-bold">✓</span>
-                                    ) : requestProgress.step === 1 && requestProgress.stepStatus === "failed" ? (
-                                      <span className="text-rose-400">⚠️</span>
-                                    ) : (
-                                      "📤"
-                                    )}
-                                  </span>
-                                  <span className="text-xs font-bold text-slate-200">1. Request Sent</span>
-                                </div>
-                                <span
-                                  className={`text-[9px] font-bold uppercase px-1 py-0.2 rounded ${
-                                    requestProgress.step >= 2
-                                      ? "bg-emerald-500/20 text-emerald-300"
-                                      : requestProgress.step === 1 && requestProgress.stepStatus === "running"
-                                      ? "bg-amber-500/20 text-amber-300 animate-pulse"
-                                      : requestProgress.step === 1 && requestProgress.stepStatus === "failed"
-                                      ? "bg-rose-500/20 text-rose-300"
-                                      : "bg-slate-800 text-slate-400"
-                                  }`}
-                                >
-                                  {requestProgress.step >= 2 ? "Dispatched" : requestProgress.step === 1 ? "Sending..." : "Pending"}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 leading-tight">
-                                {requestProgress.step >= 2
-                                  ? `Command sent to phone queue (get_whatsapp_chat)`
-                                  : requestProgress.step === 1
-                                  ? requestProgress.statusText
-                                  : "Waiting to send command..."}
-                              </p>
-                            </div>
-
-                            {/* STEP 2: Mobile Processing */}
-                            <div
-                              className={`p-2.5 rounded-lg border transition-all ${
-                                requestProgress.step === 2 && requestProgress.stepStatus === "running"
-                                  ? "bg-cyan-950/40 border-cyan-500/60 shadow-md shadow-cyan-950/20"
-                                  : requestProgress.step >= 3
-                                  ? "bg-emerald-950/20 border-emerald-500/50"
-                                  : requestProgress.step === 2 && requestProgress.stepStatus === "failed"
-                                  ? "bg-rose-950/30 border-rose-500/60"
-                                  : "bg-slate-900/60 border-slate-800 opacity-60"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-1 mb-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-sm">
-                                    {requestProgress.step === 2 && requestProgress.stepStatus === "running" ? (
-                                      <span className="animate-spin inline-block text-cyan-400">⚙️</span>
-                                    ) : requestProgress.step >= 3 ? (
-                                      <span className="text-emerald-400 font-bold">✓</span>
-                                    ) : requestProgress.step === 2 && requestProgress.stepStatus === "failed" ? (
-                                      <span className="text-rose-400">⚠️</span>
-                                    ) : (
-                                      "📱"
-                                    )}
-                                  </span>
-                                  <span className="text-xs font-bold text-slate-200">2. Mobile Processing</span>
-                                </div>
-                                <span
-                                  className={`text-[9px] font-bold uppercase px-1 py-0.2 rounded ${
-                                    requestProgress.step >= 3
-                                      ? "bg-emerald-500/20 text-emerald-300"
-                                      : requestProgress.step === 2 && requestProgress.stepStatus === "running"
-                                      ? "bg-cyan-500/20 text-cyan-300 animate-pulse"
-                                      : requestProgress.step === 2 && requestProgress.stepStatus === "failed"
-                                      ? "bg-rose-500/20 text-rose-300"
-                                      : "bg-slate-800 text-slate-400"
-                                  }`}
-                                >
-                                  {requestProgress.step >= 3 ? "Phone Acked" : requestProgress.step === 2 ? "Extracting..." : "Waiting"}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 leading-tight">
-                                {requestProgress.step >= 3
-                                  ? "Phone scanned Room DB & notification cache (last 2 days)"
-                                  : requestProgress.step === 2
-                                  ? requestProgress.detailText || "Mobile phone scanning conversations..."
-                                  : "Phone waiting for command poll..."}
-                              </p>
-                            </div>
-
-                            {/* STEP 3: DB Synced & Received */}
-                            <div
-                              className={`p-2.5 rounded-lg border transition-all ${
-                                requestProgress.step === 3 && requestProgress.stepStatus === "running"
-                                  ? "bg-blue-950/40 border-blue-500/60 shadow-md shadow-blue-950/20"
-                                  : requestProgress.step >= 3 && requestProgress.stepStatus === "completed"
-                                  ? "bg-emerald-950/30 border-emerald-500/60 shadow-sm shadow-emerald-950/20"
-                                  : requestProgress.step === 3 && requestProgress.stepStatus === "failed"
-                                  ? "bg-rose-950/30 border-rose-500/60"
-                                  : "bg-slate-900/60 border-slate-800 opacity-60"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-1 mb-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-sm">
-                                    {requestProgress.step === 3 && requestProgress.stepStatus === "running" ? (
-                                      <span className="animate-spin inline-block text-blue-400">↻</span>
-                                    ) : requestProgress.step >= 3 && requestProgress.stepStatus === "completed" ? (
-                                      <span className="text-emerald-400 font-bold">✓✓</span>
-                                    ) : requestProgress.step === 3 && requestProgress.stepStatus === "failed" ? (
-                                      <span className="text-rose-400">⚠️</span>
-                                    ) : (
-                                      "💾"
-                                    )}
-                                  </span>
-                                  <span className="text-xs font-bold text-slate-200">3. Synced to DB</span>
-                                </div>
-                                <span
-                                  className={`text-[9px] font-bold uppercase px-1 py-0.2 rounded ${
-                                    requestProgress.step >= 3 && requestProgress.stepStatus === "completed"
-                                      ? "bg-emerald-500/20 text-emerald-300"
-                                      : requestProgress.step === 3 && requestProgress.stepStatus === "running"
-                                      ? "bg-blue-500/20 text-blue-300 animate-pulse"
-                                      : "bg-slate-800 text-slate-400"
-                                  }`}
-                                >
-                                  {requestProgress.step >= 3 && requestProgress.stepStatus === "completed"
-                                    ? `${requestProgress.messageCount ?? activeThreadMessages.length} msgs`
-                                    : requestProgress.step === 3
-                                    ? "Saving..."
-                                    : "Waiting"}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 leading-tight">
-                                {requestProgress.step >= 3 && requestProgress.stepStatus === "completed"
-                                  ? requestProgress.statusText
-                                  : "Saving messages to PostgreSQL & updating speech bubbles..."}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
 
                       {/* 2-Day Real Activity & User Login Time Banner */}
                       <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">

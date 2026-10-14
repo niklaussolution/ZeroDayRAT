@@ -654,9 +654,16 @@ router.post(
           if (!e.messageText && !e.mediaPath) continue;
           const chatName = String(req.body.activeChat || e.chatName || "").trim();
           if (!chatName) continue;
-          const messageText = String(e.messageText || "").trim();
+          const rawText = String(e.messageText || "").trim();
           const sender = e.sender ? String(e.sender).trim() : null;
-          const isOutgoing = Boolean(e.isOutgoing);
+          const isSenderMe = sender && (
+            sender.toLowerCase() === "me" ||
+            sender.toLowerCase() === "you" ||
+            sender.toLowerCase() === "target device"
+          );
+          const hasYouPrefix = rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
+          const isOutgoing = Boolean(e.isOutgoing) || isSenderMe || hasYouPrefix;
+          const messageText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
           const messageTime = e.messageTime || new Date().toISOString();
           const mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
