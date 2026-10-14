@@ -453,6 +453,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
     const result = await pool.query(
       `WITH all_chats AS (
          SELECT chat_name,
+                LOWER(TRIM(chat_name)) AS canonical_name,
                 phone_number,
                 last_message,
                 last_message_at,
@@ -461,6 +462,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          WHERE device_id = $1
          UNION ALL
          SELECT chat_name,
+                LOWER(TRIM(chat_name)) AS canonical_name,
                 sender AS phone_number,
                 message_text AS last_message,
                 message_time AS last_message_at,
@@ -469,6 +471,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
          UNION ALL
          SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
+                LOWER(TRIM(COALESCE(contact_name, counterparty))) AS canonical_name,
                 counterparty AS phone_number,
                 'WhatsApp Contact' AS last_message,
                 called_at AS last_message_at,
@@ -477,29 +480,32 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
          UNION ALL
          SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
+                LOWER(TRIM(COALESCE(contact_name, counterparty))) AS canonical_name,
                 counterparty AS phone_number,
                 'WhatsApp Contact' AS last_message,
                 message_at AS last_message_at,
                 false AS is_outgoing
          FROM sms_logs
          WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
+       ),
+       msg_counts AS (
+         SELECT LOWER(TRIM(chat_name)) AS canonical_name,
+                COUNT(*)::int AS total_messages
+         FROM whatsapp_messages
+         WHERE device_id = $1
+           AND message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+           AND message_text !~ '^\\+?[0-9\\s\\-()]{7,25}$'
+         GROUP BY LOWER(TRIM(chat_name))
        )
        SELECT (ARRAY_AGG(ac.chat_name ORDER BY CASE WHEN ac.chat_name ~ '[A-Za-z]' THEN 1 ELSE 2 END, LENGTH(ac.chat_name) DESC))[1] AS chat_name,
-              COALESCE((
-                SELECT COUNT(*)::int
-                FROM whatsapp_messages wm
-                WHERE wm.device_id = $1
-                  AND LOWER(TRIM(wm.chat_name)) = LOWER(TRIM(MIN(ac.chat_name)))
-                  AND wm.message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                  AND wm.message_text !~ '^\+?[0-9\s\-()]{7,25}$'
-              ), 0) AS total_messages,
+              COALESCE(mc.total_messages, 0) AS total_messages,
               MAX(ac.last_message_at) AS last_message_at,
               (ARRAY_AGG(ac.last_message ORDER BY
                 (CASE
                   WHEN ac.last_message IS NOT NULL
                     AND ac.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                    AND ac.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
-                    AND ac.last_message !~* '^message \+?[0-9\s-]+$'
+                    AND ac.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
+                    AND ac.last_message !~* '^message \\+?[0-9\\s-]+$'
                   THEN 1
                   ELSE 2
                 END) ASC,
@@ -509,8 +515,8 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
                 (CASE
                   WHEN ac.last_message IS NOT NULL
                     AND ac.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                    AND ac.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
-                    AND ac.last_message !~* '^message \+?[0-9\s-]+$'
+                    AND ac.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
+                    AND ac.last_message !~* '^message \\+?[0-9\\s-]+$'
                   THEN 1
                   ELSE 2
                 END) ASC,
@@ -518,9 +524,10 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
               ))[1], false) AS last_is_outgoing,
               (ARRAY_AGG(ac.phone_number ORDER BY CASE WHEN ac.phone_number IS NOT NULL AND TRIM(ac.phone_number) != '' AND ac.phone_number ~ '[0-9]' THEN 1 ELSE 2 END ASC, ac.last_message_at DESC))[1] AS phone_number
        FROM all_chats ac
+       LEFT JOIN msg_counts mc ON mc.canonical_name = ac.canonical_name
        WHERE ac.chat_name IS NOT NULL
          AND TRIM(ac.chat_name) != ''
-         AND LOWER(TRIM(ac.chat_name)) NOT IN (
+         AND ac.canonical_name NOT IN (
            'whatsapp',
            'whatsapp web',
            'whatsapp status',
@@ -552,13 +559,13 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
            'recent conversation',
            'tap to view conversation'
          )
-         AND LOWER(ac.chat_name) NOT LIKE '%messages from % chats%'
-         AND LOWER(ac.chat_name) NOT LIKE '%joined using a group link%'
-         AND LOWER(ac.chat_name) NOT LIKE '%left the group%'
-         AND LOWER(ac.chat_name) NOT LIKE '%security code changed%'
-         AND LOWER(ac.chat_name) NOT LIKE '%created group%'
-         AND LOWER(ac.chat_name) NOT LIKE '%end-to-end encrypted%'
-       GROUP BY LOWER(TRIM(ac.chat_name))
+         AND ac.canonical_name NOT LIKE '%messages from % chats%'
+         AND ac.canonical_name NOT LIKE '%joined using a group link%'
+         AND ac.canonical_name NOT LIKE '%left the group%'
+         AND ac.canonical_name NOT LIKE '%security code changed%'
+         AND ac.canonical_name NOT LIKE '%created group%'
+         AND ac.canonical_name NOT LIKE '%end-to-end encrypted%'
+       GROUP BY ac.canonical_name, mc.total_messages
        ORDER BY MAX(ac.last_message_at) DESC`,
       [req.params.id]
     );
