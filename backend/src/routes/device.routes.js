@@ -591,7 +591,9 @@ router.delete("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       await pool.query(
         `DELETE FROM whatsapp_messages
          WHERE device_id = $1
-           AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))`,
+           AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))
+           AND LOWER(TRIM(chat_name)) NOT LIKE '%' || LOWER(TRIM($2)) || '%'
+           AND LOWER(TRIM($2)) NOT LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
         [req.params.id, keepChat]
       );
     } else {
@@ -693,9 +695,25 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      query += ` AND (chat_name = $${idx} OR LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx})))`;
+      const words = cleanChat.split(/[\s_\-]+/).filter((w) => w.length >= 3);
+      let nameConditions = [
+        `chat_name = $${idx}`,
+        `LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`,
+        `LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))`,
+        `LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`,
+        `LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
+      ];
       params.push(cleanChat);
       idx += 1;
+
+      for (const w of words) {
+        nameConditions.push(`LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`);
+        nameConditions.push(`LOWER(TRIM(sender)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`);
+        params.push(w);
+        idx += 1;
+      }
+
+      query += ` AND (${nameConditions.join(" OR ")})`;
     }
     if (days && !isNaN(days) && days > 0) {
       query += ` AND message_time >= (NOW() - ($${idx} * INTERVAL '1 day'))`;

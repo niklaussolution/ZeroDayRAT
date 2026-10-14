@@ -644,11 +644,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               const ackMsg =
                 (checked.result as any)?.message ||
                 `Retrieved chat contents for "${cleanName}" from mobile app (last 2 days)`;
+              const isActualSuccess = !ackMsg.toLowerCase().includes("no messages found");
               setMobileRequestStatus({
                 chat: cleanName,
-                text: `✓ ${ackMsg}`,
-                state: "success",
+                text: isActualSuccess ? `✓ ${ackMsg}` : `ℹ️ ${ackMsg}`,
+                state: isActualSuccess ? "success" : "pending",
               });
+              if (fetchCurrentChatRef.current) {
+                fetchCurrentChatRef.current(false);
+              }
+              loadRef.current();
               break;
             } else if (checked.status === "failed") {
               finished = true;
@@ -659,6 +664,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 text: `⚠️ ${failMsg}`,
                 state: "error",
               });
+              if (fetchCurrentChatRef.current) {
+                fetchCurrentChatRef.current(false);
+              }
               break;
             }
           } catch (_) {}
@@ -724,7 +732,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
           const filtered = (msgs || []).filter((m) => {
             if (!m.message_text && !m.media_path) return false;
-            if (isPlaceholderOrNumber(m.message_text) && !m.media_path) return false;
+            if (isContactSyncPlaceholder(m.message_text) && !m.media_path) return false;
             if (timeFilter === "2days") {
               const msgTime = new Date(m.message_time).getTime();
               if (!isNaN(msgTime) && msgTime < twoDaysAgo) return false;

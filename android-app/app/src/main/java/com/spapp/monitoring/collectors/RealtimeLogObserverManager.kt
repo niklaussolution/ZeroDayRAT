@@ -294,7 +294,8 @@ object RealtimeLogObserverManager {
                     }
                     val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
                     if (response.isSuccessful) {
-                        db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
+                        db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
+                        db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
                         Log.d(TAG, "Instantly uploaded ${dtos.size} WhatsApp messages/contacts to server")
                     }
                 }

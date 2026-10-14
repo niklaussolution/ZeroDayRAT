@@ -626,7 +626,9 @@ router.post(
           await client.query(
             `DELETE FROM whatsapp_messages
              WHERE device_id = $1
-               AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))`,
+               AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))
+               AND LOWER(TRIM(chat_name)) NOT LIKE '%' || LOWER(TRIM($2)) || '%'
+               AND LOWER(TRIM($2)) NOT LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
             [req.device.deviceId, cleanActiveChat]
           );
         }
@@ -702,7 +704,10 @@ router.post(
 
           // 2. Only store real conversation messages in whatsapp_messages
           // (Skip placeholder contact sync rows so DB storage remains small)
-          if (isPlaceholder(messageText)) {
+          if (!req.body.activeChat && isPlaceholder(messageText)) {
+            continue;
+          }
+          if (messageText === "WhatsApp Contact" || messageText === "Recent contact" || messageText === "Tap to view conversation") {
             continue;
           }
 
