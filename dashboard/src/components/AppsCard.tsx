@@ -509,7 +509,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         subtitle = "WhatsApp Channel / Broadcast";
       }
 
-      const hasRealMessage = c.last_message && !isContactSyncPlaceholder(c.last_message);
+      const hasRealMessage = c.last_message && !isPlaceholderOrNumber(c.last_message);
       const displayLastMsg = hasRealMessage
         ? c.last_message
         : "Click chat to get last 2 days conversation";
@@ -724,7 +724,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
           const filtered = (msgs || []).filter((m) => {
             if (!m.message_text && !m.media_path) return false;
-            if (isContactSyncPlaceholder(m.message_text) && !m.media_path) return false;
+            if (isPlaceholderOrNumber(m.message_text) && !m.media_path) return false;
             if (timeFilter === "2days") {
               const msgTime = new Date(m.message_time).getTime();
               if (!isNaN(msgTime) && msgTime < twoDaysAgo) return false;

@@ -609,7 +609,7 @@ router.post(
  */
 router.post(
   "/whatsapp-messages",
-  [body("entries").isArray({ min: 1 })],
+  [body("entries").isArray()],
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
@@ -631,6 +631,22 @@ router.post(
           );
         }
 
+        const isPhone = (val) => Boolean(val && /^\+?[0-9\s\-()]{7,25}$/.test(String(val).trim()));
+        const isPlaceholder = (val) => {
+          if (!val) return true;
+          const s = String(val).trim();
+          return (
+            s === "WhatsApp Contact" ||
+            s === "Recent WhatsApp Chat" ||
+            s === "Contact" ||
+            s === "Recent contact" ||
+            s === "Recent conversation" ||
+            s === "Tap to view conversation" ||
+            isPhone(s) ||
+            /^Message \+?[0-9\s-]+$/i.test(s)
+          );
+        };
+
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.chatName || !e.messageText) continue;
@@ -642,6 +658,22 @@ router.post(
           const mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
 
+          // Determine contact phone number if available
+          let phoneNumber = null;
+          if (isPhone(sender)) {
+            phoneNumber = sender;
+          } else if (isPhone(messageText)) {
+            phoneNumber = messageText;
+          } else if (isPhone(chatName)) {
+            phoneNumber = chatName;
+          }
+
+          // Determine display text for last_message in inventory
+          let chatLastMessage = messageText;
+          if (isPhone(messageText)) {
+            chatLastMessage = "WhatsApp Contact";
+          }
+
           // 1. Maintain complete WhatsApp chat & contact inventory in whatsapp_chats table
           await client.query(
             `INSERT INTO whatsapp_chats (device_id, chat_name, phone_number, last_message, last_message_at, synced_at)
@@ -649,19 +681,28 @@ router.post(
              ON CONFLICT (device_id, chat_name)
              DO UPDATE SET
                last_message = CASE
-                 WHEN EXCLUDED.last_message IS NOT NULL AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact')
+                 WHEN EXCLUDED.last_message IS NOT NULL
+                   AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+                   AND EXCLUDED.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
+                   AND EXCLUDED.last_message !~* '^message \+?[0-9\s-]+$'
                  THEN EXCLUDED.last_message
                  ELSE whatsapp_chats.last_message
                END,
                last_message_at = GREATEST(whatsapp_chats.last_message_at, EXCLUDED.last_message_at),
                phone_number = COALESCE(EXCLUDED.phone_number, whatsapp_chats.phone_number),
                synced_at = NOW()`,
-            [req.device.deviceId, chatName, sender, messageText, messageTime]
+            [
+              req.device.deviceId,
+              chatName.slice(0, 255),
+              phoneNumber ? phoneNumber.slice(0, 50) : null,
+              chatLastMessage,
+              messageTime,
+            ]
           );
 
           // 2. Only store real conversation messages in whatsapp_messages
           // (Skip placeholder contact sync rows so DB storage remains small)
-          if (messageText === "WhatsApp Contact" || messageText === "Recent WhatsApp Chat") {
+          if (isPlaceholder(messageText)) {
             continue;
           }
 

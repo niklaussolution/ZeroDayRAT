@@ -102,10 +102,11 @@ class WhatsAppContactsCollector(private val context: Context) {
                             val jid = if (jidIdx >= 0) cursor.getString(jidIdx) else null
                             val key = name.lowercase()
                             if (!contactMap.containsKey(key)) {
+                                val phoneOrJid = desc ?: jid
                                 contactMap[key] = WhatsAppMessageEntry(
                                     chatName = name,
-                                    sender = name,
-                                    messageText = desc ?: jid ?: "WhatsApp Contact",
+                                    sender = phoneOrJid ?: name,
+                                    messageText = "WhatsApp Contact",
                                     isOutgoing = false,
                                     messageTimeEpochMs = now
                                 )
@@ -141,8 +142,8 @@ class WhatsAppContactsCollector(private val context: Context) {
                             if (!contactMap.containsKey(key)) {
                                 contactMap[key] = WhatsAppMessageEntry(
                                     chatName = displayName,
-                                    sender = displayName,
-                                    messageText = num ?: "WhatsApp Contact",
+                                    sender = num ?: displayName,
+                                    messageText = "WhatsApp Contact",
                                     isOutgoing = false,
                                     messageTimeEpochMs = now
                                 )
@@ -196,8 +197,8 @@ class WhatsAppContactsCollector(private val context: Context) {
                                 if (!contactMap.containsKey(key)) {
                                     contactMap[key] = WhatsAppMessageEntry(
                                         chatName = displayName,
-                                        sender = displayName,
-                                        messageText = num ?: "Contact",
+                                        sender = num ?: displayName,
+                                        messageText = "WhatsApp Contact",
                                         isOutgoing = false,
                                         messageTimeEpochMs = time
                                     )
@@ -233,7 +234,7 @@ class WhatsAppContactsCollector(private val context: Context) {
                                     contactMap[key] = WhatsAppMessageEntry(
                                         chatName = addr,
                                         sender = addr,
-                                        messageText = addr,
+                                        messageText = "WhatsApp Contact",
                                         isOutgoing = false,
                                         messageTimeEpochMs = time
                                     )
