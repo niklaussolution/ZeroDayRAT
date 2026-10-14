@@ -218,18 +218,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             val cleanChatName = chatName.trim()
 
             val notGeneric = title != null && !title.equals("WhatsApp", ignoreCase = true) && !title.equals("WhatsApp Business", ignoreCase = true)
-            val words = cleanChatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
-            val wordMatch = words.any { w ->
-                (convoTitle != null && convoTitle.contains(w, ignoreCase = true)) ||
-                (notGeneric && title!!.contains(w, ignoreCase = true)) ||
-                (subText != null && subText.contains(w, ignoreCase = true))
-            }
-            val matchesChat = (convoTitle != null && convoTitle.contains(cleanChatName, ignoreCase = true)) ||
-                              (notGeneric && title!!.contains(cleanChatName, ignoreCase = true)) ||
-                              (subText != null && subText.contains(cleanChatName, ignoreCase = true)) ||
-                              (notGeneric && cleanChatName.contains(title!!, ignoreCase = true)) ||
-                              (convoTitle != null && cleanChatName.contains(convoTitle, ignoreCase = true)) ||
-                              wordMatch
+            val matchesChat = (convoTitle != null && convoTitle.equals(cleanChatName, ignoreCase = true)) ||
+                              (notGeneric && title!!.equals(cleanChatName, ignoreCase = true)) ||
+                              (subText != null && subText.equals(cleanChatName, ignoreCase = true))
 
             if (!matchesChat) continue
 

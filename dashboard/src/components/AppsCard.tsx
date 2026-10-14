@@ -751,39 +751,31 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             };
           });
 
-          // Seamlessly patch/merge with existing messages without flickering or refresh
+          // If initial load or user switched chat, directly set unified messages for this chat
+          if (isInitial) {
+            setActiveThreadMessages(unified);
+            return;
+          }
+
+          // Background auto-sync / live polling: update only if new messages or changes exist
           setActiveThreadMessages((prev) => {
             if (prev.length === 0) return unified;
-            const map = new Map<string, UnifiedChatMessage>();
-            for (const item of prev) {
-              const key = item.id ? String(item.id) : `${item.timestamp}_${item.text}_${item.isOutgoing}`;
-              map.set(key, item);
-            }
-            let hasNew = false;
-            for (const item of unified) {
-              const key = item.id ? String(item.id) : `${item.timestamp}_${item.text}_${item.isOutgoing}`;
-              if (!map.has(key)) {
-                map.set(key, item);
-                hasNew = true;
-              } else {
-                const existing = map.get(key)!;
-                if (!existing.id && item.id) {
-                  existing.id = item.id;
-                  hasNew = true;
-                }
-                if (!existing.mediaPath && item.mediaPath) {
-                  existing.mediaPath = item.mediaPath;
-                  hasNew = true;
+            if (prev.length === unified.length) {
+              let isIdentical = true;
+              for (let i = 0; i < prev.length; i++) {
+                if (
+                  prev[i].id !== unified[i].id ||
+                  prev[i].text !== unified[i].text ||
+                  prev[i].isOutgoing !== unified[i].isOutgoing ||
+                  prev[i].mediaPath !== unified[i].mediaPath
+                ) {
+                  isIdentical = false;
+                  break;
                 }
               }
+              if (isIdentical) return prev; // Zero re-renders, zero flicker
             }
-            if (!hasNew && prev.length === unified.length) {
-              return prev; // Identical: zero re-render, zero flicker
-            }
-            const sorted = Array.from(map.values()).sort(
-              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
-            return sorted;
+            return unified;
           });
         })
         .catch((err) => {

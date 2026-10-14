@@ -652,7 +652,7 @@ router.post(
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath) continue;
-          const chatName = String(req.body.activeChat || e.chatName || "").trim();
+          const chatName = String(e.chatName || req.body.activeChat || "").trim();
           if (!chatName) continue;
           const rawText = String(e.messageText || "").trim();
           const sender = e.sender ? String(e.sender).trim() : null;

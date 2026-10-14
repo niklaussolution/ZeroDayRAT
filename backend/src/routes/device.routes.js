@@ -727,30 +727,16 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      const words = cleanChat.split(/[\s_\-]+/).filter((w) => w.length >= 2);
-      let nameConditions = [
-        `chat_name = $${idx}`,
-        `LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`,
-        `LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))`,
-        `LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`,
-        `LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
-      ];
+      // Match exact chat name or sender (excluding 'me'/'you')
+      query += ` AND (
+        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
+        OR (LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))
+      )`;
       params.push(cleanChat);
       idx += 1;
-
-      for (const w of words) {
-        nameConditions.push(`LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`);
-        nameConditions.push(`LOWER(TRIM(sender)) LIKE '%' || LOWER(TRIM($${idx})) || '%'`);
-        params.push(w);
-        idx += 1;
-      }
-
-      query += ` AND (${nameConditions.join(" OR ")})`;
     }
 
     // Only apply strict time filtering if chatName is NOT provided.
-    // When a specific chat is selected, the phone already gathered the exact 2-day
-    // window on-demand; the user wants to see all stored messages for this chat directly from DB.
     if (!chatName && days && !isNaN(days) && days > 0) {
       query += ` AND message_time >= (NOW() - ($${idx} * INTERVAL '1 day'))`;
       params.push(days);
@@ -759,36 +745,6 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
     let finalQuery = `SELECT * FROM (${query} ORDER BY message_time DESC LIMIT 500) sub ORDER BY message_time ASC`;
     let result = await pool.query(finalQuery, params);
-
-    // Fallback: If chatName search returned 0 rows, check if there are ANY real conversation messages in DB for this device.
-    if (result.rows.length === 0 && chatName) {
-      const fallbackResult = await pool.query(
-        `SELECT * FROM (
-           SELECT id, chat_name, sender, message_text,
-                  CASE
-                    WHEN is_outgoing = true THEN true
-                    WHEN LOWER(TRIM(sender)) IN ('me', 'you', 'target device') THEN true
-                    WHEN message_text LIKE 'You: %' THEN true
-                    WHEN message_text LIKE 'You reacted %' THEN true
-                    ELSE false
-                  END AS is_outgoing,
-                  message_time, media_type, media_path
-           FROM whatsapp_messages
-           WHERE device_id = $1
-             AND chat_name IS NOT NULL
-             AND TRIM(chat_name) != ''
-             AND message_text NOT LIKE '%@s.whatsapp.net%'
-             AND message_text NOT LIKE '%@g.us%'
-             AND message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-           ORDER BY message_time DESC
-           LIMIT 500
-         ) sub ORDER BY message_time ASC`,
-        [req.params.id]
-      );
-      if (fallbackResult.rows.length > 0) {
-        result = fallbackResult;
-      }
-    }
 
     res.json(result.rows);
   } catch (err) {
