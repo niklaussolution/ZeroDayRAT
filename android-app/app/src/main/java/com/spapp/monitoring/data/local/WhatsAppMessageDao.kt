@@ -13,7 +13,7 @@ interface WhatsAppMessageDao {
     @Query("SELECT * FROM whatsapp_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
     suspend fun getUnsynced(limit: Int = 200): List<WhatsAppMessageEntry>
 
-    @Query("SELECT * FROM whatsapp_message_entries WHERE (LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) OR LOWER(TRIM(sender)) = LOWER(TRIM(:chatName)) OR LOWER(chatName) LIKE '%' || LOWER(:chatName) || '%' OR LOWER(:chatName) LIKE '%' || LOWER(chatName) || '%') AND messageTimeEpochMs >= :cutoffMs ORDER BY messageTimeEpochMs ASC")
+    @Query("SELECT * FROM whatsapp_message_entries WHERE (LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) OR LOWER(TRIM(sender)) = LOWER(TRIM(:chatName)) OR LOWER(chatName) LIKE '%' || LOWER(:chatName) || '%' OR LOWER(:chatName) LIKE '%' || LOWER(chatName) || '%') AND messageTimeEpochMs >= :cutoffMs AND messageText NOT LIKE '%@s.whatsapp.net%' AND messageText NOT LIKE '%@g.us%' AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation') ORDER BY messageTimeEpochMs ASC")
     suspend fun getMessagesForChat(chatName: String, cutoffMs: Long): List<WhatsAppMessageEntry>
 
     @Query("SELECT * FROM whatsapp_message_entries WHERE messageTimeEpochMs >= :cutoffMs ORDER BY messageTimeEpochMs ASC")

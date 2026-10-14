@@ -736,7 +736,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             if (!m.message_text && !m.media_path) return false;
             const text = (m.message_text || "").trim();
             if (
-              ["WhatsApp Contact", "Recent contact", "Recent conversation", "Tap to view conversation"].includes(text) &&
+              (isContactSyncPlaceholder(text) || text.includes("@s.whatsapp.net") || text.includes("@g.us")) &&
               !m.media_path
             ) {
               return false;

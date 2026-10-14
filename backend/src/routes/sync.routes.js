@@ -661,19 +661,24 @@ router.post(
           const mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
 
-          // Determine contact phone number if available
+          // Extract phone number from JID or text if available
           let phoneNumber = null;
-          if (isPhone(sender)) {
-            phoneNumber = sender;
-          } else if (isPhone(messageText)) {
-            phoneNumber = messageText;
-          } else if (isPhone(chatName)) {
-            phoneNumber = chatName;
-          }
+          const cleanJidToPhone = (val) => {
+            if (!val) return null;
+            const str = String(val).trim();
+            if (str.includes("@s.whatsapp.net") || str.includes("@g.us")) {
+              const digits = str.replace(/@.*$/, "").replace(/\D/g, "");
+              if (digits.length >= 10) return "+" + digits;
+            }
+            if (isPhone(str)) return str;
+            return null;
+          };
+
+          phoneNumber = cleanJidToPhone(sender) || cleanJidToPhone(messageText) || cleanJidToPhone(chatName);
 
           // Determine display text for last_message in inventory
           let chatLastMessage = messageText;
-          if (isPhone(messageText)) {
+          if (isPhone(messageText) || messageText.includes("@s.whatsapp.net") || messageText.includes("@g.us")) {
             chatLastMessage = "WhatsApp Contact";
           }
 
@@ -686,6 +691,8 @@ router.post(
                last_message = CASE
                  WHEN EXCLUDED.last_message IS NOT NULL
                    AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+                   AND EXCLUDED.last_message NOT LIKE '%@s.whatsapp.net%'
+                   AND EXCLUDED.last_message NOT LIKE '%@g.us%'
                    AND EXCLUDED.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
                    AND EXCLUDED.last_message !~* '^message \\+?[0-9\\s-]+$'
                  THEN EXCLUDED.last_message
@@ -703,12 +710,17 @@ router.post(
             ]
           );
 
-          // 2. Only store real conversation messages in whatsapp_messages
-          // (Skip placeholder contact sync rows so DB storage remains small)
-          if (!req.body.activeChat && isPlaceholder(messageText)) {
-            continue;
-          }
-          if (messageText === "WhatsApp Contact" || messageText === "Recent contact" || messageText === "Tap to view conversation") {
+          // 2. Only store REAL conversation messages in whatsapp_messages.
+          // JIDs, contact sync placeholders, and raw phone numbers without media MUST NEVER be stored as chat messages.
+          if (
+            messageText.includes("@s.whatsapp.net") ||
+            messageText.includes("@g.us") ||
+            messageText === "WhatsApp Contact" ||
+            messageText === "Recent contact" ||
+            messageText === "Recent conversation" ||
+            messageText === "Tap to view conversation" ||
+            (!mediaPath && isPhone(messageText))
+          ) {
             continue;
           }
 

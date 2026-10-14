@@ -102,6 +102,8 @@ pool
       AND a.message_time = b.message_time
       AND a.is_outgoing = b.is_outgoing;
 
+    DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
       ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);
   `)

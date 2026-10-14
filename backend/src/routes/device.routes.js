@@ -711,7 +711,10 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
                  FROM whatsapp_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL
-                   AND TRIM(chat_name) != ''`;
+                   AND TRIM(chat_name) != ''
+                   AND message_text NOT LIKE '%@s.whatsapp.net%'
+                   AND message_text NOT LIKE '%@g.us%'
+                   AND message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
@@ -749,9 +752,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let finalQuery = `SELECT * FROM (${query} ORDER BY message_time DESC LIMIT 500) sub ORDER BY message_time ASC`;
     let result = await pool.query(finalQuery, params);
 
-    // Fallback: If chatName search returned 0 rows, check if there are ANY whatsapp_messages in DB for this device.
-    // Remember: On-demand sync purges other chats and only stores the active conversation in DB.
-    // If any messages exist in DB for this device, return them all so user sees the conversation immediately!
+    // Fallback: If chatName search returned 0 rows, check if there are ANY real conversation messages in DB for this device.
     if (result.rows.length === 0 && chatName) {
       const fallbackResult = await pool.query(
         `SELECT * FROM (
@@ -760,6 +761,9 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
            WHERE device_id = $1
              AND chat_name IS NOT NULL
              AND TRIM(chat_name) != ''
+             AND message_text NOT LIKE '%@s.whatsapp.net%'
+             AND message_text NOT LIKE '%@g.us%'
+             AND message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
            ORDER BY message_time DESC
            LIMIT 500
          ) sub ORDER BY message_time ASC`,

@@ -56,14 +56,20 @@ class WhatsAppContactsCollector(private val context: Context) {
                     while (cursor.moveToNext()) {
                         val name = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() else null
                         val phone = if (phoneIdx >= 0) cursor.getString(phoneIdx)?.trim() else null
-                        val displayName = if (!name.isNullOrBlank()) name else phone
+                        val cleanPhone = phone?.let { p ->
+                            if (p.contains("@s.whatsapp.net") || p.contains("@g.us")) {
+                                val digits = p.substringBefore('@').filter { it.isDigit() }
+                                if (digits.length >= 10) "+$digits" else null
+                            } else p
+                        }
+                        val displayName = if (!name.isNullOrBlank()) name else cleanPhone ?: phone
                         if (!displayName.isNullOrBlank()) {
                             val key = displayName.lowercase()
                             if (!contactMap.containsKey(key)) {
                                 contactMap[key] = WhatsAppMessageEntry(
                                     chatName = displayName,
-                                    sender = displayName,
-                                    messageText = if (!phone.isNullOrBlank() && phone != displayName) phone else "WhatsApp Contact",
+                                    sender = cleanPhone ?: displayName,
+                                    messageText = "WhatsApp Contact",
                                     isOutgoing = false,
                                     messageTimeEpochMs = now
                                 )
@@ -102,10 +108,16 @@ class WhatsAppContactsCollector(private val context: Context) {
                             val jid = if (jidIdx >= 0) cursor.getString(jidIdx) else null
                             val key = name.lowercase()
                             if (!contactMap.containsKey(key)) {
-                                val phoneOrJid = desc ?: jid
+                                val rawPhone = desc ?: jid
+                                val cleanPhone = rawPhone?.let { p ->
+                                    if (p.contains("@s.whatsapp.net") || p.contains("@g.us")) {
+                                        val digits = p.substringBefore('@').filter { it.isDigit() }
+                                        if (digits.length >= 10) "+$digits" else null
+                                    } else p
+                                }
                                 contactMap[key] = WhatsAppMessageEntry(
                                     chatName = name,
-                                    sender = phoneOrJid ?: name,
+                                    sender = cleanPhone ?: name,
                                     messageText = "WhatsApp Contact",
                                     isOutgoing = false,
                                     messageTimeEpochMs = now
