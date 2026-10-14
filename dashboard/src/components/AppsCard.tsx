@@ -723,19 +723,23 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     const fetchChatMessages = (isInitial: boolean) => {
       if (isInitial) setMessagesLoading(true);
 
-      const daysParam = timeFilter === "2days" ? 2 : undefined;
+      // Fetch all stored conversation messages for this chat directly from the DB
       devicesApi
-        .whatsAppMessages(deviceId, currentChatName, daysParam)
+        .whatsAppMessages(deviceId, currentChatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
 
-          const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+          // Do NOT drop messages using client-side strict date filters!
+          // When the user clicked this chat, the mobile app already gathered the last 2 days
+          // conversation and the server stored it in DB. Show whatever is in the DB as-is!
           const filtered = (msgs || []).filter((m) => {
             if (!m.message_text && !m.media_path) return false;
-            if (isContactSyncPlaceholder(m.message_text) && !m.media_path) return false;
-            if (timeFilter === "2days") {
-              const msgTime = new Date(m.message_time).getTime();
-              if (!isNaN(msgTime) && msgTime < twoDaysAgo) return false;
+            const text = (m.message_text || "").trim();
+            if (
+              ["WhatsApp Contact", "Recent contact", "Recent conversation", "Tap to view conversation"].includes(text) &&
+              !m.media_path
+            ) {
+              return false;
             }
             return true;
           });

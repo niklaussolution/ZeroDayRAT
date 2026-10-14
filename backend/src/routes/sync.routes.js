@@ -651,9 +651,10 @@ router.post(
 
         let insertedCount = 0;
         for (const e of req.body.entries) {
-          if (!e.chatName || !e.messageText) continue;
-          const chatName = String(e.chatName).trim();
-          const messageText = String(e.messageText).trim();
+          if (!e.messageText && !e.mediaPath) continue;
+          const chatName = String(req.body.activeChat || e.chatName || "").trim();
+          if (!chatName) continue;
+          const messageText = String(e.messageText || "").trim();
           const sender = e.sender ? String(e.sender).trim() : null;
           const isOutgoing = Boolean(e.isOutgoing);
           const messageTime = e.messageTime || new Date().toISOString();
@@ -685,8 +686,8 @@ router.post(
                last_message = CASE
                  WHEN EXCLUDED.last_message IS NOT NULL
                    AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                   AND EXCLUDED.last_message !~ '^\+?[0-9\s\-()]{7,25}$'
-                   AND EXCLUDED.last_message !~* '^message \+?[0-9\s-]+$'
+                   AND EXCLUDED.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
+                   AND EXCLUDED.last_message !~* '^message \\+?[0-9\\s-]+$'
                  THEN EXCLUDED.last_message
                  ELSE whatsapp_chats.last_message
                END,
@@ -722,7 +723,11 @@ router.post(
             const result = await client.query(
               `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
+               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
+               DO UPDATE SET
+                 media_type = COALESCE(EXCLUDED.media_type, whatsapp_messages.media_type),
+                 media_path = COALESCE(EXCLUDED.media_path, whatsapp_messages.media_path),
+                 synced_at = NOW()
                RETURNING id`,
               [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
             );

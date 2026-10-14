@@ -133,4 +133,7 @@ export const devicesApi = {
         params: keepChat ? { keepChat } : {},
       })
       .then((r) => r.data),
+
+  whatsAppDbCheck: (id: string) =>
+    apiClient.get(`/api/devices/${id}/whatsapp/db-check`).then((r) => r.data),
 };
