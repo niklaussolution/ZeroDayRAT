@@ -341,7 +341,14 @@ class SyncRunner(private val context: Context) {
                         mediaPath = it.mediaPath ?: (if (it.chatName.equals(chatName, ignoreCase = true)) latestMediaBase64 else null)
                     )
                 }
-                val resp = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
+                val resp = ApiClient.service.syncWhatsAppMessages(
+                    bearer,
+                    WhatsAppMessagesSyncRequest(
+                        entries = dtos,
+                        activeChat = chatName,
+                        clearOtherChats = true
+                    )
+                )
                 if (resp.isSuccessful) {
                     db.whatsAppMessageDao().deleteByIds(unsynced.map { it.id })
                 }

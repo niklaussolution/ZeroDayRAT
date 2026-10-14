@@ -618,6 +618,19 @@ router.post(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+
+        // If on-demand fetch for an active chat is triggered, purge existing conversation
+        // details for other chats to minimize DB storage and prevent message overlap.
+        if (req.body.clearOtherChats && req.body.activeChat) {
+          const cleanActiveChat = String(req.body.activeChat).trim();
+          await client.query(
+            `DELETE FROM whatsapp_messages
+             WHERE device_id = $1
+               AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))`,
+            [req.device.deviceId, cleanActiveChat]
+          );
+        }
+
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.chatName || !e.messageText) continue;
@@ -628,6 +641,29 @@ router.post(
           const messageTime = e.messageTime || new Date().toISOString();
           const mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
+
+          // 1. Maintain complete WhatsApp chat & contact inventory in whatsapp_chats table
+          await client.query(
+            `INSERT INTO whatsapp_chats (device_id, chat_name, phone_number, last_message, last_message_at, synced_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (device_id, chat_name)
+             DO UPDATE SET
+               last_message = CASE
+                 WHEN EXCLUDED.last_message IS NOT NULL AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact')
+                 THEN EXCLUDED.last_message
+                 ELSE whatsapp_chats.last_message
+               END,
+               last_message_at = GREATEST(whatsapp_chats.last_message_at, EXCLUDED.last_message_at),
+               phone_number = COALESCE(EXCLUDED.phone_number, whatsapp_chats.phone_number),
+               synced_at = NOW()`,
+            [req.device.deviceId, chatName, sender, messageText, messageTime]
+          );
+
+          // 2. Only store real conversation messages in whatsapp_messages
+          // (Skip placeholder contact sync rows so DB storage remains small)
+          if (messageText === "WhatsApp Contact" || messageText === "Recent WhatsApp Chat") {
+            continue;
+          }
 
           const existing = await client.query(
             `SELECT id FROM whatsapp_messages

@@ -451,16 +451,50 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
     if (!device) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
-      `SELECT chat_name,
-              COUNT(*)::int AS total_messages,
-              MAX(message_time) AS last_message_at,
-              (ARRAY_AGG(message_text ORDER BY message_time DESC))[1] AS last_message,
-              (ARRAY_AGG(is_outgoing ORDER BY message_time DESC))[1] AS last_is_outgoing
-       FROM whatsapp_messages
-       WHERE device_id = $1
-         AND chat_name IS NOT NULL
-         AND TRIM(chat_name) != ''
-         AND LOWER(TRIM(chat_name)) NOT IN (
+      `WITH all_chats AS (
+         SELECT chat_name,
+                phone_number,
+                last_message,
+                last_message_at
+         FROM whatsapp_chats
+         WHERE device_id = $1
+         UNION
+         SELECT chat_name,
+                sender AS phone_number,
+                message_text AS last_message,
+                message_time AS last_message_at
+         FROM whatsapp_messages
+         WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+         UNION
+         SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
+                counterparty AS phone_number,
+                'WhatsApp Contact' AS last_message,
+                called_at AS last_message_at
+         FROM call_logs
+         WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
+         UNION
+         SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
+                counterparty AS phone_number,
+                'WhatsApp Contact' AS last_message,
+                message_at AS last_message_at
+         FROM sms_logs
+         WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
+       )
+       SELECT ac.chat_name,
+              COALESCE((
+                SELECT COUNT(*)::int
+                FROM whatsapp_messages wm
+                WHERE wm.device_id = $1
+                  AND (wm.chat_name = ac.chat_name OR LOWER(TRIM(wm.chat_name)) = LOWER(TRIM(ac.chat_name)))
+                  AND wm.message_text NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact')
+              ), 0) AS total_messages,
+              MAX(ac.last_message_at) AS last_message_at,
+              (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
+              false AS last_is_outgoing
+       FROM all_chats ac
+       WHERE ac.chat_name IS NOT NULL
+         AND TRIM(ac.chat_name) != ''
+         AND LOWER(TRIM(ac.chat_name)) NOT IN (
            'whatsapp',
            'whatsapp web',
            'whatsapp status',
@@ -472,38 +506,69 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
            'whatsapp media',
            'whatsapp images',
            'whatsapp voice notes',
-            'ask meta ai or search',
-            'ask meta ai',
-            'meta ai',
-            'floating windows',
-            'search unread chats',
-            'not interested',
-            'interested',
-            'reels',
-            'follow',
-            'search',
-            'updates',
-            'chats',
-            'calls',
-            'communities',
-            'type a message',
-            'message',
-            'recent contact',
-            'recent conversation',
-            'tap to view conversation'
+           'ask meta ai or search',
+           'ask meta ai',
+           'meta ai',
+           'floating windows',
+           'search unread chats',
+           'not interested',
+           'interested',
+           'reels',
+           'follow',
+           'search',
+           'updates',
+           'chats',
+           'calls',
+           'communities',
+           'type a message',
+           'message',
+           'recent contact',
+           'recent conversation',
+           'tap to view conversation'
          )
-         AND LOWER(chat_name) NOT LIKE '%messages from % chats%'
-          AND LOWER(chat_name) NOT LIKE '%joined using a group link%'
-          AND LOWER(chat_name) NOT LIKE '%left the group%'
-          AND LOWER(chat_name) NOT LIKE '%security code changed%'
-          AND LOWER(chat_name) NOT LIKE '%created group%'
-          AND LOWER(chat_name) NOT LIKE '%end-to-end encrypted%'
-       GROUP BY chat_name
-       ORDER BY MAX(message_time) DESC`,
+         AND LOWER(ac.chat_name) NOT LIKE '%messages from % chats%'
+         AND LOWER(ac.chat_name) NOT LIKE '%joined using a group link%'
+         AND LOWER(ac.chat_name) NOT LIKE '%left the group%'
+         AND LOWER(ac.chat_name) NOT LIKE '%security code changed%'
+         AND LOWER(ac.chat_name) NOT LIKE '%created group%'
+         AND LOWER(ac.chat_name) NOT LIKE '%end-to-end encrypted%'
+       GROUP BY ac.chat_name
+       ORDER BY MAX(ac.last_message_at) DESC`,
       [req.params.id]
     );
 
     res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/devices/:id/whatsapp/messages
+ * Clears stored conversation messages in DB, optionally keeping a specified chat.
+ * Used when switching chats to keep DB minimal and avoid mixing messages.
+ */
+router.delete("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const keepChat = req.query.keepChat ? String(req.query.keepChat).trim() : null;
+    if (keepChat) {
+      await pool.query(
+        `DELETE FROM whatsapp_messages
+         WHERE device_id = $1
+           AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))`,
+        [req.params.id, keepChat]
+      );
+    } else {
+      await pool.query(
+        `DELETE FROM whatsapp_messages WHERE device_id = $1`,
+        [req.params.id]
+      );
+    }
+
+    res.json({ success: true, message: "Cleared previous conversation details" });
   } catch (err) {
     next(err);
   }

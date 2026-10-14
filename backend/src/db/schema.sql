@@ -270,3 +270,18 @@ WHERE a.id < b.id
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
   ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);
+
+-- ------------------------------------------------------------
+-- WhatsApp chats: list of all chats and contacts synced from device
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS whatsapp_chats (
+  id              BIGSERIAL PRIMARY KEY,
+  device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  chat_name       VARCHAR(255) NOT NULL,
+  phone_number    VARCHAR(100),
+  last_message    TEXT,
+  last_message_at TIMESTAMPTZ DEFAULT now(),
+  synced_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (device_id, chat_name)
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);

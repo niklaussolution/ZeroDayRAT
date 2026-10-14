@@ -126,4 +126,11 @@ export const devicesApi = {
         `/api/devices/${id}/whatsapp/calls`
       )
       .then((r) => r.data),
+
+  clearWhatsAppMessages: (id: string, keepChat?: string) =>
+    apiClient
+      .delete(`/api/devices/${id}/whatsapp/messages`, {
+        params: keepChat ? { keepChat } : {},
+      })
+      .then((r) => r.data),
 };

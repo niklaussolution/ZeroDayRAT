@@ -211,11 +211,12 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
             val cleanChatName = chatName.trim()
 
+            val notGeneric = title != null && !title.equals("WhatsApp", ignoreCase = true) && !title.equals("WhatsApp Business", ignoreCase = true)
             val matchesChat = (convoTitle != null && convoTitle.contains(cleanChatName, ignoreCase = true)) ||
-                              (title != null && title.contains(cleanChatName, ignoreCase = true)) ||
+                              (notGeneric && title!!.contains(cleanChatName, ignoreCase = true)) ||
                               (subText != null && subText.contains(cleanChatName, ignoreCase = true)) ||
-                              cleanChatName.contains(title.orEmpty(), ignoreCase = true) ||
-                              cleanChatName.contains(convoTitle.orEmpty(), ignoreCase = true)
+                              (notGeneric && cleanChatName.contains(title!!, ignoreCase = true)) ||
+                              (convoTitle != null && cleanChatName.contains(convoTitle, ignoreCase = true))
 
             if (!matchesChat) continue
 
@@ -300,5 +301,29 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         @Volatile
         var instance: WhatsAppNotificationListener? = null
             private set
+
+        fun getActiveChatNames(): List<String> {
+            val inst = instance ?: return emptyList()
+            val names = mutableListOf<String>()
+            try {
+                val activeNotifs = inst.activeNotifications ?: return emptyList()
+                for (sbn in activeNotifs) {
+                    val pkg = sbn.packageName ?: continue
+                    if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") continue
+                    val extras = sbn.notification?.extras ?: continue
+                    val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+                    val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+                    val candidate = when {
+                        !convoTitle.isNullOrBlank() -> convoTitle
+                        !title.isNullOrBlank() && !title.equals("WhatsApp", ignoreCase = true) && !title.equals("WhatsApp Business", ignoreCase = true) -> title
+                        else -> null
+                    }
+                    if (!candidate.isNullOrBlank() && !names.contains(candidate)) {
+                        names.add(candidate)
+                    }
+                }
+            } catch (_: Exception) {}
+            return names
+        }
     }
 }

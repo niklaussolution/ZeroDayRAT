@@ -70,7 +70,11 @@ data class WhatsAppMessageEntryDto(
     val mediaType: String? = null,
     val mediaPath: String? = null
 )
-data class WhatsAppMessagesSyncRequest(val entries: List<WhatsAppMessageEntryDto>)
+data class WhatsAppMessagesSyncRequest(
+    val entries: List<WhatsAppMessageEntryDto>,
+    val activeChat: String? = null,
+    val clearOtherChats: Boolean = false
+)
 
 data class WebHistoryEntryDto(
     val url: String,

