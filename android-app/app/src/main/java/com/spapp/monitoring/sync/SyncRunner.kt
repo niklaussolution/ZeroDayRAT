@@ -349,7 +349,7 @@ class SyncRunner(private val context: Context) {
                 WhatsAppMessagesSyncRequest(
                     entries = dtos,
                     activeChat = chatName,
-                    clearOtherChats = true
+                    clearOtherChats = false
                 )
             )
 

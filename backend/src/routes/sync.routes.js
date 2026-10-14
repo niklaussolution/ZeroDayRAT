@@ -619,19 +619,7 @@ router.post(
       try {
         await client.query("BEGIN");
 
-        // If on-demand fetch for an active chat is triggered, purge existing conversation
-        // details for other chats to minimize DB storage and prevent message overlap.
-        if (req.body.clearOtherChats && req.body.activeChat) {
-          const cleanActiveChat = String(req.body.activeChat).trim();
-          await client.query(
-            `DELETE FROM whatsapp_messages
-             WHERE device_id = $1
-               AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))
-               AND LOWER(TRIM(chat_name)) NOT LIKE '%' || LOWER(TRIM($2)) || '%'
-               AND LOWER(TRIM($2)) NOT LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
-            [req.device.deviceId, cleanActiveChat]
-          );
-        }
+
 
         const isPhone = (val) => Boolean(val && /^\+?[0-9\s\-()]{7,25}$/.test(String(val).trim()));
         const isPlaceholder = (val) => {

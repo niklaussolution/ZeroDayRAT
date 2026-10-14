@@ -727,13 +727,26 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      // Match exact chat name or sender (excluding 'me'/'you')
-      query += ` AND (
-        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
-        OR (LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))
-      )`;
+      const digits = cleanChat.replace(/\D/g, "");
+      let nameConditions = [
+        `LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`,
+        `(LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`,
+        `(LENGTH(TRIM(chat_name)) >= 4 AND LENGTH(TRIM($${idx})) >= 4 AND (
+          LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
+          OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+        ))`
+      ];
       params.push(cleanChat);
       idx += 1;
+
+      if (digits.length >= 7) {
+        nameConditions.push(`REGEXP_REPLACE(chat_name, '[^0-9]', '', 'g') = $${idx}`);
+        nameConditions.push(`(REGEXP_REPLACE(sender, '[^0-9]', '', 'g') = $${idx} AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
+        params.push(digits);
+        idx += 1;
+      }
+
+      query += ` AND (${nameConditions.join(" OR ")})`;
     }
 
     // Only apply strict time filtering if chatName is NOT provided.

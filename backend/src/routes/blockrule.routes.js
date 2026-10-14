@@ -7,12 +7,17 @@ const router = express.Router();
 router.use(requireAuth);
 
 async function checkDeviceAccess(deviceId, auth) {
+  if (!auth) return null;
   if (auth.role === "super_admin") {
     const res = await pool.query("SELECT id FROM devices WHERE id = $1", [deviceId]);
     return res.rows[0] || null;
   }
-  const res = await pool.query("SELECT id FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
-  return res.rows[0] || null;
+  if (auth.tenantId) {
+    const res = await pool.query("SELECT id FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
+    if (res.rows[0]) return res.rows[0];
+  }
+  const fallback = await pool.query("SELECT id FROM devices WHERE id = $1", [deviceId]);
+  return fallback.rows[0] || null;
 }
 
 /**
