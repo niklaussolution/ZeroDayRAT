@@ -707,7 +707,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const handleSelectChat = (c: UnifiedChatSummary) => {
     if (selectedChatId !== c.id) {
       setSelectedChatId(c.id);
-      if (c.lastMessage && !isContactSyncPlaceholder(c.lastMessage)) {
+      if (c.lastMessage && !c.isContactOnly && !isContactSyncPlaceholder(c.lastMessage)) {
         const rawText = c.lastMessage;
         const isTargetSent = Boolean(c.lastIsOutgoing) || rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
         const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
