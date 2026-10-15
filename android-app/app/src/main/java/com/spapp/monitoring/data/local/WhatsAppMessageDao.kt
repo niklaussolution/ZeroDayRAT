@@ -30,10 +30,38 @@ interface WhatsAppMessageDao {
         AND messageTimeEpochMs >= :cutoffMs 
         AND messageText NOT LIKE '%@s.whatsapp.net%' 
         AND messageText NOT LIKE '%@g.us%' 
-        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation') 
+        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation') 
         ORDER BY messageTimeEpochMs ASC
     """)
     suspend fun getMessagesForChat(chatName: String, cutoffMs: Long): List<WhatsAppMessageEntry>
+
+    @Query("""
+        SELECT * FROM whatsapp_message_entries 
+        WHERE (
+            LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+            OR (LENGTH(TRIM(:chatName)) >= 3 AND LOWER(TRIM(chatName)) LIKE '%' || LOWER(TRIM(:chatName)) || '%')
+            OR (LENGTH(TRIM(chatName)) >= 3 AND LOWER(TRIM(:chatName)) LIKE '%' || LOWER(TRIM(chatName)) || '%')
+            OR (
+                (
+                    LOWER(TRIM(sender)) = LOWER(TRIM(:chatName)) 
+                    OR (LENGTH(TRIM(:chatName)) >= 3 AND LOWER(TRIM(sender)) LIKE '%' || LOWER(TRIM(:chatName)) || '%')
+                ) 
+                AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device')
+            )
+            OR (
+                LENGTH(:phoneDigits) >= 7 AND (
+                    chatName LIKE '%' || :phoneDigits || '%' 
+                    OR sender LIKE '%' || :phoneDigits || '%'
+                )
+            )
+        ) 
+        AND messageTimeEpochMs >= :cutoffMs 
+        AND messageText NOT LIKE '%@s.whatsapp.net%' 
+        AND messageText NOT LIKE '%@g.us%' 
+        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation') 
+        ORDER BY messageTimeEpochMs ASC
+    """)
+    suspend fun getMessagesForChatWithPhone(chatName: String, phoneDigits: String, cutoffMs: Long): List<WhatsAppMessageEntry>
 
     @Query("SELECT * FROM whatsapp_message_entries WHERE messageTimeEpochMs >= :cutoffMs ORDER BY messageTimeEpochMs ASC")
     suspend fun getAllRecentMessages(cutoffMs: Long): List<WhatsAppMessageEntry>

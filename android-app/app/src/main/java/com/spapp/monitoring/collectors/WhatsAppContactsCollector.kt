@@ -260,4 +260,24 @@ class WhatsAppContactsCollector(private val context: Context) {
 
         return contactMap.values.toList()
     }
+
+    /**
+     * Finds phone number digits for a given contact name by scanning address book and WhatsApp contacts.
+     */
+    fun findPhoneNumberForContact(targetName: String): String? {
+        if (targetName.isBlank()) return null
+        val clean = targetName.trim().lowercase()
+        val allContacts = collectAllWhatsAppContacts()
+        for (entry in allContacts) {
+            val name = entry.chatName.trim().lowercase()
+            if (name == clean || (clean.length >= 3 && name.contains(clean)) || (name.length >= 3 && clean.contains(name))) {
+                val s = entry.sender?.trim()
+                if (!s.isNullOrBlank() && s.any { it.isDigit() }) {
+                    val digits = s.filter { it.isDigit() }
+                    if (digits.length >= 7) return if (digits.length > 10) digits.takeLast(10) else digits
+                }
+            }
+        }
+        return null
+    }
 }

@@ -119,6 +119,7 @@ export interface CallLogEntry {
 
 export interface WhatsAppChatSummary {
   chat_name: string;
+  phone_number?: string | null;
   total_messages: number;
   last_message_at: string;
   last_message: string | null;

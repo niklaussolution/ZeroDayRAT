@@ -288,6 +288,8 @@ class SyncRunner(private val context: Context) {
 
     private suspend fun processGetWhatsAppChatCommand(bearer: String, command: RemoteCommand) {
         val chatName = (command.payload?.get("chatName") as? String)?.trim()
+        val payloadPhone = (command.payload?.get("phoneNumber") as? String)?.trim()
+            ?: (command.payload?.get("phone") as? String)?.trim()
         val days = (command.payload?.get("days") as? Number)?.toInt() ?: 2
         val cutoffMs = System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
 
@@ -302,13 +304,25 @@ class SyncRunner(private val context: Context) {
             return
         }
 
+        // Resolve contact phone number digits
+        val rawDigits = if (!payloadPhone.isNullOrBlank() && payloadPhone.any { it.isDigit() }) {
+            payloadPhone.filter { it.isDigit() }
+        } else if (chatName.filter { it.isDigit() }.length >= 7) {
+            chatName.filter { it.isDigit() }
+        } else {
+            try {
+                com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).findPhoneNumberForContact(chatName) ?: ""
+            } catch (_: Exception) { "" }
+        }
+        val phoneDigits = if (rawDigits.length > 10) rawDigits.takeLast(10) else rawDigits
+
         try {
             val db = AppDatabase.getInstance(context)
             val gatheredEntries = mutableListOf<WhatsAppMessageEntry>()
 
             // 1. Extract messages for this chat from active notifications (including MessagingStyle message history)
             com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.let { listener ->
-                val notifEntries = listener.extractMessagesForChat(chatName, cutoffMs)
+                val notifEntries = listener.extractMessagesForChat(chatName, cutoffMs, phoneDigits)
                 gatheredEntries.addAll(notifEntries)
             }
 
@@ -323,10 +337,18 @@ class SyncRunner(private val context: Context) {
             }
 
             // 4. Retrieve ALL conversation messages for this chat from Room DB for the last N days
-            var chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
+            var chatMessages = if (phoneDigits.length >= 7) {
+                db.whatsAppMessageDao().getMessagesForChatWithPhone(chatName, phoneDigits, cutoffMs)
+            } else {
+                db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
+            }
             if (chatMessages.isEmpty()) {
                 // Fallback to all stored messages for this chat if last 2 days has none
-                chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
+                chatMessages = if (phoneDigits.length >= 7) {
+                    db.whatsAppMessageDao().getMessagesForChatWithPhone(chatName, phoneDigits, cutoffMs = 0L)
+                } else {
+                    db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
+                }
             }
 
             // 5. Check for recently received WhatsApp images (within last 2 days)

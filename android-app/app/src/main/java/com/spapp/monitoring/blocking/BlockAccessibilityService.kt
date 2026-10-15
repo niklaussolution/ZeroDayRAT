@@ -431,29 +431,68 @@ class BlockAccessibilityService : AccessibilityService() {
                         // Look inside the conversation row container for preview message and time
                         var preview: String? = null
                         var rowTimeMs = now
+                        var isRowOutgoing = false
                         try {
-                            val container = node.parent?.parent ?: node.parent
+                            var container: AccessibilityNodeInfo? = node.parent
+                            var depth = 0
+                            while (container != null && depth < 5) {
+                                val r = Rect()
+                                container.getBoundsInScreen(r)
+                                if (r.width() > screenWidth * 0.7 && (container.isClickable || r.height() in 80..400)) {
+                                    break
+                                }
+                                container = container.parent
+                                depth++
+                            }
+                            if (container == null) container = node.parent?.parent ?: node.parent
+
                             if (container != null) {
+                                val snippetIds = listOf(
+                                    "com.whatsapp:id/conversations_row_snippet",
+                                    "com.whatsapp.w4b:id/conversations_row_snippet",
+                                    "com.whatsapp:id/single_msg_tv",
+                                    "com.whatsapp.w4b:id/single_msg_tv",
+                                    "com.whatsapp:id/msg_from_tv",
+                                    "com.whatsapp:id/last_message"
+                                )
+                                for (snipId in snippetIds) {
+                                    val snipNodes = container.findAccessibilityNodeInfosByViewId(snipId)
+                                    if (!snipNodes.isNullOrEmpty()) {
+                                        val sText = snipNodes[0].text?.toString()?.trim()
+                                        if (!sText.isNullOrBlank() && !isSystemLabel(sText) && !isTimeOrDate(sText) && !isBadge(sText)) {
+                                            preview = sText
+                                            break
+                                        }
+                                    }
+                                }
                                 val texts = collectTexts(container)
                                 val timeText = texts.firstOrNull { isTimeOrDate(it) }
                                 if (timeText != null) {
                                     rowTimeMs = parseBubbleTime(timeText)
                                 }
-                                preview = texts.firstOrNull { it != name && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
+                                if (preview == null) {
+                                    preview = texts.firstOrNull { it != name && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) && it.length > 1 }
+                                }
+                                if (preview?.startsWith("You: ", ignoreCase = true) == true) {
+                                    isRowOutgoing = true
+                                    preview = preview.substring(5).trim()
+                                }
                             }
                         } catch (_: Exception) {}
 
-                        val dedupeKey = "ROW|$name|$preview"
-                        if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
-                            capturedWhatsAppMsgHashes.add(dedupeKey)
-                            if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
-                            entriesToInsert += WhatsAppMessageEntry(
-                                chatName = name,
-                                sender = name,
-                                messageText = preview ?: "Recent conversation",
-                                isOutgoing = false,
-                                messageTimeEpochMs = rowTimeMs
-                            )
+                        if (!preview.isNullOrBlank() && preview != "Recent conversation" && !isSystemLabel(preview)) {
+                            val dedupeKey = "ROW|$name|$preview|$rowTimeMs"
+                            if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
+                                capturedWhatsAppMsgHashes.add(dedupeKey)
+                                if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+                                entriesToInsert += WhatsAppMessageEntry(
+                                    chatName = name,
+                                    sender = if (isRowOutgoing) "me" else name,
+                                    messageText = preview,
+                                    isOutgoing = isRowOutgoing,
+                                    messageTimeEpochMs = rowTimeMs
+                                )
+                            }
                         }
                     }
                 } else {
@@ -485,21 +524,29 @@ class BlockAccessibilityService : AccessibilityService() {
                         }
                         if (candidateTitles.isNotEmpty()) {
                             val title = candidateTitles.first()
-                            val snippet = texts.firstOrNull { it != title && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
+                            var snippet = texts.firstOrNull { it != title && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
                             val timeText = texts.firstOrNull { isTimeOrDate(it) }
                             val rowTimeMs = if (timeText != null) parseBubbleTime(timeText) else now
 
-                            val dedupeKey = "ROW|$title|$snippet"
-                            if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
-                                capturedWhatsAppMsgHashes.add(dedupeKey)
-                                if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
-                                entriesToInsert += WhatsAppMessageEntry(
-                                    chatName = title,
-                                    sender = title,
-                                    messageText = snippet ?: "Recent conversation",
-                                    isOutgoing = false,
-                                    messageTimeEpochMs = rowTimeMs
-                                )
+                            var isSnippetOutgoing = false
+                            if (snippet?.startsWith("You: ", ignoreCase = true) == true) {
+                                isSnippetOutgoing = true
+                                snippet = snippet.substring(5).trim()
+                            }
+
+                            if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
+                                val dedupeKey = "ROW|$title|$snippet|$rowTimeMs"
+                                if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
+                                    capturedWhatsAppMsgHashes.add(dedupeKey)
+                                    if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+                                    entriesToInsert += WhatsAppMessageEntry(
+                                        chatName = title,
+                                        sender = if (isSnippetOutgoing) "me" else title,
+                                        messageText = snippet,
+                                        isOutgoing = isSnippetOutgoing,
+                                        messageTimeEpochMs = rowTimeMs
+                                    )
+                                }
                             }
                         }
                     }

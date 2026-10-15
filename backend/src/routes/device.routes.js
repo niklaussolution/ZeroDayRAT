@@ -727,26 +727,63 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      const digits = cleanChat.replace(/\D/g, "");
-      let nameConditions = [
-        `LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`,
-        `(LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`,
-        `(LENGTH(TRIM(chat_name)) >= 2 AND LENGTH(TRIM($${idx})) >= 2 AND (
-          LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
-          OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-        ))`
-      ];
-      params.push(cleanChat);
-      idx += 1;
+      const chatNames = [cleanChat];
+      const phoneDigits = [];
 
-      if (digits.length >= 7) {
-        nameConditions.push(`REGEXP_REPLACE(chat_name, '[^0-9]', '', 'g') = $${idx}`);
-        nameConditions.push(`(REGEXP_REPLACE(sender, '[^0-9]', '', 'g') = $${idx} AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
+      const queryDigits = cleanChat.replace(/\D/g, "");
+      if (queryDigits.length >= 7) {
+        phoneDigits.push(queryDigits.length > 10 ? queryDigits.slice(-10) : queryDigits);
+      }
+
+      // 1. Look up any known phone numbers or alias contact names from whatsapp_chats
+      try {
+        const aliasLookup = await pool.query(
+          `SELECT chat_name, phone_number
+           FROM whatsapp_chats
+           WHERE device_id = $1
+             AND (
+               LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
+               OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
+               OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+             )`,
+          [req.params.id, cleanChat]
+        );
+        for (const row of aliasLookup.rows) {
+          if (row.chat_name && !chatNames.includes(row.chat_name)) {
+            chatNames.push(row.chat_name);
+          }
+          if (row.phone_number) {
+            const rawDigits = String(row.phone_number).replace(/\D/g, "");
+            const normalized = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
+            if (normalized.length >= 7 && !phoneDigits.includes(normalized)) {
+              phoneDigits.push(normalized);
+            }
+          }
+        }
+      } catch (_) {}
+
+      const nameConditions = [];
+
+      for (const name of chatNames) {
+        nameConditions.push(`LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`);
+        nameConditions.push(`(LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
+        if (name.length >= 3) {
+          nameConditions.push(`(LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%' OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%')`);
+        }
+        params.push(name);
+        idx += 1;
+      }
+
+      for (const digits of phoneDigits) {
+        nameConditions.push(`REGEXP_REPLACE(chat_name, '[^0-9]', '', 'g') LIKE '%' || $${idx} || '%'`);
+        nameConditions.push(`(REGEXP_REPLACE(sender, '[^0-9]', '', 'g') LIKE '%' || $${idx} || '%' AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
         params.push(digits);
         idx += 1;
       }
 
-      query += ` AND (${nameConditions.join(" OR ")})`;
+      if (nameConditions.length > 0) {
+        query += ` AND (${nameConditions.join(" OR ")})`;
+      }
     }
 
     // Only apply strict time filtering if chatName is NOT provided.
@@ -772,7 +809,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
              OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
            )
            AND last_message IS NOT NULL 
-           AND last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+           AND last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation')
            AND last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
          ORDER BY last_message_at DESC LIMIT 1`,
         [req.params.id, cleanChat]

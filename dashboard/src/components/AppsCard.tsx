@@ -223,7 +223,15 @@ export function isContactSyncPlaceholder(text: string | null | undefined): boole
   const t = text.trim();
   if (!t) return true;
   if (t.includes("@s.whatsapp.net") || t.includes("@g.us")) return true;
-  if (["WhatsApp Contact", "Recent contact", "Recent conversation", "Tap to view conversation"].includes(t)) return true;
+  if ([
+    "WhatsApp Contact",
+    "Recent WhatsApp Chat",
+    "Recent contact",
+    "Recent conversation",
+    "Tap to view conversation",
+    "Click chat to get last 2 days conversation",
+    "WhatsApp Monitored Chat"
+  ].includes(t)) return true;
   if (/^Message \+?[0-9\s-]+$/i.test(t)) return true;
   return false;
 }
@@ -639,9 +647,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       // NOTE: Do NOT delete existing conversation messages from DB!
       // They stay continuously visible, and newly arrived messages patch seamlessly.
 
+      const matchedChat = whatsappChats.find(
+        (c) => c.chat_name?.trim().toLowerCase() === cleanName.toLowerCase()
+      );
+      const phoneNumber = matchedChat?.phone_number || undefined;
+
       // Dispatch command to mobile app to fetch last 2 days conversation
       const cmd = await devicesApi.createCommand(deviceId, "get_whatsapp_chat", {
         chatName: cleanName,
+        phoneNumber,
         days: 2,
       });
 
@@ -735,10 +749,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       if (isInitial && activeThreadMessages.length === 0) setMessagesLoading(true);
 
       // Fetch all stored conversation messages for this chat directly from the DB
+      devicesApi.whatsAppDbCheck(deviceId).then((dbData) => {
+        console.log("===DB_CHECK_DATA===", JSON.stringify(dbData));
+      }).catch(() => {});
+
       devicesApi
         .whatsAppMessages(deviceId, currentChatName)
         .then((msgs: WhatsAppMessage[]) => {
           if (!isMounted) return;
+          console.log("===WHATSAPP_MSGS_FOR_CHAT===", currentChatName, msgs);
 
           // Do NOT drop messages using client-side strict date filters!
           // When the user clicked this chat, the mobile app already gathered the last 2 days
@@ -783,9 +802,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
           // If initial load or user switched chat, directly set unified messages for this chat
           if (isInitial) {
-            if (unified.length > 0) {
-              setActiveThreadMessages(unified);
-            }
+            setActiveThreadMessages(unified);
             return;
           }
 

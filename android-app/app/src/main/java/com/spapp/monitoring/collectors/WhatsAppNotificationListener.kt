@@ -202,7 +202,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
      * Extracts all messages for a specific chat from current active notifications
      * filtered to those within the given cutoff time (e.g. last 2 days).
      */
-    fun extractMessagesForChat(chatName: String, cutoffTimeMs: Long): List<WhatsAppMessageEntry> {
+    fun extractMessagesForChat(chatName: String, cutoffTimeMs: Long, phoneDigits: String? = null): List<WhatsAppMessageEntry> {
         val results = mutableListOf<WhatsAppMessageEntry>()
         val activeNotifs = try { activeNotifications } catch (_: Exception) { null } ?: return emptyList()
 
@@ -218,9 +218,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             val cleanChatName = chatName.trim()
 
             val notGeneric = title != null && !title.equals("WhatsApp", ignoreCase = true) && !title.equals("WhatsApp Business", ignoreCase = true)
+            val digitsMatch = if (!phoneDigits.isNullOrBlank() && phoneDigits.length >= 7) {
+                val tDig = title?.filter { it.isDigit() } ?: ""
+                val cDig = convoTitle?.filter { it.isDigit() } ?: ""
+                val sDig = subText?.filter { it.isDigit() } ?: ""
+                tDig.contains(phoneDigits) || cDig.contains(phoneDigits) || sDig.contains(phoneDigits)
+            } else false
+
             val matchesChat = (convoTitle != null && (convoTitle.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && convoTitle.contains(cleanChatName, ignoreCase = true)) || (convoTitle.length >= 3 && cleanChatName.contains(convoTitle, ignoreCase = true)))) ||
                               (notGeneric && (title!!.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && title.contains(cleanChatName, ignoreCase = true)) || (title.length >= 3 && cleanChatName.contains(title, ignoreCase = true)))) ||
-                              (subText != null && (subText.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && subText.contains(cleanChatName, ignoreCase = true)) || (subText.length >= 3 && cleanChatName.contains(subText, ignoreCase = true))))
+                              (subText != null && (subText.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && subText.contains(cleanChatName, ignoreCase = true)) || (subText.length >= 3 && cleanChatName.contains(subText, ignoreCase = true)))) ||
+                              digitsMatch
 
             if (!matchesChat) continue
 
