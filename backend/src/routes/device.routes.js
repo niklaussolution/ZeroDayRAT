@@ -705,7 +705,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    const chatName = req.query.chat;
+    const chatName = req.query.chat || req.query.chatName || req.query.name;
     const days = req.query.days ? parseInt(req.query.days, 10) : null;
     let query = `SELECT id, chat_name, sender, message_text,
                         CASE
