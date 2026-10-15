@@ -96,7 +96,7 @@ router.get("/:id/commands", async (req, res, next) => {
     if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
 
     const result = await pool.query(
-      `SELECT id, command_type, status, created_at, completed_at FROM remote_commands
+      `SELECT id, command_type, payload, status, result, created_at, completed_at FROM remote_commands
        WHERE device_id = $1 ORDER BY created_at DESC LIMIT 50`,
       [req.params.id]
     );
