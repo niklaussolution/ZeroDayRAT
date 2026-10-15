@@ -731,7 +731,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       let nameConditions = [
         `LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`,
         `(LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`,
-        `(LENGTH(TRIM(chat_name)) >= 4 AND LENGTH(TRIM($${idx})) >= 4 AND (
+        `(LENGTH(TRIM(chat_name)) >= 2 AND LENGTH(TRIM($${idx})) >= 2 AND (
           LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
           OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
         ))`
@@ -758,6 +758,41 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
     let finalQuery = `SELECT * FROM (${query} ORDER BY message_time DESC LIMIT 500) sub ORDER BY message_time ASC`;
     let result = await pool.query(finalQuery, params);
+
+    // If no direct conversation rows are stored yet for this chat, check whatsapp_chats for last_message preview
+    if (result.rows.length === 0 && chatName) {
+      const cleanChat = String(chatName).trim();
+      const chatFallback = await pool.query(
+        `SELECT chat_name, phone_number, last_message, last_message_at 
+         FROM whatsapp_chats 
+         WHERE device_id = $1 
+           AND (
+             LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
+             OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
+             OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+           )
+           AND last_message IS NOT NULL 
+           AND last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+           AND last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
+         ORDER BY last_message_at DESC LIMIT 1`,
+        [req.params.id, cleanChat]
+      );
+      if (chatFallback.rows.length > 0 && chatFallback.rows[0].last_message) {
+        const row = chatFallback.rows[0];
+        const hasYouPrefix = row.last_message.startsWith("You: ") || row.last_message.startsWith("You reacted ");
+        const cleanMsg = row.last_message.startsWith("You: ") ? row.last_message.substring(5).trim() : row.last_message;
+        result.rows = [{
+          id: -1,
+          chat_name: row.chat_name || cleanChat,
+          sender: hasYouPrefix ? "me" : (row.chat_name || cleanChat),
+          message_text: cleanMsg,
+          is_outgoing: hasYouPrefix,
+          message_time: row.last_message_at || new Date().toISOString(),
+          media_type: null,
+          media_path: null
+        }];
+      }
+    }
 
     res.json(result.rows);
   } catch (err) {

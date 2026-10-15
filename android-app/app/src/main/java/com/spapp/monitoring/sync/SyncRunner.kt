@@ -323,7 +323,11 @@ class SyncRunner(private val context: Context) {
             }
 
             // 4. Retrieve ALL conversation messages for this chat from Room DB for the last N days
-            val chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
+            var chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
+            if (chatMessages.isEmpty()) {
+                // Fallback to all stored messages for this chat if last 2 days has none
+                chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
+            }
 
             // 5. Check for recently received WhatsApp images (within last 2 days)
             val latestMediaBase64 = try {

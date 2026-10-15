@@ -597,7 +597,22 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     } else {
       if (displayedChats.length > 0) {
         if (!selectedChatId || !displayedChats.some((c) => c.id === selectedChatId)) {
-          setSelectedChatId(displayedChats[0].id);
+          const first = displayedChats[0];
+          setSelectedChatId(first.id);
+          if (first.lastMessage && !isContactSyncPlaceholder(first.lastMessage)) {
+            const rawText = first.lastMessage;
+            const isTargetSent = Boolean(first.lastIsOutgoing) || rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
+            const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
+            setActiveThreadMessages([{
+              id: `preview-${first.id}`,
+              sender: isTargetSent ? "Target Device" : first.chatName,
+              text: cleanText,
+              isOutgoing: isTargetSent,
+              timestamp: first.lastMessageAt || new Date().toISOString(),
+              mediaType: null,
+              mediaPath: null,
+            }]);
+          }
         }
       } else {
         setSelectedChatId(null);
@@ -678,7 +693,22 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const handleSelectChat = (c: UnifiedChatSummary) => {
     if (selectedChatId !== c.id) {
       setSelectedChatId(c.id);
-      setActiveThreadMessages([]); // Clear previous conversation only when selecting a different contact
+      if (c.lastMessage && !isContactSyncPlaceholder(c.lastMessage)) {
+        const rawText = c.lastMessage;
+        const isTargetSent = Boolean(c.lastIsOutgoing) || rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
+        const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
+        setActiveThreadMessages([{
+          id: `preview-${c.id}`,
+          sender: isTargetSent ? "Target Device" : c.chatName,
+          text: cleanText,
+          isOutgoing: isTargetSent,
+          timestamp: c.lastMessageAt || new Date().toISOString(),
+          mediaType: null,
+          mediaPath: null,
+        }]);
+      } else {
+        setActiveThreadMessages([]);
+      }
       setCountdownSeconds(120);
       requestChatFromMobileApp(c.chatName, false);
     }
@@ -753,12 +783,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
           // If initial load or user switched chat, directly set unified messages for this chat
           if (isInitial) {
-            setActiveThreadMessages(unified);
+            if (unified.length > 0) {
+              setActiveThreadMessages(unified);
+            }
             return;
           }
 
           // Background auto-sync / live polling: update only if new messages or changes exist
           setActiveThreadMessages((prev) => {
+            if (unified.length === 0 && prev.length > 0) return prev;
             if (prev.length === 0) return unified;
             if (prev.length === unified.length) {
               let isIdentical = true;

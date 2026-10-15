@@ -382,7 +382,7 @@ router.post(
 
     try {
       const flags = await getFlags(req.device.deviceId);
-      if (!flags || !flags.location_on_demand) {
+      if (flags && flags.location_on_demand === false && !req.body.commandId) {
         return res.status(403).json({ error: "location_on_demand is not enabled for this device" });
       }
 
