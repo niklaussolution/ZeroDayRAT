@@ -944,7 +944,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           GROUP BY LOWER(TRIM(chat_name))
         )
         SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
-               COALESCE(mc.total_messages, 0) AS total_messages,
+               COALESCE(MAX(mc.total_messages), 0) AS total_messages,
                MAX(ac.last_message_at) AS last_message_at,
                (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
                COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
