@@ -416,6 +416,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           n.startsWith("whatsapp media") ||
           n.startsWith("whatsapp image") ||
           n.startsWith("whatsapp voice") ||
+          n.startsWith("switched to") ||
+          n.startsWith("switch to") ||
+          n.startsWith("logged in as") ||
           n.includes("messages from") ||
           n.includes("joined using a group link") ||
           n.includes("left the group") ||

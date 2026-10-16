@@ -777,7 +777,11 @@ class BlockAccessibilityService : AccessibilityService() {
             findHeader(root)
             val chatTitle = headerNodes.firstOrNull {
                 val s = it.text.toString().trim()
-                s != "Instagram" && s != "Direct" && s != "Messages" && !s.contains("Active") && s.length in 2..50
+                s != "Instagram" && s != "Direct" && s != "Messages" && !s.contains("Active") &&
+                !s.startsWith("Switched to", ignoreCase = true) &&
+                !s.startsWith("Switch to", ignoreCase = true) &&
+                !s.startsWith("Logged in", ignoreCase = true) &&
+                s.length in 2..50
             }?.text?.toString()?.trim()
 
             if (!chatTitle.isNullOrBlank()) {
