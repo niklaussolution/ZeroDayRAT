@@ -607,9 +607,12 @@ class BlockAccessibilityService : AccessibilityService() {
 
     fun detectAndHandleInstagramAccountSwitch(root: AccessibilityNodeInfo?) {
         if (root == null) return
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != "com.instagram.android") return
+
         try {
             val state = com.spapp.monitoring.data.DeviceState(applicationContext)
-            val currentAccount = (state.instagramAccount ?: "alone_sparrow_2603").trim().lowercase()
+            val currentAccount = (state.instagramAccount ?: "_free_bird_2603").trim().lowercase()
 
             val allTexts = mutableListOf<String>()
             val topCandidates = mutableListOf<Pair<String, Rect>>()
@@ -621,7 +624,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     allTexts.add(t)
                     val r = Rect()
                     node.getBoundsInScreen(r)
-                    if (r.top < 650 && r.height() in 15..300) {
+                    if (r.top < 500 && r.height() in 15..250) {
                         topCandidates.add(Pair(t, r))
                     }
                 }
@@ -630,7 +633,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     allTexts.add(cd)
                     val r = Rect()
                     node.getBoundsInScreen(r)
-                    if (r.top < 650 && r.height() in 15..300) {
+                    if (r.top < 500 && r.height() in 15..250) {
                         topCandidates.add(Pair(cd, r))
                     }
                 }
@@ -661,7 +664,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 "posts", "saved", "archive", "qr code", "audio", "video", "primary", "general",
                 "requests", "notes", "new message", "create", "options", "more options", "back",
                 "professional dashboard", "tools", "insights", "ad tools", "switch accounts",
-                "add account", "log in", "log out", "accounts", "profile", "home", "search & explore"
+                "add account", "log in", "log out", "accounts", "profile", "home", "search & explore",
+                "uninstall", "security", "music", "danger"
             )
 
             // 2. STRATEGY: Own Profile Screen Detection
@@ -674,10 +678,9 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             if (detectedUsername == null && isOwnProfile) {
-                // Look for candidate username in the top header region (Y < 480)
                 for ((text, rect) in topCandidates) {
                     val candidate = text.removePrefix("@").trim()
-                    if (rect.top < 480 &&
+                    if (rect.top < 450 &&
                         candidate.length in 3..32 &&
                         candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
                         !candidate.matches("^[0-9]+$".toRegex()) &&
@@ -689,33 +692,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 3. STRATEGY: Direct Messages Inbox / Top Action Bar
-            // In Direct inbox or account header, username is displayed at top-left or top-center (rect.top < 450)
-            if (detectedUsername == null) {
-                for ((text, rect) in topCandidates) {
-                    val candidate = text.removePrefix("@").trim()
-                    if (rect.top < 450 &&
-                        rect.height() in 20..220 &&
-                        candidate.length in 3..32 &&
-                        candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
-                        !candidate.matches("^[0-9]+$".toRegex()) &&
-                        !reserved.contains(candidate.lowercase())
-                    ) {
-                        // Avoid matching conversational recipient in an active chat
-                        // In an active chat, the screen contains "Message..." or "Type a message"
-                        val isInActiveChat = allTexts.any {
-                            it.equals("Message...", ignoreCase = true) ||
-                            it.startsWith("Message...", ignoreCase = true)
-                        }
-                        if (!isInActiveChat) {
-                            detectedUsername = candidate
-                            break
-                        }
-                    }
-                }
-            }
-
-            // 4. If a valid active account is detected and different from current:
+            // 3. If a valid active account is detected and different from current:
             if (!detectedUsername.isNullOrBlank()) {
                 val newAcc = detectedUsername.lowercase().removePrefix("@").trim()
                 if (newAcc.isNotEmpty() && !newAcc.equals(currentAccount, ignoreCase = true)) {
@@ -749,7 +726,24 @@ class BlockAccessibilityService : AccessibilityService() {
 
     fun recordInstagramChatIfForeground(root: AccessibilityNodeInfo?) {
         if (root == null) return
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != "com.instagram.android") return
+
         detectAndHandleInstagramAccountSwitch(root)
+
+        // Strict verification: ONLY record messages if user is inside an actual Direct Chat with an active text composer!
+        fun hasDirectChatComposer(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return true
+            val t = (node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")
+            if (t.contains("Message...", ignoreCase = true) || t.contains("Type a message", ignoreCase = true)) return true
+            for (i in 0 until node.childCount) {
+                if (hasDirectChatComposer(node.getChild(i))) return true
+            }
+            return false
+        }
+        if (!hasDirectChatComposer(root)) return
+
         try {
             val entriesToInsert = mutableListOf<InstagramMessageEntry>()
             val now = System.currentTimeMillis()

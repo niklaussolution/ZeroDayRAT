@@ -959,6 +959,10 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT IN (
             'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications'
           )
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switched to%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switch to%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'uninstall%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
@@ -998,7 +1002,9 @@ router.get("/:id/instagram/account", requireAuth, async (req, res, next) => {
         [req.params.id]
       );
       const raw = accResult.rows[0]?.instagram_account;
-      const accountName = raw && raw.trim() ? raw.trim() : "alone_sparrow_2603";
+      const accountName = raw && raw.trim() && raw.trim().toLowerCase() !== "music"
+        ? raw.trim()
+        : "_free_bird_2603";
       return res.json({
         accountName,
         status: "logged_in",
@@ -1007,12 +1013,63 @@ router.get("/:id/instagram/account", requireAuth, async (req, res, next) => {
       });
     } catch (_e) {
       return res.json({
-        accountName: "alone_sparrow_2603",
+        accountName: "_free_bird_2603",
         status: "logged_in",
         platform: "Instagram Android",
         updatedAt: new Date().toISOString()
       });
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/devices/:id/instagram/account
+ * (Admin) Updates or resets the active Instagram account for a device.
+ */
+router.post("/:id/instagram/account", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const newAccount = String(req.body.accountName || req.body.account || "").trim();
+    if (!newAccount) return res.status(400).json({ error: "accountName required" });
+
+    await pool.query(
+      `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
+      [newAccount, req.params.id]
+    );
+
+    if (req.body.purgeJunk) {
+      await pool.query(
+        `DELETE FROM instagram_chats WHERE device_id = $1 AND (
+          LOWER(chat_name) LIKE 'switched to%' OR 
+          LOWER(chat_name) LIKE 'uninstall%' OR
+          LOWER(chat_name) = 'music' OR
+          LOWER(chat_name) = 'danger'
+        )`,
+        [req.params.id]
+      );
+      await pool.query(
+        `DELETE FROM instagram_messages WHERE device_id = $1 AND (
+          LOWER(chat_name) LIKE 'switched to%' OR 
+          LOWER(chat_name) LIKE 'uninstall%' OR
+          LOWER(chat_name) = 'music' OR
+          LOWER(chat_name) = 'danger'
+        )`,
+        [req.params.id]
+      );
+    }
+
+    emitDeviceEvent(req.params.id, {
+      type: "instagram_account",
+      accountName: newAccount,
+      switched: true,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, accountName: newAccount });
   } catch (err) {
     next(err);
   }
