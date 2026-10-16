@@ -1329,6 +1329,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               return (
                 <button
                   key={app.id}
+                  id={`app-tab-${app.id}`}
                   type="button"
                   onClick={() => {
                     if (selectedApp !== app.id) {

