@@ -806,6 +806,7 @@ async function ensureInstagramTables() {
  */
 router.post("/instagram/account", async (req, res, next) => {
   try {
+    const deviceId = req.device.deviceId || req.device.id;
     const newAccount = String(req.body.accountName || req.body.account || "").trim();
     if (!newAccount) {
       return res.status(400).json({ error: "accountName required" });
@@ -813,22 +814,32 @@ router.post("/instagram/account", async (req, res, next) => {
 
     const deviceResult = await pool.query(
       `SELECT instagram_account FROM devices WHERE id = $1`,
-      [req.device.id]
+      [deviceId]
     );
     const currentAccount = deviceResult.rows[0]?.instagram_account;
     const isSwitched = Boolean(currentAccount && currentAccount.trim().toLowerCase() !== newAccount.toLowerCase());
 
     if (isSwitched) {
-      console.log(`[Account Switch] Device ${req.device.id}: '${currentAccount}' -> '${newAccount}'. Purging old ID data to save DB space.`);
+      console.log(`[Account Switch] Device ${deviceId}: '${currentAccount}' -> '${newAccount}'. Purging old ID data to save DB space.`);
       // Purge old messages and chats to minimize DB consumption and prevent mixing accounts
-      await pool.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [req.device.id]);
-      await pool.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [req.device.id]);
+      await pool.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [deviceId]);
+      await pool.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [deviceId]);
     }
 
     await pool.query(
       `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
-      [newAccount, req.device.id]
+      [newAccount, deviceId]
     );
+
+    await touchLastSeen(deviceId);
+
+    emitDeviceEvent(deviceId, {
+      type: "instagram_account",
+      accountName: newAccount,
+      switched: isSwitched,
+      previousAccount: isSwitched ? currentAccount : null,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({
       success: true,
@@ -853,6 +864,7 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
 
     try {
+      const deviceId = req.device.deviceId || req.device.id;
       await ensureInstagramTables();
       const client = await pool.connect();
       try {
@@ -863,18 +875,28 @@ router.post(
           if (acc) {
             const devRes = await client.query(
               `SELECT instagram_account FROM devices WHERE id = $1`,
-              [req.device.id]
+              [deviceId]
             );
             const curAcc = devRes.rows[0]?.instagram_account;
-            if (curAcc && curAcc.trim().toLowerCase() !== acc.toLowerCase()) {
-              console.log(`[Account Switch in Batch] Device ${req.device.id}: '${curAcc}' -> '${acc}'. Purging old data.`);
-              await client.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [req.device.id]);
-              await client.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [req.device.id]);
+            const isBatchSwitched = Boolean(curAcc && curAcc.trim().toLowerCase() !== acc.toLowerCase());
+            if (isBatchSwitched) {
+              console.log(`[Account Switch in Batch] Device ${deviceId}: '${curAcc}' -> '${acc}'. Purging old data.`);
+              await client.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [deviceId]);
+              await client.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [deviceId]);
             }
             await client.query(
               `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
-              [acc, req.device.id]
+              [acc, deviceId]
             );
+            if (isBatchSwitched) {
+              emitDeviceEvent(deviceId, {
+                type: "instagram_account",
+                accountName: acc,
+                switched: true,
+                previousAccount: curAcc,
+                timestamp: new Date().toISOString()
+              });
+            }
           }
         }
 

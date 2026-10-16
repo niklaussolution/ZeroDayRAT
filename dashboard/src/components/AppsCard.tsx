@@ -374,7 +374,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           console.warn("Instagram chats fetch error:", err);
           return [] as InstagramChatSummary[];
         }),
-        devicesApi.instagramAccount(deviceId).catch(() => ({ accountName: "alone_sparrow_2603", status: "logged_in" })),
+        devicesApi.instagramAccount(deviceId).catch(() => null),
       ]);
 
       if (igAccountRes?.accountName) {
@@ -538,7 +538,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (
+          if (payload.type === "instagram_account" && payload.accountName) {
+            setInstagramAccount(payload.accountName);
+            setLastSyncedTime(new Date());
+            loadRef.current();
+          } else if (
             payload.type === "whatsapp_message" ||
             payload.type === "instagram_message" ||
             payload.type === "sync" ||
@@ -1610,9 +1614,20 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         <span className="flex items-center gap-1">
                           <span>💬</span> Direct Messages
                         </span>
-                        <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
-                          {instagramChats.length} {instagramChats.length === 1 ? "chat" : "chats"}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => loadDeviceChatData(true)}
+                            disabled={loading}
+                            title="Trigger Instagram account & chat sync from target phone"
+                            className="text-[9px] font-bold px-2 py-0.5 rounded bg-pink-600 hover:bg-pink-700 text-white transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <span>↻</span> {loading ? "Syncing..." : "Sync Phone"}
+                          </button>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
+                            {instagramChats.length} {instagramChats.length === 1 ? "chat" : "chats"}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   )}

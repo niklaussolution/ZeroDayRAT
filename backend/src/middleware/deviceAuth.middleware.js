@@ -31,7 +31,11 @@ async function requireDeviceAuth(req, res, next) {
       return res.status(403).json({ error: "Device is not active" });
     }
 
-    req.device = { deviceId: payload.sub, tenantId: payload.tenantId };
+    req.device = {
+      deviceId: payload.sub,
+      id: payload.sub,
+      tenantId: payload.tenantId,
+    };
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });

