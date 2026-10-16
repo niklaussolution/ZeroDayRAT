@@ -870,6 +870,45 @@ router.get("/:id/whatsapp/db-check", requireAuth, async (req, res, next) => {
 });
 
 /**
+ * Helper to ensure Instagram tables exist if not migrated yet
+ */
+async function ensureInstagramTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS instagram_messages (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        sender          VARCHAR(255),
+        message_text    TEXT NOT NULL,
+        is_outgoing     BOOLEAN NOT NULL DEFAULT false,
+        message_time    TIMESTAMPTZ NOT NULL,
+        media_type      VARCHAR(50),
+        media_path      TEXT,
+        reel_url        TEXT,
+        synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_chat ON instagram_messages(device_id, chat_name, message_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_time ON instagram_messages(device_id, message_time DESC);
+
+      CREATE TABLE IF NOT EXISTS instagram_chats (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        username        VARCHAR(255),
+        last_message    TEXT,
+        last_message_at TIMESTAMPTZ DEFAULT now(),
+        synced_at       TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (device_id, chat_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
+    `);
+  } catch (e) {
+    console.warn("ensureInstagramTables notice:", e.message);
+  }
+}
+
+/**
  * GET /api/devices/:id/instagram/chats
  * Returns all distinct Instagram chats and direct counterparties with last_message and counts.
  */
@@ -878,53 +917,66 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    const query = `
-      WITH all_chats AS (
-        SELECT chat_name,
-               username,
-               last_message,
-               last_message_at,
-               false AS is_outgoing
-        FROM instagram_chats
-        WHERE device_id = $1
-        UNION ALL
-        SELECT chat_name,
-               sender AS username,
-               message_text AS last_message,
-               message_time AS last_message_at,
-               is_outgoing
-        FROM instagram_messages
-        WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-      ),
-      msg_counts AS (
-        SELECT LOWER(TRIM(chat_name)) AS canonical_name,
-               COUNT(*)::int AS total_messages
-        FROM instagram_messages
-        WHERE device_id = $1
-        GROUP BY LOWER(TRIM(chat_name))
-      )
-      SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
-             COALESCE(mc.total_messages, 0) AS total_messages,
-             MAX(ac.last_message_at) AS last_message_at,
-             (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
-             COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
-             (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username
-      FROM all_chats ac
-      LEFT JOIN msg_counts mc ON mc.canonical_name = LOWER(TRIM(ac.chat_name))
-      WHERE ac.chat_name IS NOT NULL
-        AND TRIM(ac.chat_name) != ''
-        AND LOWER(TRIM(ac.chat_name)) NOT IN (
-          'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications'
+    const fetchChats = async () => {
+      const query = `
+        WITH all_chats AS (
+          SELECT chat_name,
+                 username,
+                 last_message,
+                 last_message_at,
+                 false AS is_outgoing
+          FROM instagram_chats
+          WHERE device_id = $1
+          UNION ALL
+          SELECT chat_name,
+                 sender AS username,
+                 message_text AS last_message,
+                 message_time AS last_message_at,
+                 is_outgoing
+          FROM instagram_messages
+          WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+        ),
+        msg_counts AS (
+          SELECT LOWER(TRIM(chat_name)) AS canonical_name,
+                 COUNT(*)::int AS total_messages
+          FROM instagram_messages
+          WHERE device_id = $1
+          GROUP BY LOWER(TRIM(chat_name))
         )
-      GROUP BY LOWER(TRIM(ac.chat_name))
-      ORDER BY MAX(ac.last_message_at) DESC
-      LIMIT 1000;
-    `;
+        SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
+               COALESCE(mc.total_messages, 0) AS total_messages,
+               MAX(ac.last_message_at) AS last_message_at,
+               (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
+               COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
+               (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username
+        FROM all_chats ac
+        LEFT JOIN msg_counts mc ON mc.canonical_name = LOWER(TRIM(ac.chat_name))
+        WHERE ac.chat_name IS NOT NULL
+          AND TRIM(ac.chat_name) != ''
+          AND LOWER(TRIM(ac.chat_name)) NOT IN (
+            'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications'
+          )
+        GROUP BY LOWER(TRIM(ac.chat_name))
+        ORDER BY MAX(ac.last_message_at) DESC
+        LIMIT 1000;
+      `;
+      return await pool.query(query, [req.params.id]);
+    };
 
-    const result = await pool.query(query, [req.params.id]);
-    res.json(result.rows);
+    try {
+      const result = await fetchChats();
+      return res.json(result.rows);
+    } catch (dbErr) {
+      if (dbErr.code === "42P01") {
+        await ensureInstagramTables();
+        const retryResult = await fetchChats();
+        return res.json(retryResult.rows);
+      }
+      throw dbErr;
+    }
   } catch (err) {
-    next(err);
+    console.error("GET /instagram/chats error:", err);
+    res.json([]);
   }
 });
 
@@ -1017,7 +1069,12 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
 
     res.json(result.rows);
   } catch (err) {
-    next(err);
+    if (err.code === "42P01") {
+      await ensureInstagramTables();
+      return res.json([]);
+    }
+    console.error("GET /instagram/messages error:", err);
+    res.json([]);
   }
 });
 

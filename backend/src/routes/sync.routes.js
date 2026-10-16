@@ -762,6 +762,42 @@ router.post(
   }
 );
 
+async function ensureInstagramTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS instagram_messages (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        sender          VARCHAR(255),
+        message_text    TEXT NOT NULL,
+        is_outgoing     BOOLEAN NOT NULL DEFAULT false,
+        message_time    TIMESTAMPTZ NOT NULL,
+        media_type      VARCHAR(50),
+        media_path      TEXT,
+        reel_url        TEXT,
+        synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_chat ON instagram_messages(device_id, chat_name, message_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_time ON instagram_messages(device_id, message_time DESC);
+
+      CREATE TABLE IF NOT EXISTS instagram_chats (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        username        VARCHAR(255),
+        last_message    TEXT,
+        last_message_at TIMESTAMPTZ DEFAULT now(),
+        synced_at       TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (device_id, chat_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
+    `);
+  } catch (e) {
+    console.warn("ensureInstagramTables notice:", e.message);
+  }
+}
+
 /**
  * POST /api/sync/instagram-messages
  * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl }], activeChat?: string }
@@ -774,6 +810,7 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
 
     try {
+      await ensureInstagramTables();
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
