@@ -1004,17 +1004,17 @@ router.get("/:id/instagram/account", requireAuth, async (req, res, next) => {
       const raw = accResult.rows[0]?.instagram_account;
       const accountName = raw && raw.trim() && raw.trim().toLowerCase() !== "music"
         ? raw.trim()
-        : "_free_bird_2603";
+        : null;
       return res.json({
         accountName,
-        status: "logged_in",
+        status: accountName ? "logged_in" : "pending_detection",
         platform: "Instagram Android",
         updatedAt: new Date().toISOString()
       });
     } catch (_e) {
       return res.json({
-        accountName: "_free_bird_2603",
-        status: "logged_in",
+        accountName: null,
+        status: "pending_detection",
         platform: "Instagram Android",
         updatedAt: new Date().toISOString()
       });

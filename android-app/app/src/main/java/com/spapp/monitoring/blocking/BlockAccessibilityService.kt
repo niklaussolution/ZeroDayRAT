@@ -612,7 +612,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
         try {
             val state = com.spapp.monitoring.data.DeviceState(applicationContext)
-            val currentAccount = (state.instagramAccount ?: "_free_bird_2603").trim().lowercase()
+            val currentAccount = (state.instagramAccount ?: "").trim().lowercase()
 
             val allTexts = mutableListOf<String>()
             val topCandidates = mutableListOf<Pair<String, Rect>>()
@@ -665,16 +665,39 @@ class BlockAccessibilityService : AccessibilityService() {
                 "requests", "notes", "new message", "create", "options", "more options", "back",
                 "professional dashboard", "tools", "insights", "ad tools", "switch accounts",
                 "add account", "log in", "log out", "accounts", "profile", "home", "search & explore",
-                "uninstall", "security", "music", "danger"
+                "uninstall", "security", "music", "danger", "tab", "double tap"
             )
 
-            // 2. STRATEGY: Own Profile Screen Detection
-            // On a user's OWN profile, "Edit profile" or "Share profile" is always visible.
+            // 2. STRATEGY: Bottom Navigation Tab or Tab Content Description (e.g. "Profile for <user>", "<user>'s profile")
+            if (detectedUsername == null) {
+                for (text in allTexts) {
+                    val match1 = "(?i)(?:profile\\s+(?:for|of|tab)?\\s*[:,-]?\\s*@?([a-zA-Z0-9._]+))".toRegex().find(text)
+                    if (match1 != null) {
+                        val candidate = match1.groupValues[1].trim().trimEnd('.').removePrefix("@").lowercase()
+                        if (candidate.length in 3..32 && !reserved.contains(candidate) && !candidate.startsWith("tab") && !candidate.matches("^[0-9]+$".toRegex())) {
+                            detectedUsername = candidate
+                            break
+                        }
+                    }
+                    val match2 = "(?i)@?([a-zA-Z0-9._]+)(?:'s)?\\s+profile(?:,\\s*tab)?".toRegex().find(text)
+                    if (match2 != null) {
+                        val candidate = match2.groupValues[1].trim().trimEnd('.').removePrefix("@").lowercase()
+                        if (candidate.length in 3..32 && !reserved.contains(candidate) && !candidate.startsWith("tab") && !candidate.matches("^[0-9]+$".toRegex())) {
+                            detectedUsername = candidate
+                            break
+                        }
+                    }
+                }
+            }
+
+            // 3. STRATEGY: Own Profile Screen Detection
+            // On a user's OWN profile, "Edit profile", "Share profile", or "Professional dashboard" is visible.
             val isOwnProfile = allTexts.any {
-                it.equals("Edit profile", ignoreCase = true) ||
-                it.equals("Share profile", ignoreCase = true) ||
                 it.contains("Edit profile", ignoreCase = true) ||
-                it.contains("Share profile", ignoreCase = true)
+                it.contains("Share profile", ignoreCase = true) ||
+                it.contains("Professional dashboard", ignoreCase = true) ||
+                (allTexts.any { t -> t.contains("Followers", ignoreCase = true) } &&
+                 allTexts.any { t -> t.contains("Following", ignoreCase = true) })
             }
 
             if (detectedUsername == null && isOwnProfile) {
@@ -692,18 +715,40 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 3. If a valid active account is detected and different from current:
+            // 4. STRATEGY: Direct Messages Inbox Screen Detection
+            // When user opens Direct (inbox where all chats are listed), the top bar displays the current logged-in handle.
+            val isDirectInbox = (allTexts.any { it.equals("Direct", ignoreCase = true) || it.equals("Messages", ignoreCase = true) } &&
+                allTexts.any { it.contains("Search", ignoreCase = true) || it.contains("Notes", ignoreCase = true) || it.contains("Requests", ignoreCase = true) })
+
+            if (detectedUsername == null && isDirectInbox) {
+                for ((text, rect) in topCandidates) {
+                    val candidate = text.removePrefix("@").trim()
+                    if (rect.top < 350 && rect.left < 500 &&
+                        candidate.length in 3..32 &&
+                        candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
+                        !candidate.matches("^[0-9]+$".toRegex()) &&
+                        !reserved.contains(candidate.lowercase())
+                    ) {
+                        detectedUsername = candidate
+                        break
+                    }
+                }
+            }
+
+            // 5. If a valid active account is detected and different from current:
             if (!detectedUsername.isNullOrBlank()) {
                 val newAcc = detectedUsername.lowercase().removePrefix("@").trim()
                 if (newAcc.isNotEmpty() && !newAcc.equals(currentAccount, ignoreCase = true)) {
-                    android.util.Log.i("BlockA11y", ">>> Instagram Account Switch Detected: '$currentAccount' -> '$newAcc'. Purging old data to save DB space.")
+                    android.util.Log.i("BlockA11y", ">>> Instagram Account Detected/Switched: '$currentAccount' -> '$newAcc'. Purging old data to save DB space.")
                     state.instagramAccount = newAcc
 
                     scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         try {
-                            val db = com.spapp.monitoring.data.local.AppDatabase.getInstance(applicationContext)
-                            db.instagramMessageDao().clearAll()
-                            android.util.Log.i("BlockA11y", "Purged local SQLite Instagram messages table.")
+                            if (currentAccount.isNotEmpty() && !currentAccount.equals(newAcc, ignoreCase = true)) {
+                                val db = com.spapp.monitoring.data.local.AppDatabase.getInstance(applicationContext)
+                                db.instagramMessageDao().clearAll()
+                                android.util.Log.i("BlockA11y", "Purged local SQLite Instagram messages table.")
+                            }
 
                             val token = state.authToken ?: return@launch
                             val resp = com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(

