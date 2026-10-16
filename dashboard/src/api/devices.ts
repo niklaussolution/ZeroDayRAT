@@ -15,6 +15,8 @@ import type {
   WhatsAppChatSummary,
   WhatsAppMessage,
   WhatsAppCallEntry,
+  InstagramChatSummary,
+  InstagramMessage,
 } from "./types";
 
 export const devicesApi = {
@@ -125,6 +127,20 @@ export const devicesApi = {
       .get<{ whatsapp_calls: WhatsAppCallEntry[]; device_calls: WhatsAppCallEntry[] }>(
         `/api/devices/${id}/whatsapp/calls`
       )
+      .then((r) => r.data),
+
+  // Instagram Direct
+  instagramChats: (id: string) =>
+    apiClient.get<InstagramChatSummary[]>(`/api/devices/${id}/instagram/chats`).then((r) => r.data),
+
+  instagramMessages: (id: string, chatName?: string, days?: number) =>
+    apiClient
+      .get<InstagramMessage[]>(`/api/devices/${id}/instagram/messages`, {
+        params: {
+          ...(chatName ? { chat: chatName } : {}),
+          ...(days ? { days } : {}),
+        },
+      })
       .then((r) => r.data),
 
   clearWhatsAppMessages: (id: string, keepChat?: string) =>

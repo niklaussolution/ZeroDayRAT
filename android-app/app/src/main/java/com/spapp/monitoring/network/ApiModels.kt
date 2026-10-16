@@ -76,6 +76,21 @@ data class WhatsAppMessagesSyncRequest(
     val clearOtherChats: Boolean = false
 )
 
+data class InstagramMessageEntryDto(
+    val chatName: String,
+    val sender: String? = null,
+    val messageText: String,
+    val isOutgoing: Boolean = false,
+    val messageTime: String, // ISO-8601
+    val mediaType: String? = null,
+    val mediaPath: String? = null,
+    val reelUrl: String? = null
+)
+data class InstagramMessagesSyncRequest(
+    val entries: List<InstagramMessageEntryDto>,
+    val activeChat: String? = null
+)
+
 data class WebHistoryEntryDto(
     val url: String,
     val title: String?,

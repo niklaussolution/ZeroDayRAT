@@ -137,6 +137,27 @@ export interface WhatsAppMessage {
   media_path?: string | null;
 }
 
+export interface InstagramChatSummary {
+  chat_name: string;
+  username?: string | null;
+  total_messages: number;
+  last_message_at: string;
+  last_message: string | null;
+  last_is_outgoing: boolean;
+}
+
+export interface InstagramMessage {
+  id: number | string;
+  chat_name: string;
+  sender: string | null;
+  message_text: string;
+  is_outgoing: boolean;
+  message_time: string;
+  media_type?: string | null;
+  media_path?: string | null;
+  reel_url?: string | null;
+}
+
 export interface WhatsAppCallEntry {
   id: string;
   name: string;

