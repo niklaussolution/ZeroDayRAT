@@ -49,6 +49,7 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS permission_status JSONB;
 -- change specifically reached the device, not just that *some* sync call
 -- succeeded around the same time.
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS block_rules_synced_at TIMESTAMPTZ;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);
 
 -- ------------------------------------------------------------
 -- Feature flags: per-device runtime toggles (admin-selectable scope).

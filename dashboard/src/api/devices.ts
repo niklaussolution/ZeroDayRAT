@@ -143,6 +143,11 @@ export const devicesApi = {
       })
       .then((r) => r.data),
 
+  instagramAccount: (id: string) =>
+    apiClient
+      .get<{ accountName: string; status: string }>(`/api/devices/${id}/instagram/account`)
+      .then((r) => r.data),
+
   clearWhatsAppMessages: (id: string, keepChat?: string) =>
     apiClient
       .delete(`/api/devices/${id}/whatsapp/messages`, {

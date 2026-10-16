@@ -815,6 +815,16 @@ router.post(
       try {
         await client.query("BEGIN");
 
+        if (req.body.accountName || req.body.instagramAccount) {
+          const acc = String(req.body.accountName || req.body.instagramAccount).trim();
+          if (acc) {
+            await client.query(
+              `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
+              [acc, req.device.id]
+            );
+          }
+        }
+
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;

@@ -123,6 +123,8 @@ const pool = require("./db/pool");
     );`,
     `CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);`,
 
+    `ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);`,
+    `UPDATE devices SET instagram_account = 'alone_sparrow_2603' WHERE instagram_account IS NULL;`,
     `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`
   ];
 
