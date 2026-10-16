@@ -55,6 +55,12 @@ interface ApiService {
         @Body request: InstagramMessagesSyncRequest
     ): Response<SyncCountResponse>
 
+    @POST("api/sync/instagram/account")
+    suspend fun updateInstagramAccount(
+        @Header("Authorization") bearer: String,
+        @Body request: Map<String, String>
+    ): Response<Map<String, Any>>
+
     @GET("api/sync/commands")
     suspend fun getPendingCommands(@Header("Authorization") bearer: String): Response<List<RemoteCommand>>
 

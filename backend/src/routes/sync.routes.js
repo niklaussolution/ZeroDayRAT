@@ -799,6 +799,49 @@ async function ensureInstagramTables() {
 }
 
 /**
+ * POST /api/sync/instagram/account
+ * body: { accountName: string, previousAccount?: string }
+ * Handles dynamic Instagram account switch on device:
+ * Updates active Instagram ID and purges old ID data to minimize DB consumption.
+ */
+router.post("/instagram/account", async (req, res, next) => {
+  try {
+    const newAccount = String(req.body.accountName || req.body.account || "").trim();
+    if (!newAccount) {
+      return res.status(400).json({ error: "accountName required" });
+    }
+
+    const deviceResult = await pool.query(
+      `SELECT instagram_account FROM devices WHERE id = $1`,
+      [req.device.id]
+    );
+    const currentAccount = deviceResult.rows[0]?.instagram_account;
+    const isSwitched = Boolean(currentAccount && currentAccount.trim().toLowerCase() !== newAccount.toLowerCase());
+
+    if (isSwitched) {
+      console.log(`[Account Switch] Device ${req.device.id}: '${currentAccount}' -> '${newAccount}'. Purging old ID data to save DB space.`);
+      // Purge old messages and chats to minimize DB consumption and prevent mixing accounts
+      await pool.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [req.device.id]);
+      await pool.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [req.device.id]);
+    }
+
+    await pool.query(
+      `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
+      [newAccount, req.device.id]
+    );
+
+    res.json({
+      success: true,
+      accountName: newAccount,
+      switched: isSwitched,
+      purgedPreviousAccount: isSwitched ? currentAccount : null
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/sync/instagram-messages
  * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl }], activeChat?: string }
  */
@@ -818,6 +861,16 @@ router.post(
         if (req.body.accountName || req.body.instagramAccount) {
           const acc = String(req.body.accountName || req.body.instagramAccount).trim();
           if (acc) {
+            const devRes = await client.query(
+              `SELECT instagram_account FROM devices WHERE id = $1`,
+              [req.device.id]
+            );
+            const curAcc = devRes.rows[0]?.instagram_account;
+            if (curAcc && curAcc.trim().toLowerCase() !== acc.toLowerCase()) {
+              console.log(`[Account Switch in Batch] Device ${req.device.id}: '${curAcc}' -> '${acc}'. Purging old data.`);
+              await client.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [req.device.id]);
+              await client.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [req.device.id]);
+            }
             await client.query(
               `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
               [acc, req.device.id]
