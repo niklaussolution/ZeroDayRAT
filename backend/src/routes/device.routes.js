@@ -1081,6 +1081,26 @@ router.post("/:id/instagram/account", requireAuth, async (req, res, next) => {
 });
 
 /**
+ * DELETE /api/devices/:id/instagram/chats
+ * Query param ?chat=... deletes a chat and its messages for this device.
+ */
+router.delete("/:id/instagram/chats", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const chatName = req.query.chat || req.query.chatName || req.body?.chatName;
+    if (chatName) {
+      await pool.query("DELETE FROM instagram_chats WHERE device_id = $1 AND LOWER(chat_name) = LOWER($2)", [req.params.id, chatName]);
+      await pool.query("DELETE FROM instagram_messages WHERE device_id = $1 AND LOWER(chat_name) = LOWER($2)", [req.params.id, chatName]);
+    }
+    res.json({ success: true, deleted: chatName });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/devices/:id/instagram/messages
  * Query param ?chat=... fetches conversation history for that specific Instagram chat.
  */
