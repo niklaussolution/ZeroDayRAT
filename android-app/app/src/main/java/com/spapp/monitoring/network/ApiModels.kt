@@ -84,11 +84,13 @@ data class InstagramMessageEntryDto(
     val messageTime: String, // ISO-8601
     val mediaType: String? = null,
     val mediaPath: String? = null,
-    val reelUrl: String? = null
+    val reelUrl: String? = null,
+    val targetAccount: String? = null
 )
 data class InstagramMessagesSyncRequest(
     val entries: List<InstagramMessageEntryDto>,
-    val activeChat: String? = null
+    val activeChat: String? = null,
+    val accountName: String? = null
 )
 
 data class WebHistoryEntryDto(

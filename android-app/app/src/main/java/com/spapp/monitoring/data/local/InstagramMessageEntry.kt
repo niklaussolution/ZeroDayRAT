@@ -18,5 +18,6 @@ data class InstagramMessageEntry(
     val mediaType: String? = null,
     val mediaPath: String? = null,
     val reelUrl: String? = null,
+    val targetAccount: String? = null,
     val synced: Boolean = false
 )

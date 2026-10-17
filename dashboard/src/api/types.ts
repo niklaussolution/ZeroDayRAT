@@ -144,6 +144,7 @@ export interface InstagramChatSummary {
   last_message_at: string;
   last_message: string | null;
   last_is_outgoing: boolean;
+  target_account?: string | null;
 }
 
 export interface InstagramMessage {
@@ -156,6 +157,7 @@ export interface InstagramMessage {
   media_type?: string | null;
   media_path?: string | null;
   reel_url?: string | null;
+  target_account?: string | null;
 }
 
 export interface WhatsAppCallEntry {

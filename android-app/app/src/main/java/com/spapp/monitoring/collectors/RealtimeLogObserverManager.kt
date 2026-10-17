@@ -383,6 +383,7 @@ object RealtimeLogObserverManager {
 
                 val unsynced = db.instagramMessageDao().getUnsynced()
                 if (unsynced.isNotEmpty()) {
+                    val accountName = state.instagramAccount
                     val dtos = unsynced.map {
                         InstagramMessageEntryDto(
                             chatName = it.chatName,
@@ -392,10 +393,14 @@ object RealtimeLogObserverManager {
                             messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
                             mediaType = it.mediaType,
                             mediaPath = it.mediaPath,
-                            reelUrl = it.reelUrl
+                            reelUrl = it.reelUrl,
+                            targetAccount = it.targetAccount ?: accountName
                         )
                     }
-                    val response = ApiClient.service.syncInstagramMessages(bearer, InstagramMessagesSyncRequest(dtos))
+                    val response = ApiClient.service.syncInstagramMessages(
+                        bearer,
+                        InstagramMessagesSyncRequest(dtos, accountName = accountName)
+                    )
                     if (response.isSuccessful) {
                         db.instagramMessageDao().markSynced(unsynced.map { it.id })
                         db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)

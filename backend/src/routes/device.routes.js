@@ -110,11 +110,11 @@ router.get("/:id", requireAuth, async (req, res, next) => {
     const query = req.auth.role === "super_admin"
       ? `SELECT id, device_label, device_token, status, platform, os_version, app_version,
                 consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
-                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
+                instagram_account
          FROM devices WHERE id = $1`
       : `SELECT id, device_label, device_token, status, platform, os_version, app_version,
                 consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
-                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
+                instagram_account
          FROM devices WHERE id = $1 AND tenant_id = $2`;
     const params = req.auth.role === "super_admin" ? [req.params.id] : [req.params.id, req.auth.tenantId];
     let deviceResult = await pool.query(query, params);
@@ -122,7 +122,7 @@ router.get("/:id", requireAuth, async (req, res, next) => {
       deviceResult = await pool.query(
         `SELECT id, device_label, device_token, status, platform, os_version, app_version,
                 consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
-                COALESCE(instagram_account, 'alone_sparrow_2603') AS instagram_account
+                instagram_account
          FROM devices WHERE id = $1`,
         [req.params.id]
       );
@@ -905,6 +905,8 @@ async function ensureInstagramTables() {
         UNIQUE (device_id, chat_name)
       );
       CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
+      ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
+      ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
     `);
   } catch (e) {
     console.warn("ensureInstagramTables notice:", e.message);
@@ -927,7 +929,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  username,
                  last_message,
                  last_message_at,
-                 false AS is_outgoing
+                 false AS is_outgoing,
+                 target_account
           FROM instagram_chats
           WHERE device_id = $1
           UNION ALL
@@ -935,7 +938,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  sender AS username,
                  message_text AS last_message,
                  message_time AS last_message_at,
-                 is_outgoing
+                 is_outgoing,
+                 target_account
           FROM instagram_messages
           WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
         ),
@@ -951,7 +955,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                MAX(ac.last_message_at) AS last_message_at,
                (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
                COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
-               (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username
+               (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username,
+               (ARRAY_AGG(ac.target_account ORDER BY ac.last_message_at DESC))[1] AS target_account
         FROM all_chats ac
         LEFT JOIN msg_counts mc ON mc.canonical_name = LOWER(TRIM(ac.chat_name))
         WHERE ac.chat_name IS NOT NULL
@@ -1095,7 +1100,7 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
                           WHEN message_text LIKE 'You reacted %' THEN true
                           ELSE false
                         END AS is_outgoing,
-                        message_time, media_type, media_path, reel_url
+                        message_time, media_type, media_path, reel_url, target_account
                  FROM instagram_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL

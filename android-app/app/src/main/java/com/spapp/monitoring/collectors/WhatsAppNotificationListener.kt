@@ -351,10 +351,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         }
 
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+        var extractedAccount: String? = null
         if (!subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true)) {
-            val candidate = subText.removePrefix("@").trim().lowercase()
+            val cleanSub = when {
+                subText.contains("•") -> subText.substringAfter("•").trim()
+                subText.contains("·") -> subText.substringAfter("·").trim()
+                else -> subText
+            }
+            val candidate = cleanSub.removePrefix("@").trim().lowercase()
             val notAccountWords = setOf("instagram", "direct", "messages", "notifications", "update", "new")
             if (candidate.length in 3..32 && candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) && !notAccountWords.contains(candidate)) {
+                extractedAccount = candidate
                 com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.notifyInstagramAccountDetected(candidate)
                     ?: run {
                         val state = com.spapp.monitoring.data.DeviceState(applicationContext)
@@ -374,6 +381,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     }
             }
         }
+
+        val targetAccount = extractedAccount
+            ?: com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
 
         val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
         val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
@@ -460,7 +470,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     messageTimeEpochMs = if (bTime > 0) bTime else postTime,
                     mediaType = itemMediaType,
                     mediaPath = mediaPath,
-                    reelUrl = foundReel
+                    reelUrl = foundReel,
+                    targetAccount = targetAccount
                 )
             }
         } else if (!textLines.isNullOrEmpty()) {
@@ -487,7 +498,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     messageTimeEpochMs = postTime,
                     mediaType = itemMediaType,
                     mediaPath = mediaPath,
-                    reelUrl = foundReel
+                    reelUrl = foundReel,
+                    targetAccount = targetAccount
                 )
             }
         } else if (!text.isNullOrBlank()) {
@@ -513,7 +525,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 messageTimeEpochMs = postTime,
                 mediaType = itemMediaType,
                 mediaPath = mediaPath,
-                reelUrl = foundReel
+                reelUrl = foundReel,
+                targetAccount = targetAccount
             )
         }
 
@@ -629,7 +642,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         messageTimeEpochMs = bTime,
                         mediaType = itemMediaType,
                         mediaPath = mediaPath,
-                        reelUrl = foundReel
+                        reelUrl = foundReel,
+                        targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
                     )
                 }
             } else {
@@ -658,7 +672,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         messageTimeEpochMs = postTime,
                         mediaType = itemMediaType,
                         mediaPath = mediaPath,
-                        reelUrl = foundReel
+                        reelUrl = foundReel,
+                        targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
                     )
                 }
             }
