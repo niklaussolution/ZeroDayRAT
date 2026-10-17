@@ -877,7 +877,7 @@ router.post(
           if (existingChat.rows.length === 0) {
             await client.query(
               `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at, target_account)
-               VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+               VALUES ($1, $2, $3, $4, $5::timestamptz, NOW(), $6)`,
               [
                 req.device.deviceId,
                 chatName.slice(0, 255),
@@ -891,14 +891,14 @@ router.post(
             await client.query(
               `UPDATE instagram_chats SET
                  last_message = CASE
-                   WHEN $1 IS NOT NULL AND $1 != '' THEN $1
+                   WHEN $1::text IS NOT NULL AND $1::text != '' THEN $1::text
                    ELSE last_message
                  END,
                  last_message_at = GREATEST(last_message_at, $2::timestamptz),
-                 username = COALESCE($3, username),
-                 target_account = COALESCE($4, target_account),
+                 username = COALESCE($3::varchar, username),
+                 target_account = COALESCE($4::varchar, target_account),
                  synced_at = NOW()
-               WHERE id = $5`,
+               WHERE id = $5::bigint`,
               [
                 messageText || (reelUrl ? "Shared a Reel" : "Media message"),
                 messageTime,
@@ -912,7 +912,7 @@ router.post(
           // 2. Upsert into instagram_messages table
           const existing = await client.query(
             `SELECT id FROM instagram_messages
-             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4::timestamptz AND is_outgoing = $5
              LIMIT 1`,
             [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
           );
@@ -920,7 +920,7 @@ router.post(
           if (existing.rows.length === 0) {
             const result = await client.query(
               `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url, target_account)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9, $10)
                RETURNING id`,
               [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl, targetAccount]
             );
@@ -928,12 +928,12 @@ router.post(
           } else {
             await client.query(
               `UPDATE instagram_messages SET
-                 media_type = COALESCE($1, media_type),
-                 media_path = COALESCE($2, media_path),
-                 reel_url = COALESCE($3, reel_url),
-                 target_account = COALESCE($4, target_account),
+                 media_type = COALESCE($1::varchar, media_type),
+                 media_path = COALESCE($2::text, media_path),
+                 reel_url = COALESCE($3::text, reel_url),
+                 target_account = COALESCE($4::varchar, target_account),
                  synced_at = NOW()
-               WHERE id = $5`,
+               WHERE id = $5::bigint`,
               [mediaType, mediaPath, reelUrl, targetAccount, existing.rows[0].id]
             );
           }
