@@ -9,6 +9,7 @@ import DevicesListPage from "./pages/DevicesListPage";
 import DeviceDetailPage from "./pages/DeviceDetailPage";
 import DeviceArchivePage from "./pages/DeviceArchivePage";
 import AdminPage from "./pages/AdminPage";
+import DatabaseViewerPage from "./pages/DatabaseViewerPage";
 import ScreenStreamPage from "./pages/ScreenStreamPage";
 import CameraStreamPage from "./pages/CameraStreamPage";
 
@@ -33,6 +34,7 @@ export default function App() {
           <Route element={<SuperAdminRoute />}>
             <Route element={<Layout />}>
               <Route path="/admin" element={<AdminPage />} />
+              <Route path="/admin/database" element={<DatabaseViewerPage />} />
             </Route>
           </Route>
 

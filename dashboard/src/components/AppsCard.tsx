@@ -318,7 +318,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Real Data States
   const [whatsappChats, setWhatsappChats] = useState<WhatsAppChatSummary[]>([]);
   const [instagramChats, setInstagramChats] = useState<InstagramChatSummary[]>([]);
-  const [instagramAccount, setInstagramAccount] = useState<string>("");
+  const [, setInstagramAccount] = useState<string>("");
   const [whatsAppCalls, setWhatsAppCalls] = useState<WhatsAppCallEntry[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

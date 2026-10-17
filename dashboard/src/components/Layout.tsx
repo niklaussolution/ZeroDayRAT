@@ -23,7 +23,7 @@ export default function Layout() {
               <Link
                 to="/admin"
                 className={`px-3 py-1.5 rounded-md font-medium transition ${
-                  location.pathname.startsWith("/admin")
+                  location.pathname === "/admin" || (location.pathname.startsWith("/admin") && !location.pathname.startsWith("/admin/database"))
                     ? "bg-white/20 text-white shadow-sm"
                     : "text-gray-300 hover:text-white hover:bg-white/10"
                 }`}
@@ -39,6 +39,16 @@ export default function Layout() {
                 }`}
               >
                 All Devices
+              </Link>
+              <Link
+                to="/admin/database"
+                className={`px-3 py-1.5 rounded-md font-medium transition ${
+                  location.pathname.startsWith("/admin/database")
+                    ? "bg-white/20 text-white shadow-sm"
+                    : "text-gray-300 hover:text-white hover:bg-white/10"
+                }`}
+              >
+                DB Table
               </Link>
             </nav>
           )}
@@ -56,7 +66,7 @@ export default function Layout() {
           </button>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className={`mx-auto px-6 py-8 transition-all ${location.pathname.startsWith("/admin/database") ? "max-w-[1700px]" : "max-w-6xl"}`}>
         <Outlet />
       </main>
     </div>
