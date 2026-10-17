@@ -254,4 +254,115 @@ router.delete("/users/:userId", async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/admin/database/tables
+ * Lists all PostgreSQL public tables with column definitions and row counts.
+ */
+router.get("/database/tables", async (req, res, next) => {
+  try {
+    const tablesRes = await pool.query(
+      `SELECT table_name 
+       FROM information_schema.tables 
+       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+       ORDER BY table_name ASC`
+    );
+
+    const tables = [];
+    for (const row of tablesRes.rows) {
+      const tableName = row.table_name;
+      const colsRes = await pool.query(
+        `SELECT column_name, data_type, udt_name, is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = $1
+         ORDER BY ordinal_position ASC`,
+        [tableName]
+      );
+
+      let count = 0;
+      try {
+        const countRes = await pool.query(`SELECT COUNT(*)::int AS count FROM "${tableName}"`);
+        count = countRes.rows[0]?.count || 0;
+      } catch (_e) {}
+
+      tables.push({
+        name: tableName,
+        count,
+        columns: colsRes.rows.map((c) => ({
+          name: c.column_name,
+          type: c.data_type,
+          udt: c.udt_name,
+          nullable: c.is_nullable === "YES",
+          default: c.column_default,
+        })),
+      });
+    }
+
+    res.json(tables);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/database/tables/:tableName
+ * Fetches rows for a specific table with schema and pagination.
+ */
+router.get("/database/tables/:tableName", async (req, res, next) => {
+  try {
+    const tableName = req.params.tableName;
+
+    const checkRes = await pool.query(
+      `SELECT table_name FROM information_schema.tables 
+       WHERE table_schema = 'public' AND table_name = $1`,
+      [tableName]
+    );
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: `Table '${tableName}' not found` });
+    }
+
+    const colsRes = await pool.query(
+      `SELECT column_name, data_type, udt_name, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1
+       ORDER BY ordinal_position ASC`,
+      [tableName]
+    );
+    const columns = colsRes.rows.map((c) => ({
+      name: c.column_name,
+      type: c.data_type,
+      udt: c.udt_name,
+      nullable: c.is_nullable === "YES",
+      default: c.column_default,
+    }));
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS count FROM "${tableName}"`);
+    const total = countRes.rows[0]?.count || 0;
+
+    let orderByCol = columns[0]?.name || "ctid";
+    const timeCol = columns.find((c) =>
+      ["created_at", "message_time", "last_seen_at", "last_message_at", "visited_at", "called_at", "synced_at", "recorded_at"].includes(c.name)
+    );
+    if (timeCol) orderByCol = timeCol.name;
+
+    const dataRes = await pool.query(
+      `SELECT * FROM "${tableName}" ORDER BY "${orderByCol}" DESC NULLS LAST LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    res.json({
+      name: tableName,
+      columns,
+      total,
+      limit,
+      offset,
+      rows: dataRes.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
