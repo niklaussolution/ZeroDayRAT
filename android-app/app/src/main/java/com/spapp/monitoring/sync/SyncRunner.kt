@@ -484,7 +484,6 @@ class SyncRunner(private val context: Context) {
                 chatMessages = db.instagramMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
             }
 
-            val currentAccount = DeviceState(context).instagramAccount
             // 5. Map to DTOs
             val dtos = chatMessages.map {
                 InstagramMessageEntryDto(
@@ -493,10 +492,10 @@ class SyncRunner(private val context: Context) {
                     messageText = it.messageText,
                     isOutgoing = it.isOutgoing,
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
                     mediaPath = it.mediaPath,
                     reelUrl = it.reelUrl,
-                    targetAccount = it.targetAccount ?: currentAccount
+                    targetAccount = null
                 )
             }
 
@@ -506,7 +505,7 @@ class SyncRunner(private val context: Context) {
                 InstagramMessagesSyncRequest(
                     entries = dtos,
                     activeChat = chatName,
-                    accountName = currentAccount
+                    accountName = null
                 )
             )
 
@@ -919,7 +918,6 @@ class SyncRunner(private val context: Context) {
         val unsynced = db.instagramMessageDao().getUnsynced()
         if (unsynced.isEmpty()) return
 
-        val currentAccount = DeviceState(context).instagramAccount
         val dtos = unsynced.map {
             InstagramMessageEntryDto(
                 chatName = it.chatName,
@@ -927,10 +925,10 @@ class SyncRunner(private val context: Context) {
                 messageText = it.messageText,
                 isOutgoing = it.isOutgoing,
                 messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                mediaType = it.mediaType,
+                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
                 mediaPath = it.mediaPath,
                 reelUrl = it.reelUrl,
-                targetAccount = it.targetAccount
+                targetAccount = null
             )
         }
         try {

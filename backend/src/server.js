@@ -128,8 +128,27 @@ const pool = require("./db/pool");
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `UPDATE devices SET instagram_account = NULL;`,
     `UPDATE instagram_chats SET target_account = NULL;`,
+    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`,
+    `DELETE FROM instagram_messages
+     WHERE message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$'
+        OR message_text ~* '^\s*(Active|Seen)(\s+.*)?\s*$'
+        OR message_text ~* '^\s*(Delivered|Sent|Sending|Typing|Message\.\.\.|Search|Replies)\s*$'
+        OR message_text ~* '^\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s+(at\s+)?\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?)?\s*$'
+        OR message_text ~* '^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*\s*$'
+        OR message_text ~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$';`,
+    `DELETE FROM instagram_chats
+     WHERE LOWER(TRIM(chat_name)) IN ('instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications')
+        OR LOWER(TRIM(chat_name)) LIKE 'switched to%'
+        OR LOWER(TRIM(chat_name)) LIKE 'switch to%'
+        OR LOWER(TRIM(chat_name)) LIKE 'uninstall%'
+        OR LOWER(TRIM(chat_name)) LIKE 'install%'
+        OR LOWER(TRIM(chat_name)) = 'music'
+        OR LOWER(TRIM(chat_name)) = 'danger';`,
+    `UPDATE instagram_messages SET media_type = 'reel' WHERE (reel_url IS NOT NULL AND reel_url != '') OR message_text LIKE '%instagram.com/reel/%' OR message_text LIKE '%instagram.com/reels/%' OR message_text LIKE '%ig.me/reel/%' OR LOWER(message_text) = 'shared a reel' OR LOWER(message_text) = 'reel';`,
+    `UPDATE instagram_messages SET media_type = 'image' WHERE (media_type IS NULL OR media_type = '' OR media_type = 'text') AND (media_path IS NOT NULL OR LOWER(message_text) LIKE '%photo%' OR LOWER(message_text) LIKE '%image%');`,
+    `UPDATE instagram_messages SET media_type = 'text' WHERE media_type IS NULL OR media_type = '';`,
     `UPDATE instagram_messages SET target_account = NULL;`,
-    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`
+    `UPDATE instagram_chats SET target_account = NULL;`
   ];
 
   for (const sql of migrations) {

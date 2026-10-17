@@ -1113,11 +1113,19 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
                           WHEN message_text LIKE 'You reacted %' THEN true
                           ELSE false
                         END AS is_outgoing,
-                        message_time, media_type, media_path, reel_url, target_account
+                        message_time,
+                        COALESCE(NULLIF(media_type, ''), CASE WHEN reel_url IS NOT NULL AND reel_url != '' THEN 'reel' WHEN media_path IS NOT NULL THEN 'image' ELSE 'text' END) AS media_type,
+                        media_path, reel_url, NULL AS target_account
                  FROM instagram_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL
-                   AND TRIM(chat_name) != ''`;
+                   AND TRIM(chat_name) != ''
+                   AND message_text !~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$'
+                   AND message_text !~* '^\s*(Active|Seen)(\s+.*)?\s*$'
+                   AND message_text !~* '^\s*(Delivered|Sent|Sending|Typing|Message\.\.\.|Search|Replies)\s*$'
+                   AND message_text !~* '^\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s+(at\s+)?\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?)?\s*$'
+                   AND message_text !~* '^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*\s*$'
+                   AND message_text !~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {

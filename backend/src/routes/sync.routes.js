@@ -834,6 +834,27 @@ router.post(
       try {
         await client.query("BEGIN");
 
+        function isInstagramUiMetadataOrTimestamp(text) {
+          if (!text || typeof text !== "string") return true;
+          const t = text.replace(/^[•·\s]+|[•·\s]+$/g, "").trim();
+          if (!t) return true;
+          // 1. Exact times: "3:25 PM", "03:25 pm", "15:45", "15:45:00", "3:25", "3.25 PM", "3:25pm"
+          if (/^\d{1,2}[:.]\d{2}(?::\d{2})?(\s*(?:AM|PM|am|pm))?$/i.test(t)) return true;
+          // 2. Day names with optional time: "Yesterday", "Today", "Tomorrow", "Yesterday at 3:25 PM", "Today 10:14 AM"
+          if (/^(?:Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 3. Month names with dates: "Oct 17", "17 Oct", "October 17, 2026", "Oct 17 at 3:25 PM"
+          if (/^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)(?:,?\s*\d{4})?(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 4. Standard numeric dates: "17/10/2026", "2026-10-17"
+          if (/^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending...", "Typing..."
+          if (/^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+\w+)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?)$/i.test(t)) return true;
+          // 6. UI placeholders and system button text
+          if (/^(?:Message\.\.\.|Type\s+a\s+message\.\.\.|Search|Replies|Tap\s+and\s+hold\s+to\s+react|Double\s+tap\s+to\s+like|Liked\s+a\s+message|Follow|Requested)$/i.test(t)) return true;
+          // 7. Starts with time and short length <= 25 chars
+          if (/^\d{1,2}[:.]\d{2}\s*(?:AM|PM|am|pm)\b/i.test(t) && t.length <= 25) return true;
+          return false;
+        }
+
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;
@@ -856,17 +877,64 @@ router.post(
           let mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
           let reelUrl = e.reelUrl || null;
-          const targetAccount = String(e.targetAccount || "").trim() || null;
+          const targetAccount = null; // Constraint: Never leak or capture target Instagram ID
 
-          // Detect reel URL inside messageText if not already populated
+          // 1. Detect reel URL in messageText or reelUrl
           if (!reelUrl) {
-            const reelMatch = messageText.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[a-zA-Z0-9_-]+/i);
+            const reelMatch = messageText.match(/(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:reel|reels|p|tv|share\/reel)\/([a-zA-Z0-9_-]+)/i) ||
+                             messageText.match(/(?:https?:\/\/)?(?:www\.)?ig\.me\/(?:reel|share|p)\/([a-zA-Z0-9_-]+)/i);
             if (reelMatch) {
-              reelUrl = reelMatch[0];
-              mediaType = mediaType || "reel";
-            } else if (messageText.toLowerCase().includes("sent a reel") || messageText.toLowerCase().includes("shared a reel")) {
-              mediaType = mediaType || "reel";
+              const fullMatch = reelMatch[0];
+              reelUrl = fullMatch.startsWith("http://") || fullMatch.startsWith("https://") ? fullMatch : `https://${fullMatch}`;
             }
+          }
+
+          // 2. Filter out UI metadata & timestamps (e.g. '3:25 PM', 'Seen just now', 'Active now')
+          if (isInstagramUiMetadataOrTimestamp(messageText) && !mediaPath && !reelUrl && mediaType !== "reel" && mediaType !== "image") {
+            continue;
+          }
+
+          // 3. Classify exact media type (reel, image, video, audio, or text)
+          const lowerText = messageText.toLowerCase();
+          if (
+            reelUrl ||
+            mediaType === "reel" ||
+            lowerText.includes("sent a reel") ||
+            lowerText.includes("shared a reel") ||
+            lowerText.startsWith("reel by") ||
+            lowerText === "reel"
+          ) {
+            mediaType = "reel";
+            if (!reelUrl) {
+              const rMatch = messageText.match(/(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:reel|reels|p|tv|share\/reel)\/([a-zA-Z0-9_-]+)/i) ||
+                            messageText.match(/(?:https?:\/\/)?(?:www\.)?ig\.me\/(?:reel|share|p)\/([a-zA-Z0-9_-]+)/i);
+              if (rMatch) {
+                const fMatch = rMatch[0];
+                reelUrl = fMatch.startsWith("http://") || fMatch.startsWith("https://") ? fMatch : `https://${fMatch}`;
+              }
+            }
+            if (!messageText || messageText === reelUrl || lowerText === "reel") {
+              messageText = reelUrl ? reelUrl : "Shared a Reel";
+            }
+          } else if (
+            mediaType === "image" ||
+            mediaPath ||
+            lowerText.includes("sent a photo") ||
+            lowerText.includes("shared a photo") ||
+            lowerText === "photo"
+          ) {
+            mediaType = "image";
+            if (!messageText || lowerText === "sent a photo" || lowerText === "photo") {
+              messageText = "Photo";
+            }
+          } else if (mediaType === "video" || lowerText.includes("sent a video") || lowerText === "video") {
+            mediaType = "video";
+            if (!messageText) messageText = "Video";
+          } else if (mediaType === "audio" || lowerText.includes("voice message")) {
+            mediaType = "audio";
+            if (!messageText) messageText = "Voice Note";
+          } else {
+            mediaType = "text";
           }
 
           // 1. Maintain complete Instagram chat inventory in instagram_chats table

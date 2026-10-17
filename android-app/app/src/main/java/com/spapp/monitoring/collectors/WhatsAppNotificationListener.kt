@@ -201,11 +201,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         val results = mutableListOf<InstagramMessageEntry>()
         val activeNotifs = activeNotifications ?: return emptyList()
 
-        fun extractReelUrl(txt: String?): String? {
-            if (txt.isNullOrBlank()) return null
-            val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
-            return match?.value
-        }
+        fun extractReelUrl(txt: String?): String? = WhatsAppNotificationListener.extractReelUrl(txt)
 
         for (sbn in activeNotifs) {
             val pkg = sbn.packageName ?: continue
@@ -274,25 +270,55 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         else -> bText
                     }
 
-                    val foundReel = extractReelUrl(cleanText)
+                    val foundReel = extractReelUrl(cleanText) ?: findReelUrlInNotification(notification, cleanText)
+                    val isReel = foundReel != null ||
+                        cleanText.contains("sent a reel", ignoreCase = true) ||
+                        cleanText.contains("shared a reel", ignoreCase = true) ||
+                        cleanText.contains("reel by", ignoreCase = true) ||
+                        cleanText.equals("reel", ignoreCase = true)
+
+                    val isImage = !isReel && (
+                        mediaType == "image" ||
+                        pictureBitmap != null ||
+                        cleanText.contains("sent a photo", ignoreCase = true) ||
+                        cleanText.contains("shared a photo", ignoreCase = true) ||
+                        cleanText.equals("photo", ignoreCase = true)
+                    )
+
+                    val isVideo = !isReel && !isImage && (
+                        cleanText.contains("sent a video", ignoreCase = true) ||
+                        cleanText.equals("video", ignoreCase = true)
+                    )
+
                     val itemMediaType = when {
-                        foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
-                        mediaType != null -> mediaType
-                        cleanText.contains("photo", ignoreCase = true) -> "image"
-                        cleanText.contains("video", ignoreCase = true) -> "video"
-                        else -> null
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        else -> "text"
+                    }
+
+                    // Drop UI timestamps and statuses
+                    if (itemMediaType == "text" && isInstagramUiMetadataOrTimestamp(cleanText)) {
+                        continue
+                    }
+
+                    val finalText = when {
+                        isReel && cleanText.isBlank() -> foundReel ?: "Shared a Reel"
+                        isImage && (cleanText.isBlank() || cleanText.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                        isVideo && cleanText.isBlank() -> "Video"
+                        else -> cleanText
                     }
 
                     results += InstagramMessageEntry(
                         chatName = cleanChatName,
                         sender = if (isOutgoing) "me" else (rawSender ?: title ?: cleanChatName),
-                        messageText = cleanText,
+                        messageText = finalText,
                         isOutgoing = isOutgoing,
                         messageTimeEpochMs = bTime,
                         mediaType = itemMediaType,
                         mediaPath = mediaPath,
                         reelUrl = foundReel,
-                        targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
+                        targetAccount = null
                     )
                 }
             } else {
@@ -305,25 +331,52 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         singleText.startsWith("You sent ", ignoreCase = true) -> singleText.substring(9).trim()
                         else -> singleText
                     }
-                    val foundReel = extractReelUrl(cleanSingle)
-                    val itemMediaType = when {
-                        foundReel != null || cleanSingle.contains("reel", ignoreCase = true) -> "reel"
-                        mediaType != null -> mediaType
-                        cleanSingle.contains("photo", ignoreCase = true) -> "image"
-                        cleanSingle.contains("video", ignoreCase = true) -> "video"
-                        else -> null
-                    }
-                    results += InstagramMessageEntry(
-                        chatName = cleanChatName,
-                        sender = if (isSingleOutgoing) "me" else (title ?: cleanChatName),
-                        messageText = cleanSingle,
-                        isOutgoing = isSingleOutgoing,
-                        messageTimeEpochMs = postTime,
-                        mediaType = itemMediaType,
-                        mediaPath = mediaPath,
-                        reelUrl = foundReel,
-                        targetAccount = com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
+                    val foundReel = extractReelUrl(cleanSingle) ?: findReelUrlInNotification(notification, cleanSingle)
+                    val isReel = foundReel != null ||
+                        cleanSingle.contains("sent a reel", ignoreCase = true) ||
+                        cleanSingle.contains("shared a reel", ignoreCase = true) ||
+                        cleanSingle.contains("reel by", ignoreCase = true) ||
+                        cleanSingle.equals("reel", ignoreCase = true)
+
+                    val isImage = !isReel && (
+                        mediaType == "image" ||
+                        pictureBitmap != null ||
+                        cleanSingle.contains("sent a photo", ignoreCase = true) ||
+                        cleanSingle.contains("shared a photo", ignoreCase = true) ||
+                        cleanSingle.equals("photo", ignoreCase = true)
                     )
+
+                    val isVideo = !isReel && !isImage && (
+                        cleanSingle.contains("sent a video", ignoreCase = true) ||
+                        cleanSingle.equals("video", ignoreCase = true)
+                    )
+
+                    val itemMediaType = when {
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        else -> "text"
+                    }
+
+                    if (!(itemMediaType == "text" && isInstagramUiMetadataOrTimestamp(cleanSingle))) {
+                        val finalText = when {
+                            isReel && cleanSingle.isBlank() -> foundReel ?: "Shared a Reel"
+                            isImage && (cleanSingle.isBlank() || cleanSingle.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                            isVideo && cleanSingle.isBlank() -> "Video"
+                            else -> cleanSingle
+                        }
+                        results += InstagramMessageEntry(
+                            chatName = cleanChatName,
+                            sender = if (isSingleOutgoing) "me" else (title ?: cleanChatName),
+                            messageText = finalText,
+                            isOutgoing = isSingleOutgoing,
+                            messageTimeEpochMs = postTime,
+                            mediaType = itemMediaType,
+                            mediaPath = mediaPath,
+                            reelUrl = foundReel,
+                            targetAccount = null
+                        )
+                    }
                 }
             }
         }
@@ -508,6 +561,63 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             }
         }
 
+        fun extractReelUrl(txt: String?): String? {
+            if (txt.isNullOrBlank()) return null
+            val match = """(?:https?://)?(?:www\.)?instagram\.com/(?:reel|reels|p|tv|share/reel)/([a-zA-Z0-9_-]+)""".toRegex(RegexOption.IGNORE_CASE).find(txt)
+            if (match != null) {
+                val full = match.value
+                return if (!full.startsWith("http://", ignoreCase = true) && !full.startsWith("https://", ignoreCase = true)) {
+                    "https://$full"
+                } else full
+            }
+            val igMatch = """(?:https?://)?(?:www\.)?ig\.me/(?:reel|share|p)/([a-zA-Z0-9_-]+)""".toRegex(RegexOption.IGNORE_CASE).find(txt)
+            if (igMatch != null) {
+                val full = igMatch.value
+                return if (!full.startsWith("http://", ignoreCase = true) && !full.startsWith("https://", ignoreCase = true)) {
+                    "https://$full"
+                } else full
+            }
+            return null
+        }
+
+        fun findReelUrlInNotification(notification: Notification?, text: String?): String? {
+            val fromText = extractReelUrl(text)
+            if (fromText != null) return fromText
+
+            val extras = notification?.extras ?: return null
+            for (key in extras.keySet()) {
+                try {
+                    val v = extras.get(key) ?: continue
+                    if (v is CharSequence || v is String) {
+                        val found = extractReelUrl(v.toString())
+                        if (found != null) return found
+                    }
+                } catch (_: Exception) {}
+            }
+            return null
+        }
+
+        fun isInstagramUiMetadataOrTimestamp(text: String?): Boolean {
+            if (text.isNullOrBlank()) return true
+            val t = text.replace("•", "").replace("·", "").trim()
+            if (t.isBlank()) return true
+            // 1. Exact times: "3:25 PM", "03:25 pm", "15:45", "15:45:00", "3:25", "3.25 PM", "3:25pm"
+            if ("""^\d{1,2}[:.]\d{2}(?::\d{2})?(\s*(?:AM|PM|am|pm))?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 2. Day names with optional time: "Yesterday", "Today", "Tomorrow", "Yesterday at 3:25 PM", "Today 10:14 AM"
+            if ("""^(?:Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 3. Month names with dates: "Oct 17", "17 Oct", "October 17, 2026", "Oct 17 at 3:25 PM"
+            if ("""^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)(?:,?\s*\d{4})?(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 4. Standard numeric dates: "17/10/2026", "2026-10-17"
+            if ("""^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending...", "Typing..."
+            if ("""^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+\w+)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 6. UI placeholders and system button text
+            if ("""^(?:Message\.\.\.|Type\s+a\s+message\.\.\.|Search|Replies|Tap\s+and\s+hold\s+to\s+react|Double\s+tap\s+to\s+like|Liked\s+a\s+message|Follow|Requested)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 7. Starts with time and <= 25 chars
+            if (t.matches("""^\d{1,2}[:.]\d{2}\s*(?:AM|PM|am|pm)\b.*""".toRegex(RegexOption.IGNORE_CASE)) && t.length <= 25) return true
+            return false
+        }
+
         fun processInstagramNotificationData(
             context: Context,
             notification: Notification?,
@@ -585,12 +695,6 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 }
             }
 
-            fun extractReelUrl(txt: String?): String? {
-                if (txt.isNullOrBlank()) return null
-                val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
-                return match?.value
-            }
-
             val entries = mutableListOf<InstagramMessageEntry>()
 
             val messageBundles = extras?.getParcelableArray("android.messages")
@@ -640,19 +744,52 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         else -> finalTxt
                     }
 
-                    val foundReel = extractReelUrl(cleanText)
+                    val foundReel = extractReelUrl(cleanText) ?: findReelUrlInNotification(notification, cleanText)
+                    val isReel = foundReel != null ||
+                        cleanText.contains("sent a reel", ignoreCase = true) ||
+                        cleanText.contains("shared a reel", ignoreCase = true) ||
+                        cleanText.contains("reel by", ignoreCase = true) ||
+                        cleanText.equals("reel", ignoreCase = true)
+
+                    val isImage = !isReel && (
+                        mediaType == "image" ||
+                        pictureBitmap != null ||
+                        bType?.contains("image", ignoreCase = true) == true ||
+                        cleanText.contains("sent a photo", ignoreCase = true) ||
+                        cleanText.contains("shared a photo", ignoreCase = true) ||
+                        cleanText.equals("photo", ignoreCase = true)
+                    )
+
+                    val isVideo = !isReel && !isImage && (
+                        bType?.contains("video", ignoreCase = true) == true ||
+                        cleanText.contains("sent a video", ignoreCase = true) ||
+                        cleanText.equals("video", ignoreCase = true)
+                    )
+
                     val itemMediaType = when {
-                        foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
-                        mediaType != null -> mediaType
-                        cleanText.contains("photo", ignoreCase = true) -> "image"
-                        cleanText.contains("video", ignoreCase = true) -> "video"
-                        else -> null
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        bType?.contains("audio", ignoreCase = true) == true -> "audio"
+                        else -> "text"
+                    }
+
+                    // Drop UI timestamps and statuses
+                    if (itemMediaType == "text" && isInstagramUiMetadataOrTimestamp(cleanText)) {
+                        continue
+                    }
+
+                    val finalText = when {
+                        isReel && cleanText.isBlank() -> foundReel ?: "Shared a Reel"
+                        isImage && (cleanText.isBlank() || cleanText.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                        isVideo && cleanText.isBlank() -> "Video"
+                        else -> cleanText
                     }
 
                     entries += InstagramMessageEntry(
                         chatName = chatName,
                         sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
-                        messageText = cleanText,
+                        messageText = finalText,
                         isOutgoing = isOutgoing,
                         messageTimeEpochMs = if (bTime > 0) bTime else postTime,
                         mediaType = itemMediaType,
@@ -673,16 +810,48 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         lStr.startsWith("You sent ", ignoreCase = true) -> lStr.substring(9).trim()
                         else -> lStr
                     }
-                    val foundReel = extractReelUrl(clean)
+                    val foundReel = extractReelUrl(clean) ?: findReelUrlInNotification(notification, clean)
+                    val isReel = foundReel != null ||
+                        clean.contains("sent a reel", ignoreCase = true) ||
+                        clean.contains("shared a reel", ignoreCase = true) ||
+                        clean.contains("reel by", ignoreCase = true) ||
+                        clean.equals("reel", ignoreCase = true)
+
+                    val isImage = !isReel && (
+                        mediaType == "image" ||
+                        pictureBitmap != null ||
+                        clean.contains("sent a photo", ignoreCase = true) ||
+                        clean.contains("shared a photo", ignoreCase = true) ||
+                        clean.equals("photo", ignoreCase = true)
+                    )
+
+                    val isVideo = !isReel && !isImage && (
+                        clean.contains("sent a video", ignoreCase = true) ||
+                        clean.equals("video", ignoreCase = true)
+                    )
+
                     val itemMediaType = when {
-                        foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
-                        mediaType != null -> mediaType
-                        else -> null
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        else -> "text"
                     }
+
+                    if (itemMediaType == "text" && isInstagramUiMetadataOrTimestamp(clean)) {
+                        continue
+                    }
+
+                    val finalText = when {
+                        isReel && clean.isBlank() -> foundReel ?: "Shared a Reel"
+                        isImage && (clean.isBlank() || clean.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                        isVideo && clean.isBlank() -> "Video"
+                        else -> clean
+                    }
+
                     entries += InstagramMessageEntry(
                         chatName = chatName,
                         sender = if (isOutgoing) "me" else (title ?: chatName),
-                        messageText = clean,
+                        messageText = finalText,
                         isOutgoing = isOutgoing,
                         messageTimeEpochMs = postTime,
                         mediaType = itemMediaType,
@@ -701,25 +870,52 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     prefixColonIdx in 1..40 && text.length > prefixColonIdx + 1 -> text.substring(prefixColonIdx + 1).trim()
                     else -> text
                 }
-                val foundReel = extractReelUrl(clean)
-                val itemMediaType = when {
-                    foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
-                    mediaType != null -> mediaType
-                    clean.contains("photo", ignoreCase = true) -> "image"
-                    clean.contains("video", ignoreCase = true) -> "video"
-                    else -> null
-                }
-                entries += InstagramMessageEntry(
-                    chatName = chatName,
-                    sender = if (hasYouPrefix) "me" else (title ?: chatName),
-                    messageText = clean,
-                    isOutgoing = hasYouPrefix,
-                    messageTimeEpochMs = postTime,
-                    mediaType = itemMediaType,
-                    mediaPath = mediaPath,
-                    reelUrl = foundReel,
-                    targetAccount = null
+                val foundReel = extractReelUrl(clean) ?: findReelUrlInNotification(notification, clean)
+                val isReel = foundReel != null ||
+                    clean.contains("sent a reel", ignoreCase = true) ||
+                    clean.contains("shared a reel", ignoreCase = true) ||
+                    clean.contains("reel by", ignoreCase = true) ||
+                    clean.equals("reel", ignoreCase = true)
+
+                val isImage = !isReel && (
+                    mediaType == "image" ||
+                    pictureBitmap != null ||
+                    clean.contains("sent a photo", ignoreCase = true) ||
+                    clean.contains("shared a photo", ignoreCase = true) ||
+                    clean.equals("photo", ignoreCase = true)
                 )
+
+                val isVideo = !isReel && !isImage && (
+                    clean.contains("sent a video", ignoreCase = true) ||
+                    clean.equals("video", ignoreCase = true)
+                )
+
+                val itemMediaType = when {
+                    isReel -> "reel"
+                    isImage -> "image"
+                    isVideo -> "video"
+                    else -> "text"
+                }
+
+                if (!(itemMediaType == "text" && isInstagramUiMetadataOrTimestamp(clean))) {
+                    val finalText = when {
+                        isReel && clean.isBlank() -> foundReel ?: "Shared a Reel"
+                        isImage && (clean.isBlank() || clean.equals("sent a photo", ignoreCase = true)) -> "Photo"
+                        isVideo && clean.isBlank() -> "Video"
+                        else -> clean
+                    }
+                    entries += InstagramMessageEntry(
+                        chatName = chatName,
+                        sender = if (hasYouPrefix) "me" else (title ?: chatName),
+                        messageText = finalText,
+                        isOutgoing = hasYouPrefix,
+                        messageTimeEpochMs = postTime,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel,
+                        targetAccount = null
+                    )
+                }
             }
 
             if (entries.isEmpty() && !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true)) {
