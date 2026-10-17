@@ -547,4 +547,23 @@ router.get("/database/tables/:tableName", async (req, res, next) => {
   }
 });
 
+/**
+ * DELETE /api/admin/database/tables/:tableName/rows/:rowId
+ * Delete a specific row by ID from any table.
+ */
+router.delete("/database/tables/:tableName/rows/:rowId", async (req, res, next) => {
+  try {
+    const { tableName, rowId } = req.params;
+    const checkRes = await pool.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
+      [tableName]
+    );
+    if (checkRes.rows.length === 0) return res.status(404).json({ error: "Table not found" });
+    await pool.query(`DELETE FROM "${tableName}" WHERE id = $1`, [rowId]);
+    res.json({ success: true, deleted: rowId });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
