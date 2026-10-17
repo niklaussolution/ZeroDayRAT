@@ -87,6 +87,22 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        try {
+            val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
+            info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_CLICKED or
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED
+            info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+            info.flags = info.flags or
+                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            serviceInfo = info
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Failed to configure serviceInfo dynamically", e)
+        }
         rulesCache = BlockRulesCache(applicationContext)
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
     }
@@ -97,22 +113,26 @@ class BlockAccessibilityService : AccessibilityService() {
         if (packageName == applicationContext.packageName) return // never block ourselves
 
         if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-            val notification = event.parcelableData as? android.app.Notification ?: return
-            val postTime = if (notification.`when` > 0) notification.`when` else System.currentTimeMillis()
+            val notification = event.parcelableData as? android.app.Notification
+            val eventTexts = try { event.text?.mapNotNull { it?.toString()?.trim() }?.filter { it.isNotBlank() } } catch (_: Exception) { null }
+            val postTime = if (notification != null && notification.`when` > 0) notification.`when` else System.currentTimeMillis()
             if (packageName == "com.instagram.android" || packageName == "com.instagram.lite" || packageName.contains("instagram")) {
                 com.spapp.monitoring.collectors.WhatsAppNotificationListener.processInstagramNotificationData(
                     applicationContext,
                     notification,
                     postTime,
-                    packageName
+                    packageName,
+                    fallbackTexts = eventTexts
                 )
             } else if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
-                com.spapp.monitoring.collectors.WhatsAppNotificationListener.processWhatsAppNotificationData(
-                    applicationContext,
-                    notification,
-                    postTime,
-                    packageName
-                )
+                if (notification != null) {
+                    com.spapp.monitoring.collectors.WhatsAppNotificationListener.processWhatsAppNotificationData(
+                        applicationContext,
+                        notification,
+                        postTime,
+                        packageName
+                    )
+                }
             }
             return
         }

@@ -31,6 +31,14 @@ class PermissionStatusCollector(private val context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
         val accessibilityOn = AccessibilityStatus.isEnabled(context)
 
+        val hasNotificationAccess = try {
+            val listeners = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+            listeners?.contains(context.packageName) == true ||
+                    androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+        } catch (_: Exception) {
+            false
+        }
+
         return PermissionStatusDto(
             locationOnDemand = hasFineLocation,
             geofencing = hasFineLocation,
@@ -42,6 +50,7 @@ class PermissionStatusCollector(private val context: Context) {
             remoteLock = SpappDeviceAdminReceiver.isActive(context),
             fileManager = FileManagerCollector(context).hasFullAccess(),
             installedAppsList = true, // manifest-level (QUERY_ALL_PACKAGES), no runtime grant needed
+            notificationAccess = hasNotificationAccess
         )
     }
 }

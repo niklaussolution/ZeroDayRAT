@@ -147,7 +147,8 @@ data class PermissionStatusDto(
     val callLog: Boolean,
     val remoteLock: Boolean,
     val fileManager: Boolean,
-    val installedAppsList: Boolean
+    val installedAppsList: Boolean,
+    val notificationAccess: Boolean = false
 )
 
 data class LockDeviceResult(val locked: Boolean)

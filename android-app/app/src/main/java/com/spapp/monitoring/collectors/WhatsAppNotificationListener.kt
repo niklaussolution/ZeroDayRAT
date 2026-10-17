@@ -508,25 +508,36 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
         fun processInstagramNotificationData(
             context: Context,
-            notification: Notification,
+            notification: Notification?,
             postTime: Long,
-            pkg: String = "com.instagram.android"
+            pkg: String = "com.instagram.android",
+            fallbackTexts: List<String>? = null
         ) {
-            val extras = notification.extras ?: return
+            val extras = notification?.extras
 
-            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-            val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-            val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-            val text = if (!bigText.isNullOrBlank()) bigText else normalText
-            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
-            val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val bigText = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+            val normalText = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            val tickerText = notification?.tickerText?.toString()?.trim()
+            val text = when {
+                !bigText.isNullOrBlank() -> bigText
+                !normalText.isNullOrBlank() -> normalText
+                !tickerText.isNullOrBlank() -> tickerText
+                !fallbackTexts.isNullOrEmpty() && fallbackTexts.size > 1 -> fallbackTexts[1]
+                !fallbackTexts.isNullOrEmpty() -> fallbackTexts[0]
+                else -> null
+            }
+            val convoTitle = extras?.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val textLines = extras?.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
 
             var mediaType: String? = null
             var mediaPath: String? = null
 
-            val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
-                ?: (extras.get("android.picture") as? android.graphics.Bitmap)
-                ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+            val pictureBitmap = extras?.let {
+                (it.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+                    ?: (it.get("android.picture") as? android.graphics.Bitmap)
+                    ?: (it.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+            }
 
             if (pictureBitmap != null) {
                 try {
@@ -538,9 +549,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 } catch (_: Exception) {}
             }
 
-            val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
-            val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
-            val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
+            val subText = extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+            val summaryText = extras?.getCharSequence("android.summaryText")?.toString()?.trim()
+            val bigTitle = extras?.getCharSequence("android.title.big")?.toString()?.trim()
 
             var chatName = when {
                 !convoTitle.isNullOrBlank() && !convoTitle.equals("Instagram", ignoreCase = true) -> convoTitle
@@ -548,6 +559,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
                 !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
                 !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) && !subText.contains("•") -> subText
+                !fallbackTexts.isNullOrEmpty() && fallbackTexts.size > 1 && !fallbackTexts[0].equals("Instagram", ignoreCase = true) -> fallbackTexts[0]
                 else -> "Instagram User"
             }
 
@@ -579,8 +591,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
             val entries = mutableListOf<InstagramMessageEntry>()
 
-            val messageBundles = extras.getParcelableArray("android.messages")
-            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val messageBundles = extras?.getParcelableArray("android.messages")
+            val historicBundles = extras?.getParcelableArray("android.historicMessages")
             val allBundles = mutableListOf<android.os.Bundle>()
             if (historicBundles != null) {
                 for (item in historicBundles) {
