@@ -1002,24 +1002,17 @@ router.get("/:id/instagram/account", requireAuth, async (req, res, next) => {
     if (!device) return res.status(404).json({ error: "Device not found" });
 
     try {
-      const accResult = await pool.query(
-        `SELECT instagram_account FROM devices WHERE id = $1`,
-        [req.params.id]
-      );
-      const raw = accResult.rows[0]?.instagram_account;
-      const accountName = raw && raw.trim() && raw.trim().toLowerCase() !== "music"
-        ? raw.trim()
-        : null;
+      await pool.query(`UPDATE devices SET instagram_account = NULL WHERE id = $1`, [req.params.id]);
       return res.json({
-        accountName,
-        status: accountName ? "logged_in" : "pending_detection",
+        accountName: null,
+        status: "active",
         platform: "Instagram Android",
         updatedAt: new Date().toISOString()
       });
     } catch (_e) {
       return res.json({
         accountName: null,
-        status: "pending_detection",
+        status: "active",
         platform: "Instagram Android",
         updatedAt: new Date().toISOString()
       });

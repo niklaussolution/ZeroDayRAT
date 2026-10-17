@@ -810,41 +810,7 @@ async function ensureInstagramTables() {
  */
 router.post("/instagram/account", async (req, res, next) => {
   try {
-    const deviceId = req.device.deviceId || req.device.id;
-    const newAccount = String(req.body.accountName || req.body.account || "").trim();
-    if (!newAccount) {
-      return res.status(400).json({ error: "accountName required" });
-    }
-
-    const deviceResult = await pool.query(
-      `SELECT instagram_account FROM devices WHERE id = $1`,
-      [deviceId]
-    );
-    const currentAccount = deviceResult.rows[0]?.instagram_account;
-    const isSwitched = Boolean(currentAccount && currentAccount.trim().toLowerCase() !== newAccount.toLowerCase());
-
-    console.log(`[Instagram Account] Device ${deviceId}: active account is now '${newAccount}'`);
-
-    await pool.query(
-      `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
-      [newAccount, deviceId]
-    );
-
-    await touchLastSeen(deviceId);
-
-    emitDeviceEvent(deviceId, {
-      type: "instagram_account",
-      accountName: newAccount,
-      switched: isSwitched,
-      previousAccount: isSwitched ? currentAccount : null,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({
-      success: true,
-      accountName: newAccount,
-      switched: isSwitched
-    });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
