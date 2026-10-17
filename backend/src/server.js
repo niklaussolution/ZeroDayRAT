@@ -135,7 +135,10 @@ const pool = require("./db/pool");
         OR message_text ~* '^\s*(Delivered|Sent|Sending|Typing|Message\.\.\.|Search|Replies)\s*$'
         OR message_text ~* '^\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s+(at\s+)?\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?)?\s*$'
         OR message_text ~* '^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*\s*$'
-        OR message_text ~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$';`,
+        OR message_text ~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'
+        OR message_text ~* '^\s*\d+(\.\d+)?[KMkm]\s*$'
+        OR message_text ~* '^\s*(Like|Save|Reshare|Comment|Repost)(\s+number)?\s+is\s+\d+'
+        OR message_text ~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$';`,
     `DELETE FROM instagram_chats
      WHERE LOWER(TRIM(chat_name)) IN ('instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications')
         OR LOWER(TRIM(chat_name)) LIKE 'switched to%'

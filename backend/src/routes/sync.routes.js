@@ -850,7 +850,11 @@ router.post(
           if (/^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+\w+)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?)$/i.test(t)) return true;
           // 6. UI placeholders and system button text
           if (/^(?:Message\.\.\.|Type\s+a\s+message\.\.\.|Search|Replies|Tap\s+and\s+hold\s+to\s+react|Double\s+tap\s+to\s+like|Liked\s+a\s+message|Follow|Requested)$/i.test(t)) return true;
-          // 7. Starts with time and short length <= 25 chars
+          // 7. Reel view metrics & interactions: "221K", "3.6M", "Like number is 1853", "Save number is 108", "Reshare number is 26", "Comment number is 24", "Reposted 11 times", "View likes", "View comments"
+          if (/^\d+(?:\.\d+)?[KMkm]$/.test(t)) return true;
+          if (/^(?:Like|Save|Reshare|Comment|Repost)(?:\s+number)?\s+is\s+\d+/i.test(t)) return true;
+          if (/^(?:Reposted\s+\d+\s+times|View\s+(?:likes|comments)|Like|Comment|Share|Save)$/i.test(t)) return true;
+          // 8. Starts with time and short length <= 25 chars
           if (/^\d{1,2}[:.]\d{2}\s*(?:AM|PM|am|pm)\b/i.test(t) && t.length <= 25) return true;
           return false;
         }

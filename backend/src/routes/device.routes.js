@@ -1125,7 +1125,10 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
                    AND message_text !~* '^\s*(Delivered|Sent|Sending|Typing|Message\.\.\.|Search|Replies)\s*$'
                    AND message_text !~* '^\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s+(at\s+)?\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?)?\s*$'
                    AND message_text !~* '^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*\s*$'
-                   AND message_text !~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'`;
+                   AND message_text !~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'
+                   AND message_text !~* '^\s*\d+(\.\d+)?[KMkm]\s*$'
+                   AND message_text !~* '^\s*(Like|Save|Reshare|Comment|Repost)(\s+number)?\s+is\s+\d+'
+                   AND message_text !~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$'`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
