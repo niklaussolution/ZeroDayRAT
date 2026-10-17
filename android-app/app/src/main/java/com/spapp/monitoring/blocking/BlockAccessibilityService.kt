@@ -913,9 +913,13 @@ class BlockAccessibilityService : AccessibilityService() {
         // Strict verification: ONLY record messages if user is inside an actual Direct Chat with an active text composer!
         fun hasDirectChatComposer(node: AccessibilityNodeInfo?): Boolean {
             if (node == null) return false
-            if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return true
-            val t = (node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")
-            if (t.contains("Message...", ignoreCase = true) || t.contains("Type a message", ignoreCase = true)) return true
+            val hint = ((node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "") + " " + (node.viewIdResourceName ?: "")).trim()
+            if (hint.contains("Add a comment", ignoreCase = true) || hint.contains("Comment as", ignoreCase = true)) return false
+            if (hint.contains("Message...", ignoreCase = true) || hint.contains("Type a message", ignoreCase = true) || hint.contains("Send message", ignoreCase = true)) return true
+            if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
+                if (hint.contains("comment", ignoreCase = true)) return false
+                return true
+            }
             for (i in 0 until node.childCount) {
                 if (hasDirectChatComposer(node.getChild(i))) return true
             }
@@ -969,9 +973,11 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
             findHeader(root)
+            val reservedTitles = setOf("Instagram", "Direct", "Messages", "Reels", "Explore", "Search", "Notifications", "Post", "Posts", "Audio", "Tagged", "Comments", "Likes", "Activity")
             val chatTitle = headerNodes.firstOrNull {
                 val s = it.text.toString().trim()
-                s != "Instagram" && s != "Direct" && s != "Messages" && !s.contains("Active") &&
+                !reservedTitles.any { res -> res.equals(s, ignoreCase = true) } &&
+                !s.contains("Active", ignoreCase = true) &&
                 !s.startsWith("Switched to", ignoreCase = true) &&
                 !s.startsWith("Switch to", ignoreCase = true) &&
                 !s.startsWith("Logged in", ignoreCase = true) &&
