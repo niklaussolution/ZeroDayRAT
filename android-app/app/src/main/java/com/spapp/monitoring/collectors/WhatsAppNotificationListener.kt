@@ -335,6 +335,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         @Volatile
         var instance: WhatsAppNotificationListener? = null
             private set
+        @Volatile
+        var lastDebugLog: String = "No notifs yet"
 
         fun getActiveChatNames(): List<String> {
             val inst = instance ?: return emptyList()
@@ -607,8 +609,20 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
             if (allBundles.isNotEmpty()) {
                 for (b in allBundles) {
-                    val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
-                    if (bText.isBlank()) continue
+                    val bText = b.getCharSequence("text")?.toString()?.trim()
+                        ?: b.getString("text")?.trim()
+                        ?: b.getCharSequence("android.text")?.toString()?.trim()
+                    val bType = b.getString("type")
+                    val bUri = try { b.getParcelable<android.net.Uri>("uri") } catch (_: Exception) { null }
+                    val finalTxt = when {
+                        !bText.isNullOrBlank() -> bText
+                        bType?.contains("image", ignoreCase = true) == true -> "Sent a photo"
+                        bType?.contains("video", ignoreCase = true) == true -> "Sent a video"
+                        bType?.contains("audio", ignoreCase = true) == true -> "Sent a voice message"
+                        bUri != null -> "Sent media"
+                        else -> null
+                    } ?: continue
+
                     val bTime = b.getLong("time", postTime)
                     val rawSender = b.getCharSequence("sender")?.toString()?.trim()
                         ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -616,14 +630,14 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                                 b.getParcelable<android.app.Person>("sender_person")?.name?.toString()?.trim()
                             } catch (_: Exception) { null }
                         } else null
-                    val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                    val hasYouPrefix = finalTxt.startsWith("You: ", ignoreCase = true) || finalTxt.startsWith("You sent ", ignoreCase = true) || finalTxt.startsWith("You reacted ", ignoreCase = true)
                     val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
                     val isOutgoing = isMeExplicit || hasYouPrefix
 
                     val cleanText = when {
-                        bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()
-                        bText.startsWith("You sent ", ignoreCase = true) -> bText.substring(9).trim()
-                        else -> bText
+                        finalTxt.startsWith("You: ", ignoreCase = true) -> finalTxt.substring(5).trim()
+                        finalTxt.startsWith("You sent ", ignoreCase = true) -> finalTxt.substring(9).trim()
+                        else -> finalTxt
                     }
 
                     val foundReel = extractReelUrl(cleanText)
@@ -647,7 +661,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         targetAccount = null
                     )
                 }
-            } else if (!textLines.isNullOrEmpty()) {
+            }
+
+            if (entries.isEmpty() && !textLines.isNullOrEmpty()) {
                 for (line in textLines) {
                     val lStr = line?.toString()?.trim() ?: continue
                     if (lStr.isBlank()) continue
@@ -675,7 +691,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         targetAccount = null
                     )
                 }
-            } else if (!text.isNullOrBlank()) {
+            }
+
+            if (entries.isEmpty() && !text.isNullOrBlank()) {
                 val hasYouPrefix = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You sent ", ignoreCase = true)
                 val clean = when {
                     text.startsWith("You: ", ignoreCase = true) -> text.substring(5).trim()
@@ -703,6 +721,22 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     targetAccount = null
                 )
             }
+
+            if (entries.isEmpty() && !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true)) {
+                entries += InstagramMessageEntry(
+                    chatName = title,
+                    sender = title,
+                    messageText = "New message",
+                    isOutgoing = false,
+                    messageTimeEpochMs = postTime,
+                    mediaType = mediaType,
+                    mediaPath = mediaPath,
+                    reelUrl = null,
+                    targetAccount = null
+                )
+            }
+
+            lastDebugLog = "pkg=$pkg, chat=$chatName, text=${text?.take(25)}, bundles=${allBundles.size}, entries=${entries.size}"
 
             if (entries.isNotEmpty()) {
                 CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {

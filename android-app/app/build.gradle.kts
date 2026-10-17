@@ -13,8 +13,8 @@ android {
         applicationId = "com.spapp.monitoring"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         // Backend base URL — the deployed Render backend, reachable from any
         // network (mobile data, any WiFi) since it's a real public HTTPS host.
