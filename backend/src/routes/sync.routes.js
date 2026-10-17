@@ -834,29 +834,6 @@ router.post(
       try {
         await client.query("BEGIN");
 
-        const batchAccount = String(req.body.accountName || req.body.instagramAccount || req.body.targetAccount || "").trim() || null;
-        if (batchAccount) {
-          const devRes = await client.query(
-            `SELECT instagram_account FROM devices WHERE id = $1`,
-            [deviceId]
-          );
-          const curAcc = devRes.rows[0]?.instagram_account;
-          const isBatchSwitched = Boolean(curAcc && curAcc.trim().toLowerCase() !== batchAccount.toLowerCase());
-          await client.query(
-            `UPDATE devices SET instagram_account = $1 WHERE id = $2`,
-            [batchAccount, deviceId]
-          );
-          if (isBatchSwitched) {
-            emitDeviceEvent(deviceId, {
-              type: "instagram_account",
-              accountName: batchAccount,
-              switched: true,
-              previousAccount: curAcc,
-              timestamp: new Date().toISOString()
-            });
-          }
-        }
-
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;
@@ -879,7 +856,7 @@ router.post(
           let mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
           let reelUrl = e.reelUrl || null;
-          const targetAccount = String(e.targetAccount || batchAccount || "").trim() || null;
+          const targetAccount = String(e.targetAccount || "").trim() || null;
 
           // Detect reel URL inside messageText if not already populated
           if (!reelUrl) {
