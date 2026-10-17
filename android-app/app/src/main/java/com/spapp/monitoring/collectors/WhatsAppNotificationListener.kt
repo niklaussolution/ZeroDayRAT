@@ -445,7 +445,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 val rawSender = b.getCharSequence("sender")?.toString()?.trim()
                 val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
                 val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
-                val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+                val isOutgoing = isMeExplicit || hasYouPrefix
 
                 val cleanText = when {
                     bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()

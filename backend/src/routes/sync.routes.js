@@ -927,29 +927,44 @@ router.post(
           }
 
           // 1. Maintain complete Instagram chat inventory in instagram_chats table
-          await client.query(
-            `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at, target_account)
-             VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-             ON CONFLICT (device_id, chat_name)
-             DO UPDATE SET
-               last_message = CASE
-                 WHEN EXCLUDED.last_message IS NOT NULL AND EXCLUDED.last_message != ''
-                 THEN EXCLUDED.last_message
-                 ELSE instagram_chats.last_message
-               END,
-               last_message_at = GREATEST(instagram_chats.last_message_at, EXCLUDED.last_message_at),
-               username = COALESCE(EXCLUDED.username, instagram_chats.username),
-               target_account = COALESCE(EXCLUDED.target_account, instagram_chats.target_account),
-               synced_at = NOW()`,
-            [
-              req.device.deviceId,
-              chatName.slice(0, 255),
-              sender ? sender.slice(0, 255) : null,
-              messageText || (reelUrl ? "Shared a Reel" : "Media message"),
-              messageTime,
-              targetAccount
-            ]
+          const existingChat = await client.query(
+            `SELECT id FROM instagram_chats WHERE device_id = $1 AND chat_name = $2 LIMIT 1`,
+            [req.device.deviceId, chatName.slice(0, 255)]
           );
+          if (existingChat.rows.length === 0) {
+            await client.query(
+              `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at, target_account)
+               VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+              [
+                req.device.deviceId,
+                chatName.slice(0, 255),
+                sender ? sender.slice(0, 255) : null,
+                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+                messageTime,
+                targetAccount
+              ]
+            );
+          } else {
+            await client.query(
+              `UPDATE instagram_chats SET
+                 last_message = CASE
+                   WHEN $1 IS NOT NULL AND $1 != '' THEN $1
+                   ELSE last_message
+                 END,
+                 last_message_at = GREATEST(last_message_at, $2::timestamptz),
+                 username = COALESCE($3, username),
+                 target_account = COALESCE($4, target_account),
+                 synced_at = NOW()
+               WHERE id = $5`,
+              [
+                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+                messageTime,
+                sender ? sender.slice(0, 255) : null,
+                targetAccount,
+                existingChat.rows[0].id
+              ]
+            );
+          }
 
           // 2. Upsert into instagram_messages table
           const existing = await client.query(
@@ -963,17 +978,21 @@ router.post(
             const result = await client.query(
               `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url, target_account)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
-               DO UPDATE SET
-                 media_type = COALESCE(EXCLUDED.media_type, instagram_messages.media_type),
-                 media_path = COALESCE(EXCLUDED.media_path, instagram_messages.media_path),
-                 reel_url = COALESCE(EXCLUDED.reel_url, instagram_messages.reel_url),
-                 target_account = COALESCE(EXCLUDED.target_account, instagram_messages.target_account),
-                 synced_at = NOW()
                RETURNING id`,
               [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl, targetAccount]
             );
             if (result.rows.length > 0) insertedCount++;
+          } else {
+            await client.query(
+              `UPDATE instagram_messages SET
+                 media_type = COALESCE($1, media_type),
+                 media_path = COALESCE($2, media_path),
+                 reel_url = COALESCE($3, reel_url),
+                 target_account = COALESCE($4, target_account),
+                 synced_at = NOW()
+               WHERE id = $5`,
+              [mediaType, mediaPath, reelUrl, targetAccount, existing.rows[0].id]
+            );
           }
         }
 
@@ -988,6 +1007,7 @@ router.post(
         res.status(201).json({ inserted: insertedCount });
       } catch (err) {
         await client.query("ROLLBACK");
+        console.error("Failed to sync Instagram messages:", err);
         throw err;
       } finally {
         client.release();
