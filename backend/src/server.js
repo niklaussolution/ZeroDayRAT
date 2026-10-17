@@ -126,8 +126,9 @@ const pool = require("./db/pool");
     `ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);`,
     `ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_instagram_chats_device_chat_uniq ON instagram_chats(device_id, chat_name);`,
-    `UPDATE devices SET instagram_account = NULL WHERE instagram_account IN ('alone_sparrow_2603', '_free_bird_2603');`,
+    `UPDATE devices SET instagram_account = NULL;`,
+    `UPDATE instagram_chats SET target_account = NULL;`,
+    `UPDATE instagram_messages SET target_account = NULL;`,
     `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`
   ];
 

