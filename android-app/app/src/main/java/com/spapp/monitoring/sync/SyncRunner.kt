@@ -916,13 +916,13 @@ class SyncRunner(private val context: Context) {
                 mediaType = it.mediaType,
                 mediaPath = it.mediaPath,
                 reelUrl = it.reelUrl,
-                targetAccount = it.targetAccount ?: currentAccount
+                targetAccount = it.targetAccount
             )
         }
         try {
             val response = ApiClient.service.syncInstagramMessages(
                 bearer,
-                InstagramMessagesSyncRequest(dtos, accountName = currentAccount)
+                InstagramMessagesSyncRequest(dtos, accountName = null)
             )
             if (response.isSuccessful) {
                 db.instagramMessageDao().markSynced(unsynced.map { it.id })

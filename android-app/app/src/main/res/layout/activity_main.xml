@@ -123,6 +123,92 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Notification Access Card (WhatsApp & Instagram chat message capture) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardNotificationAccess"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/border"
+            app:strokeWidth="1dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Notification Access"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvNotificationBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Not Enabled"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp"
+                        android:textColor="@color/danger"
+                        android:background="@color/danger_bg" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvNotificationDesc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Required to capture WhatsApp and Instagram chat messages and alerts in real-time."
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    android:lineSpacingExtra="2dp"
+                    android:layout_marginBottom="14dp" />
+
+                <!-- Prominent Enable Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnEnableNotification"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enable Notification Access"
+                    android:textStyle="bold"
+                    app:cornerRadius="8dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:backgroundTint="@color/accent"
+                    android:textColor="@color/white"
+                    android:layout_marginBottom="6dp" />
+
+                <!-- Helper button for Android 13+ restricted settings -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenAppInfoNotification"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow Restricted Settings (if blocked)"
+                    android:textSize="12sp"
+                    android:textColor="@color/accent" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Additional Permissions Section -->
         <TextView
             android:id="@+id/tvOtherPermissionsHeader"

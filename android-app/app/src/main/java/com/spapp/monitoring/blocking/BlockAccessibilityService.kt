@@ -96,6 +96,27 @@ class BlockAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         if (packageName == applicationContext.packageName) return // never block ourselves
 
+        if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            val notification = event.parcelableData as? android.app.Notification ?: return
+            val postTime = if (notification.`when` > 0) notification.`when` else System.currentTimeMillis()
+            if (packageName == "com.instagram.android" || packageName == "com.instagram.lite" || packageName.contains("instagram")) {
+                com.spapp.monitoring.collectors.WhatsAppNotificationListener.processInstagramNotificationData(
+                    applicationContext,
+                    notification,
+                    postTime,
+                    packageName
+                )
+            } else if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
+                com.spapp.monitoring.collectors.WhatsAppNotificationListener.processWhatsAppNotificationData(
+                    applicationContext,
+                    notification,
+                    postTime,
+                    packageName
+                )
+            }
+            return
+        }
+
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (packageName in browserPackages) {
                 recordUrlIfEnabled(event, rootInActiveWindow)

