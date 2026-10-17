@@ -659,43 +659,12 @@ class BlockAccessibilityService : AccessibilityService() {
      * Compares against current account and notifies backend immediately.
      */
     fun notifyInstagramAccountDetected(detectedUsername: String) {
-        val newAcc = detectedUsername.lowercase().removePrefix("@").trim()
-        if (newAcc.isBlank() || newAcc.length !in 3..35) return
-
-        val state = com.spapp.monitoring.data.DeviceState(applicationContext)
-        val currentAccount = (state.instagramAccount ?: "").trim().lowercase()
-
-        if (newAcc.isNotEmpty() && !newAcc.equals(currentAccount, ignoreCase = true)) {
-            Log.i("BlockA11y", ">>> Instagram Account Direct In-App Switch/Detected: '$currentAccount' -> '$newAcc'. Purging old data to save DB space.")
-            state.instagramAccount = newAcc
-
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    if (currentAccount.isNotEmpty() && !currentAccount.equals(newAcc, ignoreCase = true)) {
-                        val db = com.spapp.monitoring.data.local.AppDatabase.getInstance(applicationContext)
-                        db.instagramMessageDao().clearAll()
-                        Log.i("BlockA11y", "Purged local SQLite Instagram messages table.")
-                    }
-
-                    val token = state.authToken ?: return@launch
-                    val resp = com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(
-                        "Bearer $token",
-                        mapOf("accountName" to newAcc, "previousAccount" to currentAccount)
-                    )
-                    if (resp.isSuccessful) {
-                        Log.i("BlockA11y", "Successfully notified backend of Instagram switch to $newAcc")
-                    } else {
-                        Log.w("BlockA11y", "Backend update returned HTTP ${resp.code()}")
-                    }
-                } catch (e: Exception) {
-                    Log.e("BlockA11y", "Failed to sync Instagram account switch", e)
-                }
-            }
-        }
+        // Disabled per user requirement: do not find or track login ID
     }
 
     fun detectAndHandleInstagramAccountSwitch(root: AccessibilityNodeInfo?) {
         if (root == null) return
+        return
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != "com.instagram.android") return
 

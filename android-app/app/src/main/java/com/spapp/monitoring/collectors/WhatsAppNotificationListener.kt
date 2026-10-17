@@ -351,57 +351,28 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         }
 
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
-        var extractedAccount: String? = null
-        if (!subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true)) {
-            val cleanSub = when {
-                subText.contains("•") -> subText.substringAfter("•").trim()
-                subText.contains("·") -> subText.substringAfter("·").trim()
-                else -> subText
-            }
-            val candidate = cleanSub.removePrefix("@").trim().lowercase()
-            val notAccountWords = setOf("instagram", "direct", "messages", "notifications", "update", "new")
-            if (candidate.length in 3..32 && candidate.matches("^[a-zA-Z0-9._]+$".toRegex()) && !notAccountWords.contains(candidate)) {
-                extractedAccount = candidate
-                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.notifyInstagramAccountDetected(candidate)
-                    ?: run {
-                        val state = com.spapp.monitoring.data.DeviceState(applicationContext)
-                        val curr = (state.instagramAccount ?: "").trim().lowercase()
-                        if (candidate != curr) {
-                            state.instagramAccount = candidate
-                            scope.launch {
-                                try {
-                                    val token = state.authToken ?: return@launch
-                                    com.spapp.monitoring.network.ApiClient.service.updateInstagramAccount(
-                                        "Bearer $token",
-                                        mapOf("accountName" to candidate, "previousAccount" to curr)
-                                    )
-                                } catch (_: Exception) {}
-                            }
-                        }
-                    }
-            }
-        }
-
-        val targetAccount = extractedAccount
-            ?: com.spapp.monitoring.data.DeviceState(applicationContext).instagramAccount
+        val targetAccount: String? = null
 
         val summaryText = extras.getCharSequence("android.summaryText")?.toString()?.trim()
         val bigTitle = extras.getCharSequence("android.title.big")?.toString()?.trim()
 
         var chatName = when {
-            !convoTitle.isNullOrBlank() -> convoTitle
+            !convoTitle.isNullOrBlank() && !convoTitle.equals("Instagram", ignoreCase = true) -> convoTitle
             !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
             !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true) -> title
             !summaryText.isNullOrBlank() && !summaryText.equals("Instagram", ignoreCase = true) -> summaryText
+            !subText.isNullOrBlank() && !subText.equals("Instagram", ignoreCase = true) && !subText.contains("•") -> subText
             else -> "Instagram User"
         }
 
+        var prefixColonIdx = -1
         // If chatName is generic, extract sender from text prefix ("user: text", "user sent a reel", etc.)
         if (chatName.equals("Instagram", ignoreCase = true) || chatName.equals("Instagram User", ignoreCase = true)) {
             val candidate = text ?: ""
             val colonIdx = candidate.indexOf(':')
             if (colonIdx in 1..40) {
                 chatName = candidate.substring(0, colonIdx).trim()
+                prefixColonIdx = colonIdx
             } else if (candidate.contains(" sent ", ignoreCase = true)) {
                 val idx = candidate.indexOf(" sent ", ignoreCase = true)
                 if (idx in 1..40) {
@@ -507,6 +478,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             val clean = when {
                 text.startsWith("You: ", ignoreCase = true) -> text.substring(5).trim()
                 text.startsWith("You sent ", ignoreCase = true) -> text.substring(9).trim()
+                prefixColonIdx in 1..40 && text.length > prefixColonIdx + 1 -> text.substring(prefixColonIdx + 1).trim()
                 else -> text
             }
             val foundReel = extractReelUrl(clean)
