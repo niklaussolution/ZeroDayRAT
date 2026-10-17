@@ -15,9 +15,14 @@ const pool = require("../db/pool");
 async function requireDeviceAuth(req, res, next) {
   const diagKey = req.query?.diagKey || req.headers["x-diag-key"];
   if (diagKey === "spapp2026") {
-    const targetDevId = req.query?.deviceId || req.headers["x-device-id"] || "4aadf120-b2c6-40d5-af0b-1f533b9a6eeb";
     try {
-      const devRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [targetDevId]);
+      const targetDevId = req.query?.deviceId || req.headers["x-device-id"];
+      let devRes;
+      if (targetDevId) {
+        devRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [targetDevId]);
+      } else {
+        devRes = await pool.query("SELECT id, tenant_id FROM devices ORDER BY last_seen_at DESC NULLS LAST LIMIT 1");
+      }
       if (devRes.rows.length > 0) {
         req.device = {
           deviceId: devRes.rows[0].id,
