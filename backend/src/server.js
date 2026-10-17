@@ -151,7 +151,17 @@ const pool = require("./db/pool");
     `UPDATE instagram_messages SET media_type = 'image' WHERE (media_type IS NULL OR media_type = '' OR media_type = 'text') AND (media_path IS NOT NULL OR LOWER(message_text) LIKE '%photo%' OR LOWER(message_text) LIKE '%image%');`,
     `UPDATE instagram_messages SET media_type = 'text' WHERE media_type IS NULL OR media_type = '';`,
     `UPDATE instagram_messages SET target_account = NULL;`,
-    `UPDATE instagram_chats SET target_account = NULL;`
+    `UPDATE instagram_chats SET target_account = NULL;`,
+    `UPDATE instagram_chats
+     SET last_message = (
+       SELECT message_text FROM instagram_messages
+       WHERE instagram_messages.device_id = instagram_chats.device_id
+         AND instagram_messages.chat_name = instagram_chats.chat_name
+       ORDER BY message_time DESC LIMIT 1
+     )
+     WHERE last_message ~* '^\s*\d{1,2}[:.]\d{2}'
+        OR last_message ~* '^\s*(Active|Seen|Delivered|Sent)'
+        OR last_message ~* '^\s*(Yesterday|Today)';`
   ];
 
   for (const sql of migrations) {

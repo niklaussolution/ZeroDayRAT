@@ -933,6 +933,10 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  target_account
           FROM instagram_chats
           WHERE device_id = $1
+            AND (last_message IS NULL OR (
+              last_message !~* '^\s*\d{1,2}[:.]\d{2}'
+              AND last_message !~* '^\s*(Active|Seen|Delivered|Sent|Yesterday|Today)'
+            ))
           UNION ALL
           SELECT chat_name,
                  sender AS username,
@@ -942,6 +946,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  target_account
           FROM instagram_messages
           WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+            AND message_text !~* '^\s*\d{1,2}[:.]\d{2}'
+            AND message_text !~* '^\s*(Active|Seen|Delivered|Sent|Yesterday|Today)'
         ),
         msg_counts AS (
           SELECT LOWER(TRIM(chat_name)) AS canonical_name,
