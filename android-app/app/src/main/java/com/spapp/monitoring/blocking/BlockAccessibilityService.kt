@@ -303,6 +303,8 @@ class BlockAccessibilityService : AccessibilityService() {
                     if (n == null || depth > maxDepth) return
                     val t = cleanStr(n.text?.toString())
                     if (t.isNotBlank()) list.add(t)
+                    val cd = cleanStr(n.contentDescription?.toString())
+                    if (cd.isNotBlank() && cd != t) list.add(cd)
                     for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
                 }
                 walk(node, 0)
@@ -491,7 +493,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         !clean.contains("typing", ignoreCase = true) &&
                         !clean.contains("tap here", ignoreCase = true) &&
                         !clean.contains("click here", ignoreCase = true) &&
-                        clean.length in 1..60
+                        clean.length in 1..120
                     }
                 }
 
@@ -663,9 +665,9 @@ class BlockAccessibilityService : AccessibilityService() {
                     node.getBoundsInScreen(rect)
                     val w = rect.width()
                     val h = rect.height()
-                    if ((node.isClickable || count in 1..10) && w > (screenWidth * 0.5) && h in 70..420) {
-                        val texts = collectTexts(node, 10)
-                        if (texts.size >= 2 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
+                    if ((node.isClickable || count in 1..30) && w > (screenWidth * 0.4) && h in 45..500) {
+                        val texts = collectTexts(node, 15)
+                        if (texts.size >= 1 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
                             candidateRows.add(node)
                         }
                     }
@@ -676,9 +678,9 @@ class BlockAccessibilityService : AccessibilityService() {
                 findChatRows(resolvedRoot)
 
                 for (row in candidateRows) {
-                    val texts = collectTexts(row, 10)
+                    val texts = collectTexts(row, 15)
                     val candidateTitles = texts.filter {
-                        !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 50
+                        !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 120
                     }
                     if (candidateTitles.isNotEmpty()) {
                         val title = candidateTitles.first()
@@ -704,19 +706,23 @@ class BlockAccessibilityService : AccessibilityService() {
                             rowSender = "me"
                         }
 
-                        if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
-                            val dedupeKey = "ROW|$title|$snippet|$rowTimeMs"
-                            if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
-                                capturedWhatsAppMsgHashes.add(dedupeKey)
-                                if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
-                                entriesToInsert += WhatsAppMessageEntry(
-                                    chatName = title,
-                                    sender = if (isSnippetOutgoing) "me" else (rowSender ?: title),
-                                    messageText = snippet,
-                                    isOutgoing = isSnippetOutgoing,
-                                    messageTimeEpochMs = rowTimeMs
-                                )
-                            }
+                        val finalSnippet = if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
+                            snippet
+                        } else {
+                            "WhatsApp Group"
+                        }
+
+                        val dedupeKey = "ROW|$title|$finalSnippet|$rowTimeMs"
+                        if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
+                            capturedWhatsAppMsgHashes.add(dedupeKey)
+                            if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+                            entriesToInsert += WhatsAppMessageEntry(
+                                chatName = title,
+                                sender = if (isSnippetOutgoing) "me" else (rowSender ?: title),
+                                messageText = finalSnippet,
+                                isOutgoing = isSnippetOutgoing,
+                                messageTimeEpochMs = rowTimeMs
+                            )
                         }
                     }
                 }

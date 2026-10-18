@@ -44,6 +44,15 @@ router.post(
       const device = await checkDeviceAccess(req.params.id, req.auth);
       if (!device) return res.status(404).json({ error: "Device not found" });
 
+      if (req.body.commandType === "get_whatsapp_chat" || req.body.commandType === "get_instagram_chat") {
+        await pool.query(
+          `UPDATE remote_commands
+           SET status = 'failed', result = '{"error": "Superseded by newer chat request"}'::jsonb, completed_at = now()
+           WHERE device_id = $1 AND command_type = $2 AND status IN ('pending', 'sent')`,
+          [req.params.id, req.body.commandType]
+        );
+      }
+
       const result = await pool.query(
         `INSERT INTO remote_commands (device_id, command_type, payload, status)
          VALUES ($1, $2, $3, 'pending')

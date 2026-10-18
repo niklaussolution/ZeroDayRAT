@@ -781,8 +781,8 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
       let finished = false;
 
       if (cmdId) {
-        // Poll command status from server (16 iterations x 1.5s = 24s window)
-        for (let i = 0; i < 16; i++) {
+        // Poll command status from server (24 iterations x 1.5s = 36s window)
+        for (let i = 0; i < 24; i++) {
           await new Promise((r) => setTimeout(r, 1500));
           if (activeRequestIdRef.current !== myRequestId) return; // Abort if user switched chat
 
@@ -790,7 +790,20 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             const checked = await devicesApi.getCommand(deviceId, cmdId);
             if (activeRequestIdRef.current !== myRequestId) return; // Abort if user switched chat
 
-            if (checked.status === "sent") {
+            if (checked.status === "pending") {
+              setSyncProgress((prev) =>
+                prev?.chatName === cleanName
+                  ? {
+                      ...prev,
+                      step: 1,
+                      percent: 25 + Math.min(20, Math.floor((i / 24) * 20)),
+                      title: "1. Request Sent",
+                      detail: `Step 1/4: 📤 Dispatching fetch command for "${cleanName}" (${isInstagram ? "Instagram Direct" : "WhatsApp"}) — waiting for mobile phone pickup (${i + 1}/24)...`,
+                      status: "running",
+                    }
+                  : prev
+              );
+            } else if (checked.status === "sent") {
               setSyncProgress((prev) =>
                 prev?.chatName === cleanName
                   ? {

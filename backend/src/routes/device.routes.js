@@ -741,10 +741,11 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         phoneDigits.push(queryDigits.length > 10 ? queryDigits.slice(-10) : queryDigits);
       }
 
-      // Also extract significant words from cleanChat (e.g. "Moulidhar" from "Moulidhar IT KSR IT KSR")
+      // Also extract the primary given name from cleanChat (e.g. "Karthikeyan" from "Karthikeyan IT KSR")
       const words = cleanChat.split(/[\s_\-]+/).filter((w) => w.length >= 3);
-      for (const w of words) {
-        if (!chatNames.includes(w)) chatNames.push(w);
+      const primaryWord = words[0];
+      if (primaryWord && !chatNames.includes(primaryWord) && primaryWord.toLowerCase() !== cleanChat.toLowerCase()) {
+        chatNames.push(primaryWord);
       }
 
       // 1. Look up any known phone numbers or alias contact names from whatsapp_chats

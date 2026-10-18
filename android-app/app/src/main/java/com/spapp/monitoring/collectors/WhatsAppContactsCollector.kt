@@ -164,6 +164,39 @@ class WhatsAppContactsCollector(private val context: Context) {
                     }
                 }
             } catch (_: Exception) {}
+
+            // 3b. WhatsApp Groups from ContactsContract.Groups
+            try {
+                val groupUri = ContactsContract.Groups.CONTENT_URI
+                val groupProjection = arrayOf(
+                    ContactsContract.Groups.TITLE,
+                    ContactsContract.Groups.ACCOUNT_TYPE
+                )
+                context.contentResolver.query(
+                    groupUri,
+                    groupProjection,
+                    "${ContactsContract.Groups.ACCOUNT_TYPE} IN (?, ?)",
+                    arrayOf("com.whatsapp", "com.whatsapp.w4b"),
+                    null
+                )?.use { cursor ->
+                    val titleIdx = cursor.getColumnIndex(ContactsContract.Groups.TITLE)
+                    while (cursor.moveToNext()) {
+                        val title = if (titleIdx >= 0) cursor.getString(titleIdx)?.trim() else null
+                        if (!title.isNullOrBlank()) {
+                            val key = title.lowercase()
+                            if (!contactMap.containsKey(key)) {
+                                contactMap[key] = WhatsAppMessageEntry(
+                                    chatName = title,
+                                    sender = title,
+                                    messageText = "Recent WhatsApp Chat",
+                                    isOutgoing = false,
+                                    messageTimeEpochMs = now
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
 
         // 4. Active WhatsApp Notification Chats

@@ -340,11 +340,21 @@ router.post("/permission-status", async (req, res, next) => {
  */
 router.get("/commands", async (req, res, next) => {
   try {
+    // 1. Auto-expire old pending or sent commands older than 5 minutes so they don't block fresh commands
+    await pool.query(
+      `UPDATE remote_commands
+       SET status = 'failed', result = '{"error": "Command expired after 5 minutes"}'::jsonb, completed_at = now()
+       WHERE device_id = $1
+         AND status IN ('pending', 'sent')
+         AND created_at < now() - interval '5 minutes'`,
+      [req.device.deviceId]
+    );
+
+    // 2. Fetch fresh pending commands, newest first (ORDER BY created_at DESC)
     const result = await pool.query(
       `SELECT id, command_type, payload, created_at FROM remote_commands
-       WHERE device_id = $1
-         AND (status = 'pending' OR (status = 'sent' AND created_at < now() - interval '10 minutes'))
-       ORDER BY created_at ASC LIMIT 20`,
+       WHERE device_id = $1 AND status = 'pending'
+       ORDER BY created_at DESC LIMIT 20`,
       [req.device.deviceId]
     );
 

@@ -97,11 +97,12 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             } else false
 
             val words = cleanChatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
-            val wordMatch = words.any { w ->
-                (convoTitle != null && convoTitle.contains(w, ignoreCase = true)) ||
-                (notGeneric && title!!.contains(w, ignoreCase = true)) ||
-                (subText != null && subText.contains(w, ignoreCase = true))
-            }
+            val primaryWord = words.firstOrNull()
+            val wordMatch = if (!primaryWord.isNullOrBlank() && primaryWord.length >= 4) {
+                (convoTitle != null && convoTitle.contains(primaryWord, ignoreCase = true)) ||
+                (notGeneric && title!!.contains(primaryWord, ignoreCase = true)) ||
+                (subText != null && subText.contains(primaryWord, ignoreCase = true))
+            } else false
 
             val matchesChat = (convoTitle != null && (convoTitle.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && convoTitle.contains(cleanChatName, ignoreCase = true)) || (convoTitle.length >= 3 && cleanChatName.contains(convoTitle, ignoreCase = true)))) ||
                               (notGeneric && (title!!.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && title.contains(cleanChatName, ignoreCase = true)) || (title.length >= 3 && cleanChatName.contains(title, ignoreCase = true)))) ||

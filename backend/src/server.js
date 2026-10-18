@@ -163,6 +163,9 @@ const pool = require("./db/pool");
     `UPDATE instagram_messages SET media_type = 'text' WHERE media_type IS NULL OR media_type = '';`,
     `UPDATE instagram_messages SET target_account = NULL;`,
     `UPDATE instagram_chats SET target_account = NULL;`,
+    `UPDATE remote_commands
+     SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
+     WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`,
     `UPDATE instagram_chats
      SET last_message = (
        SELECT message_text FROM instagram_messages
