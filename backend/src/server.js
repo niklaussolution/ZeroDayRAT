@@ -126,59 +126,11 @@ const pool = require("./db/pool");
     `ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);`,
     `ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
-    `ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;`,
-    `DELETE FROM whatsapp_messages a USING whatsapp_messages b
-     WHERE a.id < b.id
-       AND a.device_id = b.device_id
-       AND a.chat_name = b.chat_name
-       AND a.message_text = b.message_text
-       AND a.message_time = b.message_time
-       AND a.is_outgoing = b.is_outgoing;`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
        ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);`,
-    `UPDATE devices SET instagram_account = NULL;`,
-    `UPDATE instagram_chats SET target_account = NULL;`,
-    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation') OR LOWER(TRIM(chat_name)) IN ('photos', 'gallery', 'camera', 'recent searches', 'gifs', 'links') OR message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$';`,
-    `DELETE FROM whatsapp_chats WHERE LOWER(TRIM(chat_name)) IN ('photos', 'gallery', 'camera', 'recent searches', 'gifs', 'links');`,
-    `DELETE FROM instagram_messages
-     WHERE message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$'
-        OR message_text ~* '^\s*(Active|Seen)(\s+.*)?\s*$'
-        OR message_text ~* '^\s*(Delivered|Sent|Sending|Typing|Message\.\.\.|Search|Replies)\s*$'
-        OR message_text ~* '^\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s+(at\s+)?\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?)?\s*$'
-        OR message_text ~* '^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*\s*$'
-        OR message_text ~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'
-        OR message_text ~* '^\s*\d+(\.\d+)?[KMkm]\s*$'
-        OR message_text ~* '^\s*(Like|Save|Reshare|Comment|Repost)(\s+number)?\s+is\s+\d+'
-        OR message_text ~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$';`,
-    `DELETE FROM instagram_chats
-     WHERE LOWER(TRIM(chat_name)) IN ('instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications')
-        OR LOWER(TRIM(chat_name)) LIKE 'switched to%'
-        OR LOWER(TRIM(chat_name)) LIKE 'switch to%'
-        OR LOWER(TRIM(chat_name)) LIKE 'uninstall%'
-        OR LOWER(TRIM(chat_name)) LIKE 'install%'
-        OR LOWER(TRIM(chat_name)) = 'music'
-        OR LOWER(TRIM(chat_name)) = 'danger';`,
-    `UPDATE instagram_messages SET media_type = 'reel' WHERE (reel_url IS NOT NULL AND reel_url != '') OR message_text LIKE '%instagram.com/reel/%' OR message_text LIKE '%instagram.com/reels/%' OR message_text LIKE '%ig.me/reel/%' OR LOWER(message_text) = 'shared a reel' OR LOWER(message_text) = 'reel';`,
-    `UPDATE instagram_messages SET media_type = 'image' WHERE (media_type IS NULL OR media_type = '' OR media_type = 'text') AND (media_path IS NOT NULL OR LOWER(message_text) LIKE '%photo%' OR LOWER(message_text) LIKE '%image%');`,
-    `UPDATE instagram_messages SET media_type = 'text' WHERE media_type IS NULL OR media_type = '';`,
-    `UPDATE instagram_messages SET target_account = NULL;`,
-    `UPDATE instagram_chats SET target_account = NULL;`,
     `UPDATE remote_commands
      SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
-     WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`,
-    `DELETE FROM whatsapp_chats
-     WHERE last_message IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-       AND chat_name NOT IN (SELECT DISTINCT chat_name FROM whatsapp_messages WHERE device_id = whatsapp_chats.device_id);`,
-    `UPDATE instagram_chats
-     SET last_message = (
-       SELECT message_text FROM instagram_messages
-       WHERE instagram_messages.device_id = instagram_chats.device_id
-         AND instagram_messages.chat_name = instagram_chats.chat_name
-       ORDER BY message_time DESC LIMIT 1
-     )
-     WHERE last_message ~* '^\s*\d{1,2}[:.]\d{2}'
-        OR last_message ~* '^\s*(Active|Seen|Delivered|Sent)'
-        OR last_message ~* '^\s*(Yesterday|Today)';`
+     WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`
   ];
 
   for (const sql of migrations) {

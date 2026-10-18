@@ -39,16 +39,15 @@ function requireAuth(req, res, next) {
  * create one over HTTP.
  */
 async function requireSuperAdmin(req, res, next) {
-  if (req.auth && req.auth.role === "super_admin") {
+  if (req.auth && (req.auth.role === "super_admin" || req.auth.role === "owner")) {
     return next();
   }
   if (req.auth && req.auth.userId) {
     try {
       const firestore = require("../services/firestore.service");
       const user = await firestore.getUserById(req.auth.userId);
-      if (user && user.role === "super_admin") {
-        req.auth.role = "super_admin";
-        req.auth.tenantId = null;
+      if (user && (user.role === "super_admin" || user.role === "owner")) {
+        req.auth.role = user.role;
         return next();
       }
     } catch (_) {}

@@ -18,7 +18,8 @@ export default function LoginPage() {
     try {
       const { token, user } = await authApi.login(email, password);
       login(token, user);
-      navigate(user.role === "super_admin" ? "/admin" : "/devices");
+      const isAdmin = user.role === "super_admin" || user.role === "owner";
+      navigate(isAdmin ? "/admin" : "/devices");
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Login failed";

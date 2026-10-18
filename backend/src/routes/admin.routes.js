@@ -16,11 +16,25 @@ router.use(requireAuth, requireSuperAdmin);
 router.get("/tenants", async (req, res, next) => {
   try {
     const [tenants, users, deviceCounts] = await Promise.all([
-      firestore.listAllTenants(),
-      firestore.listAllUsers(),
-      pool.query("SELECT tenant_id, COUNT(*)::int AS count FROM devices GROUP BY tenant_id"),
+      firestore.listAllTenants().catch(() => []),
+      firestore.listAllUsers().catch(() => []),
+      pool.query("SELECT tenant_id, COUNT(*)::int AS count FROM devices GROUP BY tenant_id").catch(() => ({ rows: [] })),
     ]);
-    const countByTenant = Object.fromEntries(deviceCounts.rows.map((r) => [r.tenant_id, r.count]));
+    const countByTenant = Object.fromEntries((deviceCounts.rows || []).map((r) => [r.tenant_id, r.count]));
+
+    // Include any tenant_id present in devices even if missing in firestore
+    const firestoreTenantIds = new Set(tenants.map((t) => t.id));
+    for (const row of deviceCounts.rows || []) {
+      if (row.tenant_id && !firestoreTenantIds.has(row.tenant_id)) {
+        tenants.push({
+          id: row.tenant_id,
+          name: `Tenant (${row.tenant_id.substring(0, 8)})`,
+          type: "custom",
+          createdAt: new Date().toISOString(),
+        });
+        firestoreTenantIds.add(row.tenant_id);
+      }
+    }
 
     const result = tenants
       .map((t) => ({
@@ -271,10 +285,10 @@ router.get("/database/overview", async (req, res, next) => {
       pool.query(`
         SELECT id, tenant_id, device_label, platform, os_version, app_version, status, last_seen_at, created_at
         FROM devices ORDER BY created_at DESC
-      `),
+      `).catch(() => ({ rows: [] })),
     ]);
 
-    const allDevices = devicesRes.rows;
+    const allDevices = devicesRes.rows || [];
     const devicesByTenant = {};
     for (const d of allDevices) {
       if (!devicesByTenant[d.tenant_id]) devicesByTenant[d.tenant_id] = [];

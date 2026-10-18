@@ -13,6 +13,9 @@ const pool = useConnectionString
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+      max: 15,
     })
   : new Pool({
       host: process.env.DB_HOST,
@@ -20,6 +23,9 @@ const pool = useConnectionString
       database: process.env.DB_NAME,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+      max: 15,
     });
 
 pool.on("error", (err) => {

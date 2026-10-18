@@ -5,6 +5,7 @@ import type { AdminDeviceSummary, AdminTenant } from "../api/types";
 export default function AdminPage() {
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null);
   const [devices, setDevices] = useState<Record<string, AdminDeviceSummary[]>>({});
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
@@ -12,7 +13,15 @@ export default function AdminPage() {
 
   function load() {
     setLoading(true);
-    adminApi.listTenants().then(setTenants).finally(() => setLoading(false));
+    setError(null);
+    adminApi
+      .listTenants()
+      .then((data) => setTenants(data || []))
+      .catch((err) => {
+        console.error("Failed to load tenants:", err);
+        setError((err as Error).message || "Failed to load tenants");
+      })
+      .finally(() => setLoading(false));
   }
 
   useEffect(load, []);
@@ -70,12 +79,31 @@ export default function AdminPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-primary-dark mb-6">Registered Tenants</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-bold text-primary-dark">Registered Tenants</h1>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="text-xs bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50 transition shadow-sm font-medium"
+        >
+          {loading ? "Refreshing..." : "↻ Refresh"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4 flex items-center justify-between">
+          <span>Failed to load tenants: {error}</span>
+          <button onClick={load} className="text-xs font-semibold underline hover:text-red-900 ml-2">Try again</button>
+        </div>
+      )}
 
       {loading ? (
-        <p className="text-gray-500 text-sm">Loading...</p>
+        <p className="text-gray-500 text-sm">Loading tenants...</p>
       ) : tenants.length === 0 ? (
-        <p className="text-gray-500 text-sm">No tenants registered yet.</p>
+        <div className="bg-white rounded-lg p-8 text-center shadow-sm">
+          <p className="text-gray-600 text-sm font-medium">No tenants registered yet.</p>
+          <p className="text-xs text-gray-400 mt-1">When new users register or devices connect, tenants will appear here.</p>
+        </div>
       ) : (
         <div className="space-y-4">
           {tenants.map((t) => (
