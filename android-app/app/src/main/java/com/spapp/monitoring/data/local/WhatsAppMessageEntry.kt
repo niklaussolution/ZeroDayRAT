@@ -17,5 +17,6 @@ data class WhatsAppMessageEntry(
     val messageTimeEpochMs: Long,
     val mediaType: String? = null,
     val mediaPath: String? = null,
+    val reelUrl: String? = null,
     val synced: Boolean = false
 )

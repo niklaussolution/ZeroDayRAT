@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         PendingSyncItem::class, AppUsageEntry::class, SmsLogEntry::class, CallLogEntry::class,
         WebHistoryEntry::class, WhatsAppMessageEntry::class, InstagramMessageEntry::class,
     ],
-    version = 12, // v12: added Instagram targetAccount
+    version = 13, // v13: added WhatsApp reelUrl
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

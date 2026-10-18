@@ -126,9 +126,11 @@ const pool = require("./db/pool");
     `ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);`,
     `ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
+    `ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;`,
     `UPDATE devices SET instagram_account = NULL;`,
     `UPDATE instagram_chats SET target_account = NULL;`,
-    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation');`,
+    `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation') OR LOWER(TRIM(chat_name)) IN ('photos', 'gallery', 'camera', 'recent searches', 'gifs', 'links') OR message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$';`,
+    `DELETE FROM whatsapp_chats WHERE LOWER(TRIM(chat_name)) IN ('photos', 'gallery', 'camera', 'recent searches', 'gifs', 'links');`,
     `DELETE FROM instagram_messages
      WHERE message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$'
         OR message_text ~* '^\s*(Active|Seen)(\s+.*)?\s*$'

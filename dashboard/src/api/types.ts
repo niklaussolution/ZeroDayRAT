@@ -135,6 +135,7 @@ export interface WhatsAppMessage {
   message_time: string;
   media_type?: string | null;
   media_path?: string | null;
+  reel_url?: string | null;
 }
 
 export interface InstagramChatSummary {

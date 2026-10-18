@@ -133,12 +133,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
                     val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
 
+                    val foundReel = extractReelUrl(cleanText) ?: findReelUrlInNotification(notification, cleanText)
+                    val isReel = foundReel != null
+
                     results += WhatsAppMessageEntry(
                         chatName = cleanChatName,
                         sender = if (isOutgoing) "me" else (rawSender ?: title ?: cleanChatName),
                         messageText = cleanText,
                         isOutgoing = isOutgoing,
-                        messageTimeEpochMs = bTime
+                        messageTimeEpochMs = bTime,
+                        mediaType = if (isReel) "reel" else null,
+                        reelUrl = foundReel
                     )
                 }
             } else {
@@ -156,13 +161,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         }
                         val isLineOutgoing = s.equals("You", ignoreCase = true) || s.equals("Me", ignoreCase = true) || m.startsWith("You: ", ignoreCase = true)
                         val cleanMsg = if (m.startsWith("You: ", ignoreCase = true)) m.substring(5).trim() else m
+                        val foundReel = extractReelUrl(cleanMsg) ?: findReelUrlInNotification(notification, cleanMsg)
+                        val isReel = foundReel != null
 
                         results += WhatsAppMessageEntry(
                             chatName = cleanChatName,
                             sender = if (isLineOutgoing) "me" else s,
                             messageText = cleanMsg,
                             isOutgoing = isLineOutgoing,
-                            messageTimeEpochMs = postTime
+                            messageTimeEpochMs = postTime,
+                            mediaType = if (isReel) "reel" else null,
+                            reelUrl = foundReel
                         )
                     }
                 } else {
@@ -171,13 +180,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     if (!singleText.isNullOrBlank() && postTime >= cutoffTimeMs) {
                         val isSingleOutgoing = singleText.startsWith("You: ", ignoreCase = true) || singleText.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
                         val cleanSingle = if (singleText.startsWith("You: ", ignoreCase = true)) singleText.substring(5).trim() else singleText
+                        val foundReel = extractReelUrl(cleanSingle) ?: findReelUrlInNotification(notification, cleanSingle)
+                        val isReel = foundReel != null
 
                         results += WhatsAppMessageEntry(
                             chatName = cleanChatName,
                             sender = if (isSingleOutgoing) "me" else (title ?: cleanChatName),
                             messageText = cleanSingle,
                             isOutgoing = isSingleOutgoing,
-                            messageTimeEpochMs = postTime
+                            messageTimeEpochMs = postTime,
+                            mediaType = if (isReel) "reel" else null,
+                            reelUrl = foundReel
                         )
                     }
                 }
@@ -499,6 +512,13 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     val isOutgoing = isMeExplicit || hasYouPrefix || (rawSender == null && !convoTitle.isNullOrBlank())
 
                     val cleanText = if (bText.startsWith("You: ", ignoreCase = true)) bText.substring(5).trim() else bText
+                    val foundReel = extractReelUrl(cleanText) ?: findReelUrlInNotification(notification, cleanText)
+                    val isReel = foundReel != null
+                    val itemMediaType = when {
+                        isReel -> "reel"
+                        mediaType != null -> mediaType
+                        else -> null
+                    }
 
                     entries += WhatsAppMessageEntry(
                         chatName = chatName,
@@ -506,8 +526,9 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         messageText = cleanText,
                         isOutgoing = isOutgoing,
                         messageTimeEpochMs = if (bTime > 0) bTime else postTime,
-                        mediaType = mediaType,
-                        mediaPath = mediaPath
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel
                     )
                 }
             } else if (!textLines.isNullOrEmpty()) {
@@ -524,27 +545,45 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     }
                     val isLineOutgoing = sender.equals("You", ignoreCase = true) || sender.equals("Me", ignoreCase = true) || msg.startsWith("You: ", ignoreCase = true)
                     val cleanMsg = if (msg.startsWith("You: ", ignoreCase = true)) msg.substring(5).trim() else msg
+                    val foundReel = extractReelUrl(cleanMsg) ?: findReelUrlInNotification(notification, cleanMsg)
+                    val isReel = foundReel != null
+                    val itemMediaType = when {
+                        isReel -> "reel"
+                        mediaType != null -> mediaType
+                        else -> null
+                    }
+
                     entries += WhatsAppMessageEntry(
                         chatName = chatName,
                         sender = if (isLineOutgoing) "me" else sender,
                         messageText = cleanMsg,
                         isOutgoing = isLineOutgoing,
                         messageTimeEpochMs = postTime,
-                        mediaType = mediaType,
-                        mediaPath = mediaPath
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel
                     )
                 }
             } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
                 val isSingleOutgoing = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
                 val cleanSingle = if (text.startsWith("You: ", ignoreCase = true)) text.substring(5).trim() else text
+                val foundReel = extractReelUrl(cleanSingle) ?: findReelUrlInNotification(notification, cleanSingle)
+                val isReel = foundReel != null
+                val itemMediaType = when {
+                    isReel -> "reel"
+                    mediaType != null -> mediaType
+                    else -> null
+                }
+
                 entries += WhatsAppMessageEntry(
                     chatName = chatName,
                     sender = if (isSingleOutgoing) "me" else (title ?: chatName),
                     messageText = cleanSingle,
                     isOutgoing = isSingleOutgoing,
                     messageTimeEpochMs = postTime,
-                    mediaType = mediaType,
-                    mediaPath = mediaPath
+                    mediaType = itemMediaType,
+                    mediaPath = mediaPath,
+                    reelUrl = foundReel
                 )
             }
 

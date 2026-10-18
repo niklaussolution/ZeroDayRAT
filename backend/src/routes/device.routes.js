@@ -721,7 +721,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
                           WHEN message_text LIKE 'You reacted %' THEN true
                           ELSE false
                         END AS is_outgoing,
-                        message_time, media_type, media_path
+                        message_time, media_type, media_path, reel_url
                  FROM whatsapp_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL
@@ -832,7 +832,8 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
           is_outgoing: hasYouPrefix,
           message_time: row.last_message_at || new Date().toISOString(),
           media_type: null,
-          media_path: null
+          media_path: null,
+          reel_url: null
         }];
       }
     }
@@ -856,7 +857,7 @@ router.get("/:id/whatsapp/db-check", requireAuth, async (req, res, next) => {
     const [msgsCount, chatsCount, msgs, chats] = await Promise.all([
       pool.query("SELECT COUNT(*) AS total FROM whatsapp_messages WHERE device_id = $1", [req.params.id]),
       pool.query("SELECT COUNT(*) AS total FROM whatsapp_chats WHERE device_id = $1", [req.params.id]),
-      pool.query("SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, synced_at FROM whatsapp_messages WHERE device_id = $1 ORDER BY message_time DESC LIMIT 100", [req.params.id]),
+      pool.query("SELECT id, chat_name, sender, message_text, is_outgoing, message_time, media_type, reel_url, synced_at FROM whatsapp_messages WHERE device_id = $1 ORDER BY message_time DESC LIMIT 100", [req.params.id]),
       pool.query("SELECT chat_name, phone_number, last_message, last_message_at, synced_at FROM whatsapp_chats WHERE device_id = $1 ORDER BY last_message_at DESC LIMIT 50", [req.params.id]),
     ]);
 
@@ -1229,7 +1230,8 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         const sender = e.sender ? String(e.sender).trim() : null;
         const isOutgoing = Boolean(e.isOutgoing);
         const messageTime = e.messageTime || new Date().toISOString();
-        const mediaType = e.mediaType || null;
+        const reelUrl = e.reelUrl || null;
+        const mediaType = e.mediaType || (reelUrl ? "reel" : null);
         const mediaPath = e.mediaPath || null;
 
         const existing = await client.query(
@@ -1241,11 +1243,11 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
         if (existing.rows.length === 0) {
           const result = await client.query(
-            `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
              RETURNING id`,
-            [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
+            [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
           );
           if (result.rows.length > 0) insertedCount++;
         }

@@ -639,10 +639,12 @@ router.post(
 
         let insertedCount = 0;
         for (const e of req.body.entries) {
-          if (!e.messageText && !e.mediaPath) continue;
+          if (!e.messageText && !e.mediaPath && !e.reelUrl && !e.mediaType) continue;
           const chatName = String(e.chatName || req.body.activeChat || "").trim();
           if (!chatName) continue;
-          const rawText = String(e.messageText || "").trim();
+          const reelUrl = e.reelUrl || null;
+          const mediaType = e.mediaType || (reelUrl ? "reel" : null);
+          const rawText = String(e.messageText || (reelUrl ? `[Reel] ${reelUrl}` : (mediaType ? `[${mediaType}]` : ""))).trim();
           const sender = e.sender ? String(e.sender).trim() : null;
           const isSenderMe = sender && (
             sender.toLowerCase() === "me" ||
@@ -653,7 +655,6 @@ router.post(
           const isOutgoing = Boolean(e.isOutgoing) || isSenderMe || hasYouPrefix;
           const messageText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
           const messageTime = e.messageTime || new Date().toISOString();
-          const mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
 
           // Extract phone number from JID or text if available
@@ -714,7 +715,7 @@ router.post(
             messageText === "Recent contact" ||
             messageText === "Recent conversation" ||
             messageText === "Tap to view conversation" ||
-            (!mediaPath && isPhone(messageText))
+            (!mediaPath && !reelUrl && isPhone(messageText))
           ) {
             continue;
           }
@@ -728,15 +729,16 @@ router.post(
 
           if (existing.rows.length === 0) {
             const result = await client.query(
-              `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
                DO UPDATE SET
                  media_type = COALESCE(EXCLUDED.media_type, whatsapp_messages.media_type),
                  media_path = COALESCE(EXCLUDED.media_path, whatsapp_messages.media_path),
+                 reel_url = COALESCE(EXCLUDED.reel_url, whatsapp_messages.reel_url),
                  synced_at = NOW()
                RETURNING id`,
-              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath]
+              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
             );
             if (result.rows.length > 0) insertedCount++;
           }

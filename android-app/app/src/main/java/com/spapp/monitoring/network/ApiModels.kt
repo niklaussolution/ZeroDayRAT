@@ -68,7 +68,8 @@ data class WhatsAppMessageEntryDto(
     val isOutgoing: Boolean = false,
     val messageTime: String, // ISO-8601
     val mediaType: String? = null,
-    val mediaPath: String? = null
+    val mediaPath: String? = null,
+    val reelUrl: String? = null
 )
 data class WhatsAppMessagesSyncRequest(
     val entries: List<WhatsAppMessageEntryDto>,
