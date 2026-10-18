@@ -177,12 +177,33 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         // Real-time WhatsApp capture:
-        // Trigger immediately when user taps (e.g. clicks Send button), when messages appear on screen,
+        // Trigger immediately when user taps (e.g. clicks Send button or chat row), when messages appear on screen,
         // when scrolling through chats/conversation, or when window state changes
         val isWhatsAppActive = packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b" ||
                 ((currentForegroundApp == "com.whatsapp" || currentForegroundApp == "com.whatsapp.w4b") &&
                  (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard")))
         if (isWhatsAppActive) {
+            if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                try {
+                    val clickedNode = event.source
+                    if (clickedNode != null) {
+                        val texts = mutableListOf<String>()
+                        fun walkClick(n: AccessibilityNodeInfo?, d: Int = 0) {
+                            if (n == null || d > 8) return
+                            val t = n.text?.toString()?.trim()
+                            if (!t.isNullOrBlank()) texts.add(t)
+                            for (i in 0 until n.childCount) walkClick(n.getChild(i), d + 1)
+                        }
+                        walkClick(clickedNode)
+                        val titleCand = texts.firstOrNull { 
+                            it.length in 2..50 && !it.contains(":") && !it.matches(Regex("^[0-9:]+$")) 
+                        }
+                        if (!titleCand.isNullOrBlank()) {
+                            lastClickedWhatsAppChat = titleCand
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
             if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
@@ -213,6 +234,7 @@ class BlockAccessibilityService : AccessibilityService() {
     private var whatsAppPollRunnable: Runnable? = null
     private val whatsAppPollIntervalMs = 1500L
     private val capturedWhatsAppMsgHashes = mutableSetOf<String>()
+    private var lastClickedWhatsAppChat: String? = null
 
     private fun startWhatsAppPolling() {
         if (whatsAppPollRunnable != null) return
@@ -232,15 +254,33 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
-        if (root == null) return
         try {
-            // Traverse up to find the true window root node even if a child was passed
-            var topRoot: AccessibilityNodeInfo = rootInActiveWindow ?: root
-            while (topRoot.parent != null) {
+            // Find true WhatsApp application root node even if keyboard or leaf view is active
+            var topRoot: AccessibilityNodeInfo? = null
+            val activeRoot = rootInActiveWindow
+            if (activeRoot != null && (activeRoot.packageName == "com.whatsapp" || activeRoot.packageName == "com.whatsapp.w4b")) {
+                topRoot = activeRoot
+            }
+            if (topRoot == null) {
+                try {
+                    val appWindow = windows.firstOrNull {
+                        it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION &&
+                        (it.root?.packageName == "com.whatsapp" || it.root?.packageName == "com.whatsapp.w4b")
+                    }
+                    topRoot = appWindow?.root
+                } catch (_: Exception) {}
+            }
+            if (topRoot == null) {
+                if (root?.packageName == "com.whatsapp" || root?.packageName == "com.whatsapp.w4b") {
+                    topRoot = root
+                }
+            }
+            if (topRoot == null) return
+            while (topRoot?.parent != null) {
                 topRoot = topRoot.parent ?: break
             }
-
-            val pkg = topRoot.packageName?.toString() ?: root.packageName?.toString() ?: ""
+            val resolvedRoot = topRoot ?: return
+            val pkg = resolvedRoot.packageName?.toString() ?: ""
             if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
@@ -257,20 +297,16 @@ class BlockAccessibilityService : AccessibilityService() {
                     .trim()
             }
 
-            fun collectTexts(node: AccessibilityNodeInfo?): List<String> {
+            fun collectTexts(node: AccessibilityNodeInfo?, maxDepth: Int = 30): List<String> {
                 if (node == null) return emptyList()
                 val list = mutableListOf<String>()
-                fun walk(n: AccessibilityNodeInfo?) {
-                    if (n == null) return
+                fun walk(n: AccessibilityNodeInfo?, depth: Int) {
+                    if (n == null || depth > maxDepth) return
                     val t = cleanStr(n.text?.toString())
-                    if (t.isNotBlank()) {
-                        list.add(t)
-                    }
-                    for (i in 0 until n.childCount) {
-                        walk(n.getChild(i))
-                    }
+                    if (t.isNotBlank()) list.add(t)
+                    for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
                 }
-                walk(node)
+                walk(node, 0)
                 return list
             }
 
@@ -346,38 +382,43 @@ class BlockAccessibilityService : AccessibilityService() {
             var hasBottomTabs = false
 
             fun inspectWindowNav(n: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (n == null || depth > 8) return
-                val cd = cleanStr(n.contentDescription?.toString())
-                val text = cleanStr(n.text?.toString())
+                if (n == null || depth > 30) return
+                val cd = cleanStr(n.contentDescription?.toString()).lowercase()
+                val text = cleanStr(n.text?.toString()).lowercase()
                 val vId = (n.viewIdResourceName ?: "").lowercase()
 
-                if (cd.equals("Navigate up", ignoreCase = true) || cd.equals("Back", ignoreCase = true) || vId.endsWith(":id/back")) {
+                if (cd.contains("back") || cd.contains("navigate up") || 
+                    vId.endsWith(":id/back") || vId.contains("up_button") || vId.contains("action_bar_back")) {
                     val r = Rect()
                     n.getBoundsInScreen(r)
-                    if (r.top < screenHeight * 0.20 && r.left < screenWidth * 0.35) {
+                    if (r.top < screenHeight * 0.25 && r.left < screenWidth * 0.40) {
                         hasBackButton = true
                     }
                 }
 
-                if (cd.contains("Video call", ignoreCase = true) || cd.contains("Voice call", ignoreCase = true) || cd.equals("Call", ignoreCase = true) || vId.contains("call_btn")) {
+                if (cd.contains("video call") || cd.contains("voice call") || cd.contains("audio call") || 
+                    cd == "call" || vId.contains("call_btn") || vId.contains("call")) {
                     val r = Rect()
                     n.getBoundsInScreen(r)
-                    if (r.top < screenHeight * 0.20) {
+                    if (r.top < screenHeight * 0.25) {
                         hasCallButtons = true
                     }
                 }
 
                 if (vId.endsWith(":id/entry") || vId.endsWith(":id/send") || vId.endsWith(":id/voice_note_btn") ||
-                    text.equals("Type a message", ignoreCase = true) || text.equals("Message", ignoreCase = true) ||
-                    (n.isEditable && vId.contains("entry"))) {
+                    vId.contains("input") || vId.contains("composer") ||
+                    text == "type a message" || text == "message" ||
+                    cd.contains("voice message") || cd.contains("send") || cd.contains("attach") ||
+                    (n.isEditable && (vId.contains("entry") || text.isBlank() || text == "type a message"))) {
                     hasComposer = true
                 }
 
-                if (cd.equals("Chats", ignoreCase = true) || cd.equals("Updates", ignoreCase = true) || cd.equals("Communities", ignoreCase = true) || cd.equals("Calls", ignoreCase = true) ||
-                    text.equals("Chats", ignoreCase = true) || text.equals("Updates", ignoreCase = true)) {
+                if ((cd == "chats" || cd == "updates" || cd == "communities" || cd == "calls" ||
+                    text == "chats" || text == "updates") &&
+                    (vId.contains("tab") || vId.contains("nav") || vId.contains("bottom"))) {
                     val r = Rect()
                     n.getBoundsInScreen(r)
-                    if (r.bottom > screenHeight * 0.75 || vId.contains("tab") || vId.contains("nav")) {
+                    if (r.bottom > screenHeight * 0.70) {
                         hasBottomTabs = true
                     }
                 }
@@ -386,9 +427,9 @@ class BlockAccessibilityService : AccessibilityService() {
                     inspectWindowNav(n.getChild(i), depth + 1)
                 }
             }
-            inspectWindowNav(topRoot)
+            inspectWindowNav(resolvedRoot)
 
-            val isInOpenConversation = (hasBackButton || (hasCallButtons && hasComposer)) && !hasBottomTabs
+            val isInOpenConversation = (hasBackButton || hasCallButtons || hasComposer) && !hasBottomTabs
 
             if (isInOpenConversation) {
                 // =============================================================
@@ -405,41 +446,41 @@ class BlockAccessibilityService : AccessibilityService() {
                     "title"
                 )
 
-                fun findTitleByViewId(n: AccessibilityNodeInfo?): String? {
-                    if (n == null) return null
+                fun findTitleByViewId(n: AccessibilityNodeInfo?, depth: Int = 0): String? {
+                    if (n == null || depth > 25) return null
                     val vId = (n.viewIdResourceName ?: "").lowercase()
                     for (cand in titleCandidates) {
                         if (vId.endsWith(":id/$cand") || vId.endsWith("/$cand")) {
                             val t = cleanStr(n.text?.toString())
-                            if (t.isNotBlank() && !isSystemLabel(t) && !isTimeOrDate(t) && !isBadge(t) && t.length in 2..60) {
+                            if (t.isNotBlank() && !isSystemLabel(t) && !isTimeOrDate(t) && !isBadge(t) && t.length in 1..60) {
                                 return t
                             }
                         }
                     }
                     for (i in 0 until n.childCount) {
-                        val found = findTitleByViewId(n.getChild(i))
+                        val found = findTitleByViewId(n.getChild(i), depth + 1)
                         if (found != null) return found
                     }
                     return null
                 }
-                chatTitle = findTitleByViewId(topRoot)
+                chatTitle = findTitleByViewId(resolvedRoot)
 
-                // Fallback: search top action bar area (top 18% of screen)
+                // Fallback 1: search top action bar area (top 22% of screen)
                 if (chatTitle.isNullOrBlank()) {
                     val headerTexts = mutableListOf<String>()
-                    fun findHeader(n: AccessibilityNodeInfo?) {
-                        if (n == null) return
+                    fun findHeader(n: AccessibilityNodeInfo?, depth: Int = 0) {
+                        if (n == null || depth > 25) return
                         val t = cleanStr(n.text?.toString())
                         val r = Rect()
                         n.getBoundsInScreen(r)
-                        if (t.isNotBlank() && r.top < screenHeight * 0.18 && r.bottom > 20 && r.left >= screenWidth * 0.08 && r.left <= screenWidth * 0.75) {
+                        if (t.isNotBlank() && r.top < screenHeight * 0.22 && r.bottom > 20 && r.left >= screenWidth * 0.05 && r.left <= screenWidth * 0.85) {
                             headerTexts.add(t)
                         }
                         for (i in 0 until n.childCount) {
-                            findHeader(n.getChild(i))
+                            findHeader(n.getChild(i), depth + 1)
                         }
                     }
-                    findHeader(topRoot)
+                    findHeader(resolvedRoot)
 
                     chatTitle = headerTexts.firstOrNull { s ->
                         val clean = cleanStr(s)
@@ -449,157 +490,165 @@ class BlockAccessibilityService : AccessibilityService() {
                         !clean.contains("typing", ignoreCase = true) &&
                         !clean.contains("tap here", ignoreCase = true) &&
                         !clean.contains("click here", ignoreCase = true) &&
-                        clean.length in 2..60
+                        clean.length in 1..60
                     }
                 }
 
-                if (!chatTitle.isNullOrBlank()) {
-                    val messageTextCandidates = mutableListOf<AccessibilityNodeInfo>()
+                // Fallback 2: lastClickedWhatsAppChat
+                if (chatTitle.isNullOrBlank()) {
+                    chatTitle = lastClickedWhatsAppChat
+                }
+                val effectiveChatTitle = chatTitle ?: "WhatsApp Chat"
 
-                    fun collectConversationTexts(n: AccessibilityNodeInfo?, depth: Int = 0) {
-                        if (n == null || depth > 12) return
-                        if (n.isEditable || n.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
+                val messageTextCandidates = mutableListOf<AccessibilityNodeInfo>()
 
-                        val r = Rect()
-                        n.getBoundsInScreen(r)
+                fun collectConversationTexts(n: AccessibilityNodeInfo?, depth: Int = 0) {
+                    if (n == null || depth > 30) return
+                    if (n.isEditable || n.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
 
-                        // Message bubbles must be below the top action bar and above the bottom input bar
-                        if (r.top >= screenHeight * 0.07 && r.bottom <= (screenHeight - 30)) {
-                            val t = cleanStr(n.text?.toString())
-                            if (t.isNotBlank()) {
-                                if (t != chatTitle &&
-                                    !isSystemLabel(t) &&
-                                    !isTimeOrDate(t) &&
-                                    !t.equals("Type a message", ignoreCase = true) &&
-                                    !t.equals("Message", ignoreCase = true)
-                                ) {
-                                    messageTextCandidates.add(n)
-                                }
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+
+                    // Message bubbles must be below the top action bar and above the bottom input bar
+                    if (r.top >= screenHeight * 0.05 && r.bottom <= (screenHeight - 20)) {
+                        val t = cleanStr(n.text?.toString())
+                        val cd = cleanStr(n.contentDescription?.toString())
+                        val hasContent = t.isNotBlank() || cd.isNotBlank()
+                        if (hasContent) {
+                            if (t != effectiveChatTitle &&
+                                !isSystemLabel(t) &&
+                                !isTimeOrDate(t) &&
+                                !t.equals("Type a message", ignoreCase = true) &&
+                                !t.equals("Message", ignoreCase = true)
+                            ) {
+                                messageTextCandidates.add(n)
                             }
-                        }
-
-                        for (i in 0 until n.childCount) {
-                            collectConversationTexts(n.getChild(i), depth + 1)
                         }
                     }
-                    collectConversationTexts(topRoot)
 
-                    for (node in messageTextCandidates) {
-                        val rawText = node.text?.toString()?.trim() ?: continue
-                        val cleanText = cleanStr(rawText)
-                        if (cleanText.isBlank() || isSystemLabel(cleanText) || isTimeOrDate(cleanText)) continue
-
-                        val rect = Rect()
-                        node.getBoundsInScreen(rect)
-
-                        // Find bubble container
-                        var bubbleContainer: AccessibilityNodeInfo? = node.parent
-                        var bubbleRect = Rect()
-                        node.parent?.getBoundsInScreen(bubbleRect)
-                        var containerDepth = 0
-                        while (bubbleContainer != null && containerDepth < 4) {
-                            val cr = Rect()
-                            bubbleContainer.getBoundsInScreen(cr)
-                            if (cr.width() in (screenWidth * 0.15).toInt()..(screenWidth * 0.96).toInt() && cr.height() in 25..900) {
-                                bubbleRect = cr
-                                break
-                            }
-                            bubbleContainer = bubbleContainer.parent
-                            containerDepth++
-                        }
-                        if (bubbleContainer == null) bubbleContainer = node.parent
-
-                        val containerTexts = mutableListOf<String>()
-                        val containerDescriptions = mutableListOf<String>()
-                        fun walkBubble(bNode: AccessibilityNodeInfo?, bDepth: Int = 0) {
-                            if (bNode == null || bDepth > 5) return
-                            cleanStr(bNode.text?.toString()).let { if (it.isNotBlank()) containerTexts.add(it) }
-                            cleanStr(bNode.contentDescription?.toString()).let { if (it.isNotBlank()) containerDescriptions.add(it) }
-                            for (i in 0 until bNode.childCount) {
-                                walkBubble(bNode.getChild(i), bDepth + 1)
-                            }
-                        }
-                        walkBubble(bubbleContainer)
-
-                        // Direction determination
-                        val hasOutgoingReceipt = containerDescriptions.any {
-                            it.equals("Delivered", ignoreCase = true) ||
-                            it.equals("Read", ignoreCase = true) ||
-                            it.equals("Sent", ignoreCase = true) ||
-                            it.contains("Delivered", ignoreCase = true) ||
-                            it.contains("Read", ignoreCase = true)
-                        }
-                        val isRightAligned = (bubbleRect.right >= screenWidth * 0.82 && bubbleRect.left > screenWidth * 0.15) ||
-                                             (rect.right >= screenWidth * 0.80 && rect.left > screenWidth * 0.20)
-                        val isLeftAligned = (bubbleRect.left <= screenWidth * 0.18 && bubbleRect.right < screenWidth * 0.88) ||
-                                            (rect.left <= screenWidth * 0.20 && rect.right < screenWidth * 0.80)
-
-                        val isOutgoing = hasOutgoingReceipt || isRightAligned || (!isLeftAligned && rect.centerX() > screenWidth * 0.50)
-
-                        // Timestamp extraction
-                        var bubbleTimeMs = (now / 60_000) * 60_000
-                        val timeCand = containerTexts.firstOrNull { isTimeOrDate(it) }
-                            ?: containerDescriptions.firstOrNull { isTimeOrDate(it) }
-                        if (timeCand != null) {
-                            bubbleTimeMs = parseBubbleTime(timeCand)
-                        }
-
-                        // Media & Reel link extraction
-                        val foundReel = WhatsAppNotificationListener.extractReelUrl(cleanText)
-                        val isReel = foundReel != null
-                        val isImage = !isReel && (
-                            cleanText.contains("📷") ||
-                            cleanText.equals("Photo", ignoreCase = true) ||
-                            cleanText.contains("View photo", ignoreCase = true)
-                        )
-                        val isVideo = !isReel && !isImage && (
-                            cleanText.contains("🎥") ||
-                            cleanText.equals("Video", ignoreCase = true)
-                        )
-                        val isAudio = !isReel && !isImage && !isVideo && (
-                            cleanText.contains("Voice message", ignoreCase = true) ||
-                            cleanText.equals("Audio", ignoreCase = true)
-                        )
-
-                        val mediaType = when {
-                            isReel -> "reel"
-                            isImage -> "image"
-                            isVideo -> "video"
-                            isAudio -> "audio"
-                            else -> null
-                        }
-
-                        var mediaPath: String? = null
-                        if (isImage) {
-                            try {
-                                mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
-                            } catch (_: Exception) {}
-                        }
-
-                        val finalMsgText = when {
-                            isReel && cleanText.isBlank() -> foundReel ?: "Instagram Reel"
-                            isImage && cleanText.isBlank() -> "Photo"
-                            isVideo && cleanText.isBlank() -> "Video"
-                            isAudio && cleanText.isBlank() -> "Voice message"
-                            else -> cleanText
-                        }
-
-                        val dedupeKey = "MSG|$chatTitle|$finalMsgText|$isOutgoing|${bubbleTimeMs / 60_000}"
-                        if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
-                        capturedWhatsAppMsgHashes.add(dedupeKey)
-                        if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
-
-                        entriesToInsert += WhatsAppMessageEntry(
-                            chatName = chatTitle,
-                            sender = if (isOutgoing) "me" else chatTitle,
-                            messageText = finalMsgText,
-                            isOutgoing = isOutgoing,
-                            messageTimeEpochMs = bubbleTimeMs,
-                            mediaType = mediaType,
-                            mediaPath = mediaPath,
-                            reelUrl = foundReel
-                        )
+                    for (i in 0 until n.childCount) {
+                        collectConversationTexts(n.getChild(i), depth + 1)
                     }
+                }
+                collectConversationTexts(resolvedRoot)
+
+                for (node in messageTextCandidates) {
+                    val rawText = node.text?.toString()?.trim().takeIf { !it.isNullOrBlank() }
+                        ?: node.contentDescription?.toString()?.trim()
+                        ?: continue
+                    val cleanText = cleanStr(rawText)
+                    if (cleanText.isBlank() || isSystemLabel(cleanText) || isTimeOrDate(cleanText)) continue
+
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+
+                    // Find bubble container
+                    var bubbleContainer: AccessibilityNodeInfo? = node.parent
+                    var bubbleRect = Rect()
+                    node.parent?.getBoundsInScreen(bubbleRect)
+                    var containerDepth = 0
+                    while (bubbleContainer != null && containerDepth < 4) {
+                        val cr = Rect()
+                        bubbleContainer.getBoundsInScreen(cr)
+                        if (cr.width() in (screenWidth * 0.15).toInt()..(screenWidth * 0.96).toInt() && cr.height() in 25..900) {
+                            bubbleRect = cr
+                            break
+                        }
+                        bubbleContainer = bubbleContainer.parent
+                        containerDepth++
+                    }
+                    if (bubbleContainer == null) bubbleContainer = node.parent
+
+                    val containerTexts = mutableListOf<String>()
+                    val containerDescriptions = mutableListOf<String>()
+                    fun walkBubble(bNode: AccessibilityNodeInfo?, bDepth: Int = 0) {
+                        if (bNode == null || bDepth > 5) return
+                        cleanStr(bNode.text?.toString()).let { if (it.isNotBlank()) containerTexts.add(it) }
+                        cleanStr(bNode.contentDescription?.toString()).let { if (it.isNotBlank()) containerDescriptions.add(it) }
+                        for (i in 0 until bNode.childCount) {
+                            walkBubble(bNode.getChild(i), bDepth + 1)
+                        }
+                    }
+                    walkBubble(bubbleContainer)
+
+                    // Direction determination
+                    val hasOutgoingReceipt = containerDescriptions.any {
+                        it.equals("Delivered", ignoreCase = true) ||
+                        it.equals("Read", ignoreCase = true) ||
+                        it.equals("Sent", ignoreCase = true) ||
+                        it.contains("Delivered", ignoreCase = true) ||
+                        it.contains("Read", ignoreCase = true)
+                    }
+                    val isRightAligned = (bubbleRect.right >= screenWidth * 0.80 && bubbleRect.left > screenWidth * 0.15) ||
+                                         (rect.right >= screenWidth * 0.78 && rect.left > screenWidth * 0.20)
+                    val isLeftAligned = (bubbleRect.left <= screenWidth * 0.20 && bubbleRect.right < screenWidth * 0.88) ||
+                                        (rect.left <= screenWidth * 0.22 && rect.right < screenWidth * 0.80)
+
+                    val isOutgoing = hasOutgoingReceipt || isRightAligned || (!isLeftAligned && rect.centerX() > screenWidth * 0.50)
+
+                    // Timestamp extraction
+                    var bubbleTimeMs = (now / 60_000) * 60_000
+                    val timeCand = containerTexts.firstOrNull { isTimeOrDate(it) }
+                        ?: containerDescriptions.firstOrNull { isTimeOrDate(it) }
+                    if (timeCand != null) {
+                        bubbleTimeMs = parseBubbleTime(timeCand)
+                    }
+
+                    // Media & Reel link extraction
+                    val foundReel = WhatsAppNotificationListener.extractReelUrl(cleanText)
+                    val isReel = foundReel != null
+                    val isImage = !isReel && (
+                        cleanText.contains("📷") ||
+                        cleanText.equals("Photo", ignoreCase = true) ||
+                        cleanText.contains("View photo", ignoreCase = true)
+                    )
+                    val isVideo = !isReel && !isImage && (
+                        cleanText.contains("🎥") ||
+                        cleanText.equals("Video", ignoreCase = true)
+                    )
+                    val isAudio = !isReel && !isImage && !isVideo && (
+                        cleanText.contains("Voice message", ignoreCase = true) ||
+                        cleanText.equals("Audio", ignoreCase = true)
+                    )
+
+                    val mediaType = when {
+                        isReel -> "reel"
+                        isImage -> "image"
+                        isVideo -> "video"
+                        isAudio -> "audio"
+                        else -> null
+                    }
+
+                    var mediaPath: String? = null
+                    if (isImage) {
+                        try {
+                            mediaPath = FileManagerCollector(applicationContext).getLatestWhatsAppImageBase64()
+                        } catch (_: Exception) {}
+                    }
+
+                    val finalMsgText = when {
+                        isReel && cleanText.isBlank() -> foundReel ?: "Instagram Reel"
+                        isImage && cleanText.isBlank() -> "Photo"
+                        isVideo && cleanText.isBlank() -> "Video"
+                        isAudio && cleanText.isBlank() -> "Voice message"
+                        else -> cleanText
+                    }
+
+                    val dedupeKey = "MSG|$effectiveChatTitle|$finalMsgText|$isOutgoing|${bubbleTimeMs / 60_000}"
+                    if (capturedWhatsAppMsgHashes.contains(dedupeKey)) continue
+                    capturedWhatsAppMsgHashes.add(dedupeKey)
+                    if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()
+
+                    entriesToInsert += WhatsAppMessageEntry(
+                        chatName = effectiveChatTitle,
+                        sender = if (isOutgoing) "me" else effectiveChatTitle,
+                        messageText = finalMsgText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = bubbleTimeMs,
+                        mediaType = mediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = foundReel
+                    )
                 }
             } else {
                 // =============================================================
@@ -607,14 +656,14 @@ class BlockAccessibilityService : AccessibilityService() {
                 // =============================================================
                 val candidateRows = mutableListOf<AccessibilityNodeInfo>()
                 fun findChatRows(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                    if (node == null || depth > 10) return
+                    if (node == null || depth > 30) return
                     val count = node.childCount
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
                     val w = rect.width()
                     val h = rect.height()
                     if ((node.isClickable || count in 1..10) && w > (screenWidth * 0.5) && h in 70..420) {
-                        val texts = collectTexts(node)
+                        val texts = collectTexts(node, 10)
                         if (texts.size >= 2 && texts.any { !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) }) {
                             candidateRows.add(node)
                         }
@@ -623,10 +672,10 @@ class BlockAccessibilityService : AccessibilityService() {
                         findChatRows(node.getChild(i), depth + 1)
                     }
                 }
-                findChatRows(topRoot)
+                findChatRows(resolvedRoot)
 
                 for (row in candidateRows) {
-                    val texts = collectTexts(row)
+                    val texts = collectTexts(row, 10)
                     val candidateTitles = texts.filter {
                         !isTimeOrDate(it) && !isSystemLabel(it) && !isBadge(it) && it.length <= 50
                     }

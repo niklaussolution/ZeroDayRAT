@@ -221,6 +221,14 @@
             android:layout_marginBottom="10dp" />
 
         <Button
+            android:id="@+id/btnGrantCallLogPermission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Call Log &amp; Contacts Permission"
+            android:visibility="gone"
+            android:layout_marginBottom="10dp" />
+
+        <Button
             android:id="@+id/btnGrantCameraPermission"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

