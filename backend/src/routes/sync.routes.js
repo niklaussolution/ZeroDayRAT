@@ -731,16 +731,20 @@ router.post(
             const result = await client.query(
               `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-               ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing)
-               DO UPDATE SET
-                 media_type = COALESCE(EXCLUDED.media_type, whatsapp_messages.media_type),
-                 media_path = COALESCE(EXCLUDED.media_path, whatsapp_messages.media_path),
-                 reel_url = COALESCE(EXCLUDED.reel_url, whatsapp_messages.reel_url),
-                 synced_at = NOW()
                RETURNING id`,
               [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
             );
             if (result.rows.length > 0) insertedCount++;
+          } else {
+            await client.query(
+              `UPDATE whatsapp_messages SET
+                 media_type = COALESCE($1, media_type),
+                 media_path = COALESCE($2, media_path),
+                 reel_url = COALESCE($3, reel_url),
+                 synced_at = NOW()
+               WHERE id = $4`,
+              [mediaType, mediaPath, reelUrl, existing.rows[0].id]
+            );
           }
         }
         await client.query("COMMIT");

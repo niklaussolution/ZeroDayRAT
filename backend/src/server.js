@@ -127,6 +127,15 @@ const pool = require("./db/pool");
     `ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;`,
+    `DELETE FROM whatsapp_messages a USING whatsapp_messages b
+     WHERE a.id < b.id
+       AND a.device_id = b.device_id
+       AND a.chat_name = b.chat_name
+       AND a.message_text = b.message_text
+       AND a.message_time = b.message_time
+       AND a.is_outgoing = b.is_outgoing;`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
+       ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);`,
     `UPDATE devices SET instagram_account = NULL;`,
     `UPDATE instagram_chats SET target_account = NULL;`,
     `DELETE FROM whatsapp_messages WHERE message_text LIKE '%@s.whatsapp.net%' OR message_text LIKE '%@g.us%' OR message_text IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation') OR LOWER(TRIM(chat_name)) IN ('photos', 'gallery', 'camera', 'recent searches', 'gifs', 'links') OR message_text ~* '^\s*\d{1,2}[:.]\d{2}(\s*(AM|PM|am|pm))?\s*$';`,

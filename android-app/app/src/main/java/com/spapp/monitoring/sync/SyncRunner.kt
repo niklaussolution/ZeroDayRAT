@@ -385,6 +385,24 @@ class SyncRunner(private val context: Context) {
                     db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
                 }
             }
+            if (chatMessages.isEmpty()) {
+                val words = chatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
+                val primaryWord = words.firstOrNull()
+                if (!primaryWord.isNullOrBlank() && !primaryWord.equals(chatName, ignoreCase = true)) {
+                    chatMessages = if (phoneDigits.length >= 7) {
+                        db.whatsAppMessageDao().getMessagesForChatWithPhone(primaryWord, phoneDigits, cutoffMs)
+                    } else {
+                        db.whatsAppMessageDao().getMessagesForChat(primaryWord, cutoffMs)
+                    }
+                    if (chatMessages.isEmpty()) {
+                        chatMessages = if (phoneDigits.length >= 7) {
+                            db.whatsAppMessageDao().getMessagesForChatWithPhone(primaryWord, phoneDigits, cutoffMs = 0L)
+                        } else {
+                            db.whatsAppMessageDao().getMessagesForChat(primaryWord, cutoffMs = 0L)
+                        }
+                    }
+                }
+            }
 
             // 5. Check for recently received WhatsApp images (within last 2 days)
             val latestMediaBase64 = try {

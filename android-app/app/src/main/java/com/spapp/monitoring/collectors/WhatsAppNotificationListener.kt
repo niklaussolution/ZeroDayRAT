@@ -96,10 +96,17 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 tDig.contains(phoneDigits) || cDig.contains(phoneDigits) || sDig.contains(phoneDigits)
             } else false
 
+            val words = cleanChatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
+            val wordMatch = words.any { w ->
+                (convoTitle != null && convoTitle.contains(w, ignoreCase = true)) ||
+                (notGeneric && title!!.contains(w, ignoreCase = true)) ||
+                (subText != null && subText.contains(w, ignoreCase = true))
+            }
+
             val matchesChat = (convoTitle != null && (convoTitle.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && convoTitle.contains(cleanChatName, ignoreCase = true)) || (convoTitle.length >= 3 && cleanChatName.contains(convoTitle, ignoreCase = true)))) ||
                               (notGeneric && (title!!.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && title.contains(cleanChatName, ignoreCase = true)) || (title.length >= 3 && cleanChatName.contains(title, ignoreCase = true)))) ||
                               (subText != null && (subText.equals(cleanChatName, ignoreCase = true) || (cleanChatName.length >= 3 && subText.contains(cleanChatName, ignoreCase = true)) || (subText.length >= 3 && cleanChatName.contains(subText, ignoreCase = true)))) ||
-                              digitsMatch
+                              digitsMatch || wordMatch
 
             if (!matchesChat) continue
 
@@ -430,25 +437,39 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
         fun processWhatsAppNotificationData(
             context: Context,
-            notification: Notification,
+            notification: Notification?,
             postTime: Long,
-            pkg: String = "com.whatsapp"
+            pkg: String = "com.whatsapp",
+            fallbackTexts: List<String>? = null
         ) {
-            val extras = notification.extras ?: return
+            val extras = notification?.extras
 
-            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-            val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-            val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-            val text = if (!bigText.isNullOrBlank()) bigText else normalText
-            val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
-            val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            val bigText = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+            val normalText = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            val tickerText = notification?.tickerText?.toString()?.trim()
+            val text = when {
+                !bigText.isNullOrBlank() -> bigText
+                !normalText.isNullOrBlank() -> normalText
+                !tickerText.isNullOrBlank() -> tickerText
+                !fallbackTexts.isNullOrEmpty() && fallbackTexts.size > 1 -> fallbackTexts[1]
+                !fallbackTexts.isNullOrEmpty() -> fallbackTexts[0]
+                else -> null
+            }
+            val convoTitle = extras?.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            val textLines = extras?.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            val subText = extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+            val bigTitle = extras?.getCharSequence("android.title.big")?.toString()?.trim()
+            val summaryText = extras?.getCharSequence("android.summaryText")?.toString()?.trim()
 
             var mediaType: String? = null
             var mediaPath: String? = null
 
-            val pictureBitmap = (extras.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
-                ?: (extras.get("android.picture") as? android.graphics.Bitmap)
-                ?: (extras.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+            val pictureBitmap = extras?.let {
+                (it.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)
+                    ?: (it.get("android.picture") as? android.graphics.Bitmap)
+                    ?: (it.get(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap)
+            }
 
             if (pictureBitmap != null) {
                 try {
@@ -465,10 +486,28 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 } catch (_: Exception) {}
             }
 
-            val chatName = when {
-                !convoTitle.isNullOrBlank() -> convoTitle
-                !title.isNullOrBlank() && title != "WhatsApp" && title != "WhatsApp Business" -> title
-                else -> title ?: "WhatsApp"
+            var chatName = when {
+                !convoTitle.isNullOrBlank() && !convoTitle.equals("WhatsApp", ignoreCase = true) && !convoTitle.equals("WhatsApp Business", ignoreCase = true) -> convoTitle
+                !bigTitle.isNullOrBlank() && !bigTitle.equals("WhatsApp", ignoreCase = true) && !bigTitle.equals("WhatsApp Business", ignoreCase = true) -> bigTitle
+                !title.isNullOrBlank() && !title.equals("WhatsApp", ignoreCase = true) && !title.equals("WhatsApp Business", ignoreCase = true) -> title
+                !summaryText.isNullOrBlank() && !summaryText.equals("WhatsApp", ignoreCase = true) && !summaryText.equals("WhatsApp Business", ignoreCase = true) -> summaryText
+                !subText.isNullOrBlank() && !subText.equals("WhatsApp", ignoreCase = true) && !subText.equals("WhatsApp Business", ignoreCase = true) -> subText
+                !fallbackTexts.isNullOrEmpty() && fallbackTexts.size > 1 && !fallbackTexts[0].equals("WhatsApp", ignoreCase = true) && !fallbackTexts[0].equals("WhatsApp Business", ignoreCase = true) -> fallbackTexts[0]
+                else -> "WhatsApp"
+            }
+
+            chatName = chatName.replace(Regex("\\s*\\([0-9]+\\s*messages?\\)", RegexOption.IGNORE_CASE), "")
+                               .replace(Regex("\\s*•\\s*[0-9]+\\s*messages?", RegexOption.IGNORE_CASE), "")
+                               .trim()
+
+            var messageContent = text
+            if (chatName.equals("WhatsApp", ignoreCase = true) || chatName.equals("WhatsApp Business", ignoreCase = true)) {
+                val candidate = text ?: ""
+                val colonIdx = candidate.indexOf(':')
+                if (colonIdx in 1..40) {
+                    chatName = candidate.substring(0, colonIdx).trim()
+                    messageContent = candidate.substring(colonIdx + 1).trim()
+                }
             }
 
             val checkStr = "${title.orEmpty()} ${text.orEmpty()}".lowercase()
@@ -482,8 +521,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
             val entries = mutableListOf<WhatsAppMessageEntry>()
 
-            val messageBundles = extras.getParcelableArray("android.messages")
-            val historicBundles = extras.getParcelableArray("android.historicMessages")
+            val messageBundles = extras?.getParcelableArray("android.messages")
+            val historicBundles = extras?.getParcelableArray("android.historicMessages")
             val allBundles = mutableListOf<android.os.Bundle>()
             if (historicBundles != null) {
                 for (item in historicBundles) {
@@ -564,9 +603,10 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                         reelUrl = foundReel
                     )
                 }
-            } else if (!text.isNullOrBlank() && !text.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
-                val isSingleOutgoing = text.startsWith("You: ", ignoreCase = true) || text.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
-                val cleanSingle = if (text.startsWith("You: ", ignoreCase = true)) text.substring(5).trim() else text
+            } else if (!(messageContent ?: text).isNullOrBlank() && !(messageContent ?: text)!!.matches(Regex("^\\d+\\s+new messages?.*", RegexOption.IGNORE_CASE))) {
+                val rawMsg = messageContent ?: text!!
+                val isSingleOutgoing = rawMsg.startsWith("You: ", ignoreCase = true) || rawMsg.startsWith("You reacted ", ignoreCase = true) || (title != null && (title.equals("You", ignoreCase = true) || title.equals("Me", ignoreCase = true)))
+                val cleanSingle = if (rawMsg.startsWith("You: ", ignoreCase = true)) rawMsg.substring(5).trim() else rawMsg
                 val foundReel = extractReelUrl(cleanSingle) ?: findReelUrlInNotification(notification, cleanSingle)
                 val isReel = foundReel != null
                 val itemMediaType = when {

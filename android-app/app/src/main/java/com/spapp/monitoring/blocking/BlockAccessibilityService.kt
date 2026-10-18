@@ -127,14 +127,13 @@ class BlockAccessibilityService : AccessibilityService() {
                     fallbackTexts = eventTexts
                 )
             } else if (packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") {
-                if (notification != null) {
-                    com.spapp.monitoring.collectors.WhatsAppNotificationListener.processWhatsAppNotificationData(
-                        applicationContext,
-                        notification,
-                        postTime,
-                        packageName
-                    )
-                }
+                com.spapp.monitoring.collectors.WhatsAppNotificationListener.processWhatsAppNotificationData(
+                    applicationContext,
+                    notification,
+                    postTime,
+                    packageName,
+                    fallbackTexts = eventTexts
+                )
             }
             return
         }
@@ -470,10 +469,10 @@ class BlockAccessibilityService : AccessibilityService() {
                     val headerTexts = mutableListOf<String>()
                     fun findHeader(n: AccessibilityNodeInfo?, depth: Int = 0) {
                         if (n == null || depth > 25) return
-                        val t = cleanStr(n.text?.toString())
+                        val t = cleanStr(n.text?.toString().takeIf { !it.isNullOrBlank() } ?: n.contentDescription?.toString())
                         val r = Rect()
                         n.getBoundsInScreen(r)
-                        if (t.isNotBlank() && r.top < screenHeight * 0.22 && r.bottom > 20 && r.left >= screenWidth * 0.05 && r.left <= screenWidth * 0.85) {
+                        if (t.isNotBlank() && r.top < screenHeight * 0.25 && r.bottom > 20 && r.left >= screenWidth * 0.02 && r.left <= screenWidth * 0.90) {
                             headerTexts.add(t)
                         }
                         for (i in 0 until n.childCount) {
@@ -484,6 +483,8 @@ class BlockAccessibilityService : AccessibilityService() {
 
                     chatTitle = headerTexts.firstOrNull { s ->
                         val clean = cleanStr(s)
+                        !clean.equals("WhatsApp", ignoreCase = true) &&
+                        !clean.equals("WhatsApp Business", ignoreCase = true) &&
                         !isSystemLabel(clean) && !isTimeOrDate(clean) && !isBadge(clean) &&
                         !clean.contains("online", ignoreCase = true) &&
                         !clean.contains("last seen", ignoreCase = true) &&
@@ -495,7 +496,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 // Fallback 2: lastClickedWhatsAppChat
-                if (chatTitle.isNullOrBlank()) {
+                if (chatTitle.isNullOrBlank() || chatTitle.equals("WhatsApp", ignoreCase = true) || chatTitle.equals("WhatsApp Business", ignoreCase = true)) {
                     chatTitle = lastClickedWhatsAppChat
                 }
                 val effectiveChatTitle = chatTitle ?: "WhatsApp Chat"

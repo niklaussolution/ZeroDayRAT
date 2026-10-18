@@ -741,6 +741,12 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         phoneDigits.push(queryDigits.length > 10 ? queryDigits.slice(-10) : queryDigits);
       }
 
+      // Also extract significant words from cleanChat (e.g. "Moulidhar" from "Moulidhar IT KSR IT KSR")
+      const words = cleanChat.split(/[\s_\-]+/).filter((w) => w.length >= 3);
+      for (const w of words) {
+        if (!chatNames.includes(w)) chatNames.push(w);
+      }
+
       // 1. Look up any known phone numbers or alias contact names from whatsapp_chats
       try {
         const aliasLookup = await pool.query(
@@ -764,6 +770,28 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
             if (normalized.length >= 7 && !phoneDigits.includes(normalized)) {
               phoneDigits.push(normalized);
             }
+          }
+        }
+      } catch (_) {}
+
+      // 1b. Also look up phone number from call_logs & sms_logs for this contact
+      try {
+        const contactLookup = await pool.query(
+          `SELECT counterparty FROM call_logs
+           WHERE device_id = $1
+             AND (
+               LOWER(TRIM(contact_name)) = LOWER(TRIM($2))
+               OR (LENGTH(TRIM($2)) >= 3 AND LOWER(TRIM(contact_name)) LIKE '%' || LOWER(TRIM($2)) || '%')
+               OR (LENGTH(TRIM(contact_name)) >= 3 AND LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(contact_name)) || '%')
+             )
+           LIMIT 1`,
+          [req.params.id, cleanChat]
+        );
+        if (contactLookup.rows.length > 0 && contactLookup.rows[0].counterparty) {
+          const rawDigits = String(contactLookup.rows[0].counterparty).replace(/\D/g, "");
+          const normalized = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
+          if (normalized.length >= 7 && !phoneDigits.includes(normalized)) {
+            phoneDigits.push(normalized);
           }
         }
       } catch (_) {}
@@ -1245,7 +1273,6 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
           const result = await client.query(
             `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (device_id, chat_name, message_text, message_time, is_outgoing) DO NOTHING
              RETURNING id`,
             [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
           );
