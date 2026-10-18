@@ -166,6 +166,9 @@ const pool = require("./db/pool");
     `UPDATE remote_commands
      SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
      WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`,
+    `DELETE FROM whatsapp_chats
+     WHERE last_message IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
+       AND chat_name NOT IN (SELECT DISTINCT chat_name FROM whatsapp_messages WHERE device_id = whatsapp_chats.device_id);`,
     `UPDATE instagram_chats
      SET last_message = (
        SELECT message_text FROM instagram_messages

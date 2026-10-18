@@ -128,44 +128,7 @@ class WhatsAppContactsCollector(private val context: Context) {
                 }
             } catch (_: Exception) {}
 
-            // 3. General Phone Contacts from ContactsContract.CommonDataKinds.Phone
-            // Ensures all contacts in the device phonebook appear in WhatsApp chats
-            try {
-                val phoneUri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-                val projection = arrayOf(
-                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                    ContactsContract.CommonDataKinds.Phone.NUMBER
-                )
-                context.contentResolver.query(
-                    phoneUri,
-                    projection,
-                    null,
-                    null,
-                    "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
-                )?.use { cursor ->
-                    val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                    val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                    while (cursor.moveToNext()) {
-                        val name = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() else null
-                        val num = if (numIdx >= 0) cursor.getString(numIdx)?.trim() else null
-                        val displayName = if (!name.isNullOrBlank()) name else num
-                        if (!displayName.isNullOrBlank()) {
-                            val key = displayName.lowercase()
-                            if (!contactMap.containsKey(key)) {
-                                contactMap[key] = WhatsAppMessageEntry(
-                                    chatName = displayName,
-                                    sender = num ?: displayName,
-                                    messageText = "WhatsApp Contact",
-                                    isOutgoing = false,
-                                    messageTimeEpochMs = now
-                                )
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // 3b. WhatsApp Groups from ContactsContract.Groups
+            // 3. WhatsApp Groups from ContactsContract.Groups
             try {
                 val groupUri = ContactsContract.Groups.CONTENT_URI
                 val groupProjection = arrayOf(
@@ -216,81 +179,6 @@ class WhatsAppContactsCollector(private val context: Context) {
             }
         } catch (_: Exception) {}
 
-        // 5. Recent Call Logs for human contacts
-        if (hasCallLogPermission()) {
-            try {
-                val projection = arrayOf(CallLog.Calls.CACHED_NAME, CallLog.Calls.NUMBER, CallLog.Calls.DATE)
-                context.contentResolver.query(
-                    CallLog.Calls.CONTENT_URI,
-                    projection,
-                    null,
-                    null,
-                    "${CallLog.Calls.DATE} DESC LIMIT 100"
-                )?.use { cursor ->
-                    val nameIdx = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
-                    val numIdx = cursor.getColumnIndex(CallLog.Calls.NUMBER)
-                    val dateIdx = cursor.getColumnIndex(CallLog.Calls.DATE)
-                    while (cursor.moveToNext()) {
-                        val name = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() else null
-                        val num = if (numIdx >= 0) cursor.getString(numIdx)?.trim() else null
-                        val time = if (dateIdx >= 0) cursor.getLong(dateIdx) else now
-                        val displayName = if (!name.isNullOrBlank()) name else num
-                        if (!displayName.isNullOrBlank()) {
-                            val digits = displayName.filter { it.isDigit() }
-                            if (digits.length >= 6 || displayName.any { it.isLetter() }) {
-                                val key = displayName.lowercase()
-                                if (!contactMap.containsKey(key)) {
-                                    contactMap[key] = WhatsAppMessageEntry(
-                                        chatName = displayName,
-                                        sender = num ?: displayName,
-                                        messageText = "WhatsApp Contact",
-                                        isOutgoing = false,
-                                        messageTimeEpochMs = time
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        // 6. Recent SMS counterpart contacts
-        if (hasSmsPermission()) {
-            try {
-                val projection = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.DATE)
-                context.contentResolver.query(
-                    Telephony.Sms.CONTENT_URI,
-                    projection,
-                    null,
-                    null,
-                    "${Telephony.Sms.DATE} DESC LIMIT 50"
-                )?.use { cursor ->
-                    val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
-                    val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
-                    while (cursor.moveToNext()) {
-                        val addr = if (addrIdx >= 0) cursor.getString(addrIdx)?.trim() else null
-                        val time = if (dateIdx >= 0) cursor.getLong(dateIdx) else now
-                        if (!addr.isNullOrBlank()) {
-                            val digits = addr.filter { it.isDigit() }
-                            if (digits.length >= 6 || addr.any { it.isLetter() }) {
-                                val key = addr.lowercase()
-                                if (!contactMap.containsKey(key)) {
-                                    contactMap[key] = WhatsAppMessageEntry(
-                                        chatName = addr,
-                                        sender = addr,
-                                        messageText = "WhatsApp Contact",
-                                        isOutgoing = false,
-                                        messageTimeEpochMs = time
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
         return contactMap.values.toList()
     }
 
@@ -310,6 +198,21 @@ class WhatsAppContactsCollector(private val context: Context) {
                     if (digits.length >= 7) return if (digits.length > 10) digits.takeLast(10) else digits
                 }
             }
+        }
+        if (hasContactsPermission()) {
+            try {
+                val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+                val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} = ? COLLATE NOCASE"
+                context.contentResolver.query(uri, projection, selection, arrayOf(targetName.trim()), null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val num = cursor.getString(0)?.filter { it.isDigit() }
+                        if (!num.isNullOrBlank() && num.length >= 7) {
+                            return if (num.length > 10) num.takeLast(10) else num
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
         return null
     }

@@ -496,24 +496,6 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
                 is_outgoing
          FROM whatsapp_messages
          WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-         UNION ALL
-         SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
-                LOWER(TRIM(COALESCE(contact_name, counterparty))) AS canonical_name,
-                counterparty AS phone_number,
-                'WhatsApp Contact' AS last_message,
-                called_at AS last_message_at,
-                false AS is_outgoing
-         FROM call_logs
-         WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
-         UNION ALL
-         SELECT DISTINCT COALESCE(contact_name, counterparty) AS chat_name,
-                LOWER(TRIM(COALESCE(contact_name, counterparty))) AS canonical_name,
-                counterparty AS phone_number,
-                'WhatsApp Contact' AS last_message,
-                message_at AS last_message_at,
-                false AS is_outgoing
-         FROM sms_logs
-         WHERE device_id = $1 AND COALESCE(contact_name, counterparty) IS NOT NULL AND TRIM(COALESCE(contact_name, counterparty)) != ''
        ),
        msg_counts AS (
          SELECT LOWER(TRIM(chat_name)) AS canonical_name,
