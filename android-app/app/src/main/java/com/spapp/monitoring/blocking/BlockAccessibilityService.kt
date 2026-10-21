@@ -334,9 +334,15 @@ class BlockAccessibilityService : AccessibilityService() {
                     "not interested", "interested", "reels", "follow", "recent contact",
                     "recent conversation", "tap to view conversation", "tap to load",
                     "forwarded", "forwarded many times", "unread messages",
-                    "this message was deleted", "you deleted this message", "swipe to reply"
+                    "this message was deleted", "you deleted this message", "swipe to reply",
+                    "whatsapp group", "camera", "send", "attach", "payment",
+                    "emoji, gifs and stickers", "go to most recent message"
                 ) || trimmed.contains("end-to-end encrypted") ||
-                     trimmed.startsWith("you reacted") || trimmed.startsWith("reacted ")
+                     trimmed.startsWith("you reacted") || trimmed.startsWith("reacted ") ||
+                     trimmed.startsWith("reactions:") || trimmed.startsWith("voice message, button") ||
+                     trimmed.contains("view reactions") || trimmed.endsWith("picture") ||
+                     trimmed.contains("unread status") || trimmed.contains("radio group") ||
+                     trimmed.contains("filter, ,") || trimmed.matches(Regex("^[0-9]+$"))
             }
 
             fun isBadge(s: String): Boolean {
@@ -708,11 +714,13 @@ class BlockAccessibilityService : AccessibilityService() {
 
                         val finalSnippet = if (!snippet.isNullOrBlank() && snippet != "Recent conversation" && !isSystemLabel(snippet)) {
                             snippet
-                        } else {
-                            "WhatsApp Group"
+                        } else null
+
+                        if (finalSnippet.isNullOrBlank() || isSystemLabel(finalSnippet) || isSystemLabel(title)) {
+                            continue
                         }
 
-                        val dedupeKey = "ROW|$title|$finalSnippet|$rowTimeMs"
+                        val dedupeKey = "ROW|$title|$finalSnippet"
                         if (!capturedWhatsAppMsgHashes.contains(dedupeKey)) {
                             capturedWhatsAppMsgHashes.add(dedupeKey)
                             if (capturedWhatsAppMsgHashes.size > 2000) capturedWhatsAppMsgHashes.clear()

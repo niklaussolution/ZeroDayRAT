@@ -226,20 +226,36 @@ export function isContactSyncPlaceholder(text: string | null | undefined): boole
   const t = text.trim();
   if (!t) return true;
   if (t.includes("@s.whatsapp.net") || t.includes("@g.us")) return true;
-  if ([
-    "WhatsApp Contact",
-    "Recent WhatsApp Chat",
-    "Recent contact",
-    "Recent conversation",
-    "Tap to view conversation",
-    "Click chat to get last 2 days conversation",
-    "WhatsApp Monitored Chat",
-    "Instagram Contact",
-    "Instagram Monitored Chat",
-    "Recent Instagram Chat",
-    "Recent Instagram conversation"
-  ].includes(t)) return true;
-  if (/^Message \+?[0-9\s-]+$/i.test(t)) return true;
+  const lower = t.toLowerCase();
+  const knownPlaceholders = [
+    "whatsapp contact",
+    "recent whatsapp chat",
+    "contact",
+    "recent contact",
+    "recent conversation",
+    "tap to view conversation",
+    "click chat to get last 2 days conversation",
+    "whatsapp monitored chat",
+    "whatsapp group",
+    "camera",
+    "send",
+    "attach",
+    "payment",
+    "emoji, gifs and stickers",
+    "go to most recent message",
+    "instagram contact",
+    "instagram monitored chat",
+    "recent instagram chat",
+    "recent instagram conversation"
+  ];
+  if (knownPlaceholders.includes(lower)) return true;
+  if (/^message \+?[0-9\s-]+$/i.test(t)) return true;
+  if (/^voice message, button/i.test(t)) return true;
+  if (/^reactions:/i.test(t)) return true;
+  if (lower.includes("view reactions")) return true;
+  if (/^[0-9]+$/.test(t)) return true;
+  if (lower.endsWith("picture")) return true;
+  if (lower.includes("filter")) return true;
   return false;
 }
 
@@ -587,7 +603,19 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
   // Formatted WhatsApp Chat Summaries
   const whatsappChatSummaries = useMemo<UnifiedChatSummary[]>(() => {
     if (!whatsappChats || whatsappChats.length === 0) return [];
-    return whatsappChats.map((c) => {
+    return whatsappChats
+      .filter((c) => {
+        const name = (c.chat_name || "").toLowerCase().trim();
+        return (
+          !name.includes("picture") &&
+          !name.includes("radio group") &&
+          !name.includes("filter") &&
+          !name.includes("unread status") &&
+          name !== "whatsapp" &&
+          name !== "whatsapp group"
+        );
+      })
+      .map((c) => {
       const isChannel = isWhatsAppChannel({ chatName: c.chat_name, subtitle: "", lastMessage: c.last_message } as any);
       const isPhone = isPhoneNumberString(c.chat_name);
 

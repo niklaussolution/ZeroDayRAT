@@ -30,7 +30,7 @@ interface WhatsAppMessageDao {
         AND messageTimeEpochMs >= :cutoffMs 
         AND messageText NOT LIKE '%@s.whatsapp.net%' 
         AND messageText NOT LIKE '%@g.us%' 
-        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation') 
+        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation', 'WhatsApp Group', 'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers', 'Go to most recent message') AND messageText NOT LIKE 'Voice message, Button%' AND messageText NOT LIKE 'Reactions:%' 
         ORDER BY messageTimeEpochMs ASC
     """)
     suspend fun getMessagesForChat(chatName: String, cutoffMs: Long): List<WhatsAppMessageEntry>
@@ -58,7 +58,7 @@ interface WhatsAppMessageDao {
         AND messageTimeEpochMs >= :cutoffMs 
         AND messageText NOT LIKE '%@s.whatsapp.net%' 
         AND messageText NOT LIKE '%@g.us%' 
-        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation') 
+        AND messageText NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation', 'WhatsApp Group', 'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers', 'Go to most recent message') AND messageText NOT LIKE 'Voice message, Button%' AND messageText NOT LIKE 'Reactions:%' 
         ORDER BY messageTimeEpochMs ASC
     """)
     suspend fun getMessagesForChatWithPhone(chatName: String, phoneDigits: String, cutoffMs: Long): List<WhatsAppMessageEntry>

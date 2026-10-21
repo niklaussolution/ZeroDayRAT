@@ -64,6 +64,27 @@ attachCameraRelay(server);
 const pool = require("./db/pool");
 
 (async function runMigrations() {
+  try {
+    await pool.query(`
+      DELETE FROM whatsapp_messages
+      WHERE message_text IN ('WhatsApp Group', 'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers', 'Go to most recent message')
+         OR message_text LIKE 'Voice message, Button%'
+         OR message_text LIKE 'Reactions:%'
+         OR message_text ~ '^[0-9]+$'
+         OR chat_name LIKE '%picture'
+         OR chat_name LIKE '%filter%'
+         OR sender LIKE '%picture';
+      DELETE FROM whatsapp_chats
+      WHERE chat_name LIKE '%picture'
+         OR chat_name LIKE '%filter%'
+         OR chat_name LIKE '%unread status%'
+         OR chat_name = 'WhatsApp Group'
+         OR chat_name = 'Payments on WhatsApp';
+    `);
+  } catch (err) {
+    console.warn("WhatsApp noise cleanup warning:", err?.message);
+  }
+
   const migrations = [
     `ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);`,
     `ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);`,
