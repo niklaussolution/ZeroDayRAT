@@ -71,6 +71,7 @@ const pool = require("./db/pool");
          OR message_text LIKE 'Voice message, Button%'
          OR message_text LIKE 'Reactions:%'
          OR message_text ~ '^[0-9]+$'
+         OR chat_name IN ('WhatsApp Group', 'Send', 'Type a message', 'Search', 'WhatsApp', 'WhatsApp Business')
          OR chat_name LIKE '%picture'
          OR chat_name LIKE '%filter%'
          OR sender LIKE '%picture';
@@ -78,8 +79,14 @@ const pool = require("./db/pool");
       WHERE chat_name LIKE '%picture'
          OR chat_name LIKE '%filter%'
          OR chat_name LIKE '%unread status%'
-         OR chat_name = 'WhatsApp Group'
-         OR chat_name = 'Payments on WhatsApp';
+         OR chat_name IN ('WhatsApp Group', 'Send', 'Type a message', 'Search', 'WhatsApp', 'WhatsApp Business', 'Payments on WhatsApp');
+      DELETE FROM whatsapp_messages a USING whatsapp_messages b
+      WHERE a.id > b.id
+        AND a.device_id = b.device_id
+        AND LOWER(TRIM(a.chat_name)) = LOWER(TRIM(b.chat_name))
+        AND a.message_text = b.message_text
+        AND a.is_outgoing = b.is_outgoing
+        AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
     `);
   } catch (err) {
     console.warn("WhatsApp noise cleanup warning:", err?.message);

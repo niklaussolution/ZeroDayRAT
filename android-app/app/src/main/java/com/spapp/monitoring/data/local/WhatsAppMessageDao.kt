@@ -10,6 +10,16 @@ interface WhatsAppMessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(entries: List<WhatsAppMessageEntry>)
 
+    @Query("""
+        SELECT id FROM whatsapp_message_entries 
+        WHERE LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+          AND LOWER(TRIM(messageText)) = LOWER(TRIM(:messageText)) 
+          AND isOutgoing = :isOutgoing 
+          AND messageTimeEpochMs >= :sinceMs 
+        LIMIT 1
+    """)
+    suspend fun findExistingRecent(chatName: String, messageText: String, isOutgoing: Boolean, sinceMs: Long): Long?
+
     @Query("SELECT * FROM whatsapp_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
     suspend fun getUnsynced(limit: Int = 200): List<WhatsAppMessageEntry>
 

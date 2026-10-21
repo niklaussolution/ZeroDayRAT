@@ -652,6 +652,19 @@ router.post(
           if (!e.messageText && !e.mediaPath && !e.reelUrl && !e.mediaType) continue;
           const chatName = String(e.chatName || req.body.activeChat || "").trim();
           if (!chatName) continue;
+          const lowerChat = chatName.toLowerCase();
+          if (
+            lowerChat === "whatsapp" ||
+            lowerChat === "whatsapp business" ||
+            lowerChat === "whatsapp group" ||
+            lowerChat === "send" ||
+            lowerChat === "type a message" ||
+            lowerChat === "search" ||
+            lowerChat.endsWith("picture") ||
+            lowerChat.includes("filter")
+          ) {
+            continue;
+          }
           const reelUrl = e.reelUrl || null;
           const mediaType = e.mediaType || (reelUrl ? "reel" : null);
           const rawText = String(e.messageText || (reelUrl ? `[Reel] ${reelUrl}` : (mediaType ? `[${mediaType}]` : ""))).trim();
@@ -732,7 +745,14 @@ router.post(
 
           const existing = await client.query(
             `SELECT id FROM whatsapp_messages
-             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+             WHERE device_id = $1 
+               AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
+               AND message_text = $3 
+               AND is_outgoing = $5
+               AND (
+                 message_time = $4
+                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) < 600
+               )
              LIMIT 1`,
             [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
           );

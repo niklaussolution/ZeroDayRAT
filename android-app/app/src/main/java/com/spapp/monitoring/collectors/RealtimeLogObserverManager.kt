@@ -312,12 +312,8 @@ object RealtimeLogObserverManager {
     }
 
     fun triggerInstantWhatsAppUpload(context: Context) {
-        synchronized(this) {
-            whatsAppJob?.cancel()
-            whatsAppJob = scope.launch {
-                delay(200) // Coalesce rapid notifications / row reads
-                captureAndUploadWhatsApp(context.applicationContext)
-            }
+        scope.launch {
+            captureAndUploadWhatsApp(context.applicationContext)
         }
     }
 
