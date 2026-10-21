@@ -184,6 +184,10 @@ router.delete("/tenants/:tenantId", async (req, res, next) => {
     const deviceIds = devicesRes.rows.map((r) => r.id);
     if (deviceIds.length > 0) {
       await client.query("DELETE FROM whatsapp_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM whatsapp_chats WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM instagram_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM instagram_chats WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+      await client.query("DELETE FROM calendar_events WHERE device_id = ANY($1::uuid[])", [deviceIds]);
       await client.query("DELETE FROM location_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
       await client.query("DELETE FROM web_history_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
       await client.query("DELETE FROM sms_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
@@ -239,6 +243,10 @@ router.delete("/users/:userId", async (req, res, next) => {
         const deviceIds = devicesRes.rows.map((r) => r.id);
         if (deviceIds.length > 0) {
           await client.query("DELETE FROM whatsapp_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM whatsapp_chats WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM instagram_messages WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM instagram_chats WHERE device_id = ANY($1::uuid[])", [deviceIds]);
+          await client.query("DELETE FROM calendar_events WHERE device_id = ANY($1::uuid[])", [deviceIds]);
           await client.query("DELETE FROM location_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
           await client.query("DELETE FROM web_history_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);
           await client.query("DELETE FROM sms_logs WHERE device_id = ANY($1::uuid[])", [deviceIds]);

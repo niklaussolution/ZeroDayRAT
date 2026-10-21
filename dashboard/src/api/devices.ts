@@ -17,6 +17,7 @@ import type {
   WhatsAppCallEntry,
   InstagramChatSummary,
   InstagramMessage,
+  CalendarEvent,
 } from "./types";
 
 export const devicesApi = {
@@ -54,6 +55,9 @@ export const devicesApi = {
   smsLog: (id: string) => apiClient.get<SmsLogEntry[]>(`/api/devices/${id}/sms-log`).then((r) => r.data),
 
   callLog: (id: string) => apiClient.get<CallLogEntry[]>(`/api/devices/${id}/call-log`).then((r) => r.data),
+
+  calendarEvents: (id: string) =>
+    apiClient.get<CalendarEvent[]>(`/api/devices/${id}/calendar`).then((r) => r.data),
 
   webHistory: (id: string) =>
     apiClient.get<WebHistoryEntry[]>(`/api/devices/${id}/web-history`).then((r) => r.data),

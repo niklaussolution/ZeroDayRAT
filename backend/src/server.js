@@ -163,6 +163,22 @@ const pool = require("./db/pool");
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
        ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);`,
+    `CREATE TABLE IF NOT EXISTS calendar_events (
+      id              BIGSERIAL PRIMARY KEY,
+      device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      external_id     VARCHAR(100) NOT NULL,
+      title           VARCHAR(255) NOT NULL,
+      description     TEXT,
+      location        TEXT,
+      start_time      TIMESTAMPTZ NOT NULL,
+      end_time        TIMESTAMPTZ,
+      is_all_day      BOOLEAN NOT NULL DEFAULT false,
+      synced_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (device_id, external_id)
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_calendar_events_device_start ON calendar_events(device_id, start_time DESC);`,
+
     `UPDATE remote_commands
      SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
      WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`

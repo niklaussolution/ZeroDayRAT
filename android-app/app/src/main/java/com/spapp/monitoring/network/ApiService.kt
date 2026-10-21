@@ -61,6 +61,12 @@ interface ApiService {
         @Body request: Map<String, String>
     ): Response<Map<String, Any>>
 
+    @POST("api/sync/calendar")
+    suspend fun syncCalendar(
+        @Header("Authorization") bearer: String,
+        @Body request: CalendarSyncRequest
+    ): Response<SyncCountResponse>
+
     @GET("api/sync/commands")
     suspend fun getPendingCommands(@Header("Authorization") bearer: String): Response<List<RemoteCommand>>
 

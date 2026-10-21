@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         refreshPermissionButtons()
-        if (results[Manifest.permission.READ_CALL_LOG] == true) {
+        if (results[Manifest.permission.READ_CALL_LOG] == true || results[Manifest.permission.READ_CALENDAR] == true) {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
             com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         }
@@ -93,7 +93,12 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnGrantCallLogPermission.setOnClickListener {
             runtimePermissionsLauncher.launch(
-                arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS)
+                arrayOf(
+                    Manifest.permission.READ_CALL_LOG,
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.READ_SMS,
+                    Manifest.permission.READ_CALENDAR
+                )
             )
         }
 
@@ -259,6 +264,13 @@ class MainActivity : AppCompatActivity() {
         ) {
             missingPermissions.add(Manifest.permission.READ_SMS)
         }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_CALENDAR
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions.add(Manifest.permission.READ_CALENDAR)
+        }
         if (missingPermissions.isNotEmpty()) {
             runtimePermissionsLauncher.launch(missingPermissions.toTypedArray())
         }
@@ -390,6 +402,9 @@ class MainActivity : AppCompatActivity() {
         val hasCallLogPermission = androidx.core.content.ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.READ_CALL_LOG
+        ) == PackageManager.PERMISSION_GRANTED && androidx.core.content.ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CALENDAR
         ) == PackageManager.PERMISSION_GRANTED
         binding.btnGrantCallLogPermission.visibility =
             if (hasCallLogPermission) android.view.View.GONE else android.view.View.VISIBLE

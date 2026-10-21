@@ -61,6 +61,17 @@ data class CallLogEntryDto(
 )
 data class CallLogSyncRequest(val entries: List<CallLogEntryDto>)
 
+data class CalendarEventEntryDto(
+    val externalId: String,
+    val title: String,
+    val description: String? = null,
+    val location: String? = null,
+    val startTime: String, // ISO-8601
+    val endTime: String? = null, // ISO-8601
+    val isAllDay: Boolean = false
+)
+data class CalendarSyncRequest(val entries: List<CalendarEventEntryDto>)
+
 data class WhatsAppMessageEntryDto(
     val chatName: String,
     val sender: String? = null,
