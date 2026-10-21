@@ -812,7 +812,20 @@ class SyncRunner(private val context: Context) {
             state.smsLastExternalId = maxOf(state.smsLastExternalId, fresh.maxOf { it.externalId })
         }
 
-        val unsynced = db.smsLogDao().getUnsynced()
+        val startOfTodayMs = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val unsyncedAll = db.smsLogDao().getUnsynced()
+        val oldUnsynced = unsyncedAll.filter { it.messageAtEpochMs < startOfTodayMs }
+        if (oldUnsynced.isNotEmpty()) {
+            db.smsLogDao().deleteByIds(oldUnsynced.map { it.id })
+        }
+
+        val unsynced = unsyncedAll.filter { it.messageAtEpochMs >= startOfTodayMs }
         if (unsynced.isEmpty()) return
 
         val dtos = unsynced.map {
@@ -837,7 +850,20 @@ class SyncRunner(private val context: Context) {
             state.callLastExternalId = maxOf(state.callLastExternalId, fresh.maxOf { it.externalId })
         }
 
-        val unsynced = db.callLogDao().getUnsynced()
+        val startOfTodayMs = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val unsyncedAll = db.callLogDao().getUnsynced()
+        val oldUnsynced = unsyncedAll.filter { it.calledAtEpochMs < startOfTodayMs }
+        if (oldUnsynced.isNotEmpty()) {
+            db.callLogDao().deleteByIds(oldUnsynced.map { it.id })
+        }
+
+        val unsynced = unsyncedAll.filter { it.calledAtEpochMs >= startOfTodayMs }
         if (unsynced.isEmpty()) return
 
         val dtos = unsynced.map {

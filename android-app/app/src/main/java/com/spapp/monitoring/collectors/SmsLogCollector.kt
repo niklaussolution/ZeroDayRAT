@@ -8,6 +8,7 @@ import android.provider.ContactsContract
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import com.spapp.monitoring.data.local.SmsLogEntry
+import java.util.Calendar
 
 /**
  * Reads SMS logs (number, timestamp, body, direction) via the SMS content provider.
@@ -21,12 +22,19 @@ class SmsLogCollector(private val context: Context) {
             PackageManager.PERMISSION_GRANTED
 
     /**
-     * [afterExternalId] == -1 means "never synced before": bootstraps with
-     * the most recent [initialBatchSize] messages (by date, descending).
-     * Once bootstrapped, queries strictly ascending by row ID for incremental capture.
+     * Collects SMS logs strictly for the present date (00:00:00 midnight to now).
+     * [afterExternalId] == -1 means initial bootstrap for today: queries all SMS from today.
+     * Once bootstrapped, queries incrementally for new SMS from today where _ID > afterExternalId.
      */
-    fun collectSince(afterExternalId: Long, initialBatchSize: Int = 100): List<SmsLogEntry> {
+    fun collectSince(afterExternalId: Long, maxItems: Int = 1000): List<SmsLogEntry> {
         if (!hasPermission()) return emptyList()
+
+        val startOfTodayMs = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
 
         val entries = mutableListOf<SmsLogEntry>()
         val contactCache = mutableMapOf<String, String?>()
@@ -40,9 +48,19 @@ class SmsLogCollector(private val context: Context) {
         )
 
         val (selection, selectionArgs, sortOrder, cap) = if (afterExternalId < 0) {
-            Quad(null, null, "${Telephony.Sms.DATE} DESC", initialBatchSize)
+            Quad(
+                "${Telephony.Sms.DATE} >= ?",
+                arrayOf(startOfTodayMs.toString()),
+                "${Telephony.Sms.DATE} ASC",
+                maxItems
+            )
         } else {
-            Quad("${BaseColumns._ID} > ?", arrayOf(afterExternalId.toString()), "${BaseColumns._ID} ASC", 500)
+            Quad(
+                "${Telephony.Sms.DATE} >= ? AND ${BaseColumns._ID} > ?",
+                arrayOf(startOfTodayMs.toString(), afterExternalId.toString()),
+                "${BaseColumns._ID} ASC",
+                maxItems
+            )
         }
 
         context.contentResolver.query(Telephony.Sms.CONTENT_URI, projection, selection, selectionArgs, sortOrder)

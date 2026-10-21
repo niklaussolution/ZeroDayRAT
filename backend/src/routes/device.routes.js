@@ -317,17 +317,27 @@ router.get("/:id/sms-log", requireAuth, async (req, res, next) => {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
+    let dateClause = "";
+    const params = [req.params.id];
+    if (req.query.all === "true") {
+      dateClause = "";
+    } else if (req.query.date) {
+      params.push(req.query.date);
+      dateClause = ` AND (message_at AT TIME ZONE 'Asia/Kolkata')::date = $${params.length}::date`;
+    } else {
+      dateClause = ` AND (message_at AT TIME ZONE 'Asia/Kolkata')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date`;
+    }
+
     const result = await pool.query(
       `SELECT id, direction, counterparty, message_at, body, contact_name
        FROM (
          SELECT DISTINCT ON (direction, counterparty, message_at) id, direction, counterparty, message_at, body, contact_name
          FROM sms_logs
-         WHERE device_id = $1
+         WHERE device_id = $1 ${dateClause}
          ORDER BY direction, counterparty, message_at, (contact_name IS NOT NULL) DESC, (body IS NOT NULL) DESC, id DESC
        ) sub
-       ORDER BY message_at DESC
-       LIMIT 100`,
-      [req.params.id]
+       ORDER BY message_at DESC`,
+      params
     );
     res.json(result.rows);
   } catch (err) {
@@ -361,17 +371,27 @@ router.get("/:id/call-log", requireAuth, async (req, res, next) => {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
+    let dateClause = "";
+    const params = [req.params.id];
+    if (req.query.all === "true") {
+      dateClause = "";
+    } else if (req.query.date) {
+      params.push(req.query.date);
+      dateClause = ` AND (called_at AT TIME ZONE 'Asia/Kolkata')::date = $${params.length}::date`;
+    } else {
+      dateClause = ` AND (called_at AT TIME ZONE 'Asia/Kolkata')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date`;
+    }
+
     const result = await pool.query(
       `SELECT direction, counterparty, duration_sec, called_at, contact_name
        FROM (
          SELECT DISTINCT ON (direction, counterparty, called_at) direction, counterparty, duration_sec, called_at, contact_name
          FROM call_logs
-         WHERE device_id = $1
+         WHERE device_id = $1 ${dateClause}
          ORDER BY direction, counterparty, called_at, id DESC
        ) sub
-       ORDER BY called_at DESC
-       LIMIT 100`,
-      [req.params.id]
+       ORDER BY called_at DESC`,
+      params
     );
     res.json(result.rows);
   } catch (err) {

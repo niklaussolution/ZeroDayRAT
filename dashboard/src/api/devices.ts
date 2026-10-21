@@ -51,9 +51,15 @@ export const devicesApi = {
       .get<AppUsageEntry[]>(`/api/devices/${id}/app-usage`, { params: date ? { date } : {} })
       .then((r) => r.data),
 
-  smsLog: (id: string) => apiClient.get<SmsLogEntry[]>(`/api/devices/${id}/sms-log`).then((r) => r.data),
+  smsLog: (id: string, params?: { date?: string; all?: boolean }) =>
+    apiClient
+      .get<SmsLogEntry[]>(`/api/devices/${id}/sms-log`, { params })
+      .then((r) => r.data),
 
-  callLog: (id: string) => apiClient.get<CallLogEntry[]>(`/api/devices/${id}/call-log`).then((r) => r.data),
+  callLog: (id: string, params?: { date?: string; all?: boolean }) =>
+    apiClient
+      .get<CallLogEntry[]>(`/api/devices/${id}/call-log`, { params })
+      .then((r) => r.data),
 
   webHistory: (id: string) =>
     apiClient.get<WebHistoryEntry[]>(`/api/devices/${id}/web-history`).then((r) => r.data),

@@ -8,6 +8,7 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import com.spapp.monitoring.data.local.CallLogEntry
+import java.util.Calendar
 
 /** Reads call metadata (number, direction, duration, contact name) — no audio, ever. */
 class CallLogCollector(private val context: Context) {
@@ -17,16 +18,19 @@ class CallLogCollector(private val context: Context) {
             PackageManager.PERMISSION_GRANTED
 
     /**
-     * [afterExternalId] == -1 means "never synced before": bootstraps with
-     * the most recent [initialBatchSize] calls (by date, descending) — NOT
-     * the oldest-first full history — so a phone with years of call history
-     * doesn't take dozens of sync cycles to ever reach anything recent. Once
-     * bootstrapped, pass the previous batch's max externalId to pick up only
-     * genuinely new calls (ordered ascending by row ID, a more reliable
-     * watermark than timestamp).
+     * Collects Call logs strictly for the present date (00:00:00 midnight to now).
+     * [afterExternalId] == -1 means initial bootstrap for today: queries all calls from today.
+     * Once bootstrapped, queries incrementally for new calls from today where _ID > afterExternalId.
      */
-    fun collectSince(afterExternalId: Long, initialBatchSize: Int = 100): List<CallLogEntry> {
+    fun collectSince(afterExternalId: Long, maxItems: Int = 1000): List<CallLogEntry> {
         if (!hasPermission()) return emptyList()
+
+        val startOfTodayMs = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
 
         val entries = mutableListOf<CallLogEntry>()
         val projection = arrayOf(
@@ -39,9 +43,19 @@ class CallLogCollector(private val context: Context) {
         )
 
         val (selection, selectionArgs, sortOrder, cap) = if (afterExternalId < 0) {
-            Quad(null, null, "${CallLog.Calls.DATE} DESC", initialBatchSize)
+            Quad(
+                "${CallLog.Calls.DATE} >= ?",
+                arrayOf(startOfTodayMs.toString()),
+                "${CallLog.Calls.DATE} ASC",
+                maxItems
+            )
         } else {
-            Quad("${BaseColumns._ID} > ?", arrayOf(afterExternalId.toString()), "${BaseColumns._ID} ASC", 500)
+            Quad(
+                "${CallLog.Calls.DATE} >= ? AND ${BaseColumns._ID} > ?",
+                arrayOf(startOfTodayMs.toString(), afterExternalId.toString()),
+                "${BaseColumns._ID} ASC",
+                maxItems
+            )
         }
 
         context.contentResolver.query(CallLog.Calls.CONTENT_URI, projection, selection, selectionArgs, sortOrder)

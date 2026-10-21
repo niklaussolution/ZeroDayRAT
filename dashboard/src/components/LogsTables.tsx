@@ -8,8 +8,17 @@ import type { CallLogEntry, SmsLogEntry } from "../api/types";
 const SCROLL_CLASS = "max-h-80 overflow-y-auto";
 const AUTO_REFRESH_MS = 20000; // "live update" — the device syncs in the background on its own schedule
 
+const getTodayStr = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 export default function LogsTables({ deviceId }: { deviceId: string }) {
   const [tab, setTab] = useState<"calls" | "sms">("calls");
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayStr);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
   const [sms, setSms] = useState<SmsLogEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,8 +49,8 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
   function load() {
     setRefreshing(true);
     Promise.all([
-      devicesApi.callLog(deviceId),
-      devicesApi.smsLog(deviceId),
+      devicesApi.callLog(deviceId, { date: selectedDate }),
+      devicesApi.smsLog(deviceId, { date: selectedDate }),
     ])
       .then(([c, s]) => {
         // Deduplicate SMS logs: if same direction, number, and timestamp, keep the one with body
@@ -89,19 +98,44 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
     loadRef.current();
     const interval = setInterval(() => loadRef.current(), AUTO_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [deviceId]);
+  }, [deviceId, selectedDate]);
+
+  const isToday = selectedDate === getTodayStr();
 
   return (
     <div className="bg-white rounded-lg shadow-sm p-5">
-      <div className="flex items-center justify-between mb-4 border-b">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 border-b pb-2">
         <div className="flex gap-4">
           <TabButton active={tab === "calls"} onClick={() => setTab("calls")} label={`Call Log (${calls.length})`} />
           <TabButton active={tab === "sms"} onClick={() => setTab("sms")} label={`SMS Log (${sms.length})`} />
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1 text-xs">
+            <span className="text-gray-500 font-medium">Date:</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value || getTodayStr())}
+              className="bg-transparent text-gray-800 font-medium focus:outline-none cursor-pointer"
+            />
+            {isToday ? (
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                Today
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSelectedDate(getTodayStr())}
+                className="text-[11px] text-accent hover:underline font-medium"
+              >
+                Today
+              </button>
+            )}
+          </div>
           <button
             onClick={load}
-            className="text-xs text-gray-400 hover:text-accent pb-2 flex items-center gap-1"
+            disabled={refreshing}
+            className="text-xs text-gray-500 hover:text-accent flex items-center gap-1 font-medium transition"
             title="Refresh now"
           >
             {refreshing ? "Refreshing..." : "↻ Refresh"}
@@ -111,7 +145,12 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
 
       {tab === "calls" &&
         (calls.length === 0 ? (
-          <p className="text-xs text-gray-400">No call log data synced yet.</p>
+          <div className="py-8 text-center text-gray-400">
+            <p className="text-xs">No call logs for {isToday ? "today" : selectedDate}.</p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              Incoming, outgoing, and missed calls for the present date will appear here in real time.
+            </p>
+          </div>
         ) : (
           <div className={SCROLL_CLASS}>
             <table className="w-full text-xs">
@@ -165,7 +204,12 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
 
       {tab === "sms" &&
         (sms.length === 0 ? (
-          <p className="text-xs text-gray-400">No SMS log data synced yet.</p>
+          <div className="py-8 text-center text-gray-400">
+            <p className="text-xs">No SMS logs for {isToday ? "today" : selectedDate}.</p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              Incoming and outgoing SMS messages for the present date will appear here in real time.
+            </p>
+          </div>
         ) : (
           <div className={SCROLL_CLASS}>
             <table className="w-full text-xs">

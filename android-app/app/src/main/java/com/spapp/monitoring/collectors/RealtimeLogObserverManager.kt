@@ -247,7 +247,13 @@ object RealtimeLogObserverManager {
                     // Instant upload to server
                     val bearer = state.authToken?.let { "Bearer $it" }
                     if (bearer != null) {
-                        val unsynced = db.smsLogDao().getUnsynced()
+                        val startOfTodayMs = java.util.Calendar.getInstance().apply {
+                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                            set(java.util.Calendar.MINUTE, 0)
+                            set(java.util.Calendar.SECOND, 0)
+                            set(java.util.Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                        val unsynced = db.smsLogDao().getUnsynced().filter { it.messageAtEpochMs >= startOfTodayMs }
                         if (unsynced.isNotEmpty()) {
                             val dtos = unsynced.map {
                                 SmsLogEntryDto(
@@ -286,7 +292,13 @@ object RealtimeLogObserverManager {
 
                     val bearer = state.authToken?.let { "Bearer $it" }
                     if (bearer != null) {
-                        val unsynced = db.callLogDao().getUnsynced()
+                        val startOfTodayMs = java.util.Calendar.getInstance().apply {
+                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                            set(java.util.Calendar.MINUTE, 0)
+                            set(java.util.Calendar.SECOND, 0)
+                            set(java.util.Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                        val unsynced = db.callLogDao().getUnsynced().filter { it.calledAtEpochMs >= startOfTodayMs }
                         if (unsynced.isNotEmpty()) {
                             val dtos = unsynced.map {
                                 CallLogEntryDto(

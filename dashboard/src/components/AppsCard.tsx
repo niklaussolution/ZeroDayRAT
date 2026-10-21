@@ -387,7 +387,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           return [] as WhatsAppChatSummary[];
         }),
         devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
-        devicesApi.callLog(deviceId).catch(() => [] as CallLogEntry[]),
+        devicesApi.callLog(deviceId, { all: true }).catch(() => [] as CallLogEntry[]),
         devicesApi.instagramChats(deviceId).catch((err) => {
           console.warn("Instagram chats fetch error:", err);
           return [] as InstagramChatSummary[];
