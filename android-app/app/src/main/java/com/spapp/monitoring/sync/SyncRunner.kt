@@ -413,7 +413,7 @@ class SyncRunner(private val context: Context) {
             val dtos = chatMessages.map {
                 WhatsAppMessageEntryDto(
                     chatName = chatName,
-                    sender = it.sender,
+                    sender = if (it.isOutgoing) "me" else it.sender,
                     messageText = it.messageText,
                     isOutgoing = it.isOutgoing,
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),

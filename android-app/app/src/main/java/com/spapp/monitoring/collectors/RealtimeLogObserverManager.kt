@@ -330,7 +330,7 @@ object RealtimeLogObserverManager {
                     val dtos = unsynced.map {
                         WhatsAppMessageEntryDto(
                             chatName = it.chatName,
-                            sender = it.sender,
+                            sender = if (it.isOutgoing) "me" else it.sender,
                             messageText = it.messageText,
                             isOutgoing = it.isOutgoing,
                             messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),

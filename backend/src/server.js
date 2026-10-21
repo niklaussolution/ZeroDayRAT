@@ -87,6 +87,13 @@ const pool = require("./db/pool");
         AND a.message_text = b.message_text
         AND a.is_outgoing = b.is_outgoing
         AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
+      DELETE FROM whatsapp_messages a USING whatsapp_messages b
+      WHERE a.device_id = b.device_id
+        AND LOWER(TRIM(a.chat_name)) = LOWER(TRIM(b.chat_name))
+        AND a.message_text = b.message_text
+        AND a.is_outgoing = false
+        AND b.is_outgoing = true
+        AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
     `);
   } catch (err) {
     console.warn("WhatsApp noise cleanup warning:", err?.message);

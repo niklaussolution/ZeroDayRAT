@@ -743,18 +743,20 @@ router.post(
             continue;
           }
 
+          const finalSender = isOutgoing ? "me" : (sender || chatName);
+
           const existing = await client.query(
-            `SELECT id FROM whatsapp_messages
+            `SELECT id, is_outgoing, sender FROM whatsapp_messages
              WHERE device_id = $1 
                AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
                AND message_text = $3 
-               AND is_outgoing = $5
                AND (
                  message_time = $4
                  OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) < 600
                )
+             ORDER BY is_outgoing DESC, id ASC
              LIMIT 1`,
-            [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
+            [req.device.deviceId, chatName, messageText, messageTime]
           );
 
           if (existing.rows.length === 0) {
@@ -762,18 +764,21 @@ router.post(
               `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id`,
-              [req.device.deviceId, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
+              [req.device.deviceId, chatName, finalSender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
             );
             if (result.rows.length > 0) insertedCount++;
           } else {
+            const shouldUpgradeToOutgoing = isOutgoing && !existing.rows[0].is_outgoing;
             await client.query(
               `UPDATE whatsapp_messages SET
-                 media_type = COALESCE($1, media_type),
-                 media_path = COALESCE($2, media_path),
-                 reel_url = COALESCE($3, reel_url),
+                 is_outgoing = CASE WHEN $1 THEN true ELSE is_outgoing END,
+                 sender = CASE WHEN $1 THEN 'me' ELSE sender END,
+                 media_type = COALESCE($2, media_type),
+                 media_path = COALESCE($3, media_path),
+                 reel_url = COALESCE($4, reel_url),
                  synced_at = NOW()
-               WHERE id = $4`,
-              [mediaType, mediaPath, reelUrl, existing.rows[0].id]
+               WHERE id = $5`,
+              [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, existing.rows[0].id]
             );
           }
         }

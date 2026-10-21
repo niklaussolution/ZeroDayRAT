@@ -2599,7 +2599,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
                               {/* Chat Speech Bubbles - SENDER (Target) vs RECEIVER (Contact) */}
                               {group.items.map((m) => {
-                                const isTargetSent = m.isOutgoing;
+                                const isTargetSent = Boolean(m.isOutgoing) || m.sender === "Target Device" || m.sender?.toLowerCase() === "me" || m.sender?.toLowerCase() === "you";
                                 const isInstagramMsg = selectedApp === "instagram";
                                 return (
                                   <div
