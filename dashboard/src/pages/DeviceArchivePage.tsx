@@ -8,7 +8,6 @@ import LogsTables from "../components/LogsTables";
 import InstalledAppsCard from "../components/InstalledAppsCard";
 import WebHistoryCard from "../components/WebHistoryCard";
 import AlertsCard from "../components/AlertsCard";
-import CalendarCard from "../components/CalendarCard";
 
 /**
  * Read-only view of everything still stored for a deactivated device — no
@@ -87,10 +86,6 @@ export default function DeviceArchivePage() {
 
         <div className="lg:col-span-2">
           <LogsTables deviceId={id} />
-        </div>
-
-        <div className="lg:col-span-2">
-          <CalendarCard deviceId={id} />
         </div>
       </div>
     </div>

@@ -211,7 +211,6 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
     await client.query("DELETE FROM whatsapp_chats WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM instagram_messages WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM instagram_chats WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM calendar_events WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM location_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM web_history_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM sms_logs WHERE device_id = $1", [deviceId]);
@@ -372,28 +371,6 @@ router.get("/:id/call-log", requireAuth, async (req, res, next) => {
        ) sub
        ORDER BY called_at DESC
        LIMIT 100`,
-      [req.params.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * GET /api/devices/:id/calendar
- */
-router.get("/:id/calendar", requireAuth, async (req, res, next) => {
-  try {
-    const device = await checkDeviceAccess(req.params.id, req.auth);
-    if (!device) return res.status(404).json({ error: "Device not found" });
-
-    const result = await pool.query(
-      `SELECT id, external_id, title, description, location, start_time, end_time, is_all_day, synced_at, created_at
-       FROM calendar_events
-       WHERE device_id = $1
-       ORDER BY start_time DESC
-       LIMIT 300`,
       [req.params.id]
     );
     res.json(result.rows);

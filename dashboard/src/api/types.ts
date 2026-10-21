@@ -172,19 +172,6 @@ export interface WhatsAppCallEntry {
   source: "whatsapp" | "device";
 }
 
-export interface CalendarEvent {
-  id: number | string;
-  external_id: string;
-  title: string;
-  description: string | null;
-  location: string | null;
-  start_time: string;
-  end_time: string | null;
-  is_all_day: boolean;
-  synced_at: string;
-  created_at: string;
-}
-
 export interface InstalledApp {
   package_name: string;
   app_name: string | null;

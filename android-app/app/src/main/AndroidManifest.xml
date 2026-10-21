@@ -20,7 +20,6 @@
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.READ_CALENDAR" />
 
     <!-- Remote lock (Phase 6) -->
     <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />

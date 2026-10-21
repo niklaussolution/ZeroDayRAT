@@ -31,7 +31,6 @@ class ConsentActivity : AppCompatActivity() {
         add(Manifest.permission.READ_SMS)
         add(Manifest.permission.READ_CALL_LOG)
         add(Manifest.permission.READ_CONTACTS)
-        add(Manifest.permission.READ_CALENDAR)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.READ_MEDIA_IMAGES)
         }
