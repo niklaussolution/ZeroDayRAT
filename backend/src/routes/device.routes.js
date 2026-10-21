@@ -68,9 +68,7 @@ async function checkDeviceAccess(deviceId, auth) {
     const res = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1 AND tenant_id = $2", [deviceId, auth.tenantId]);
     if (res.rows[0]) return res.rows[0];
   }
-  // Fallback: If device exists, allow access so dashboard never throws 404 for an existing device
-  const fallback = await pool.query("SELECT id, fcm_token FROM devices WHERE id = $1", [deviceId]);
-  return fallback.rows[0] || null;
+  return null;
 }
 
 /**
@@ -87,14 +85,7 @@ router.get("/", requireAuth, async (req, res, next) => {
                 consent_given_at, last_seen_at, created_at
          FROM devices WHERE tenant_id = $1 ORDER BY created_at DESC`;
     const params = req.auth.role === "super_admin" ? [] : [req.auth.tenantId];
-    let result = await pool.query(query, params);
-    if (result.rows.length === 0 && req.auth.role !== "super_admin") {
-      result = await pool.query(
-        `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at
-         FROM devices ORDER BY created_at DESC`
-      );
-    }
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     next(err);
@@ -117,18 +108,9 @@ router.get("/:id", requireAuth, async (req, res, next) => {
                 instagram_account
          FROM devices WHERE id = $1 AND tenant_id = $2`;
     const params = req.auth.role === "super_admin" ? [req.params.id] : [req.params.id, req.auth.tenantId];
-    let deviceResult = await pool.query(query, params);
+    const deviceResult = await pool.query(query, params);
     if (deviceResult.rows.length === 0) {
-      deviceResult = await pool.query(
-        `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
-                instagram_account
-         FROM devices WHERE id = $1`,
-        [req.params.id]
-      );
-      if (deviceResult.rows.length === 0) {
-        return res.status(404).json({ error: "Device not found" });
-      }
+      return res.status(404).json({ error: "Device not found" });
     }
 
     const flagsResult = await pool.query(

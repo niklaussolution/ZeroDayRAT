@@ -11,16 +11,16 @@ export default function Layout() {
     navigate("/login");
   }
 
-  const isAdmin = user?.role === "super_admin" || user?.role === "owner";
+  const isSuperAdmin = user?.role === "super_admin";
 
   return (
     <div className="min-h-screen bg-background">
       <header className="bg-primary-dark text-white px-6 py-4 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-8">
-          <Link to={isAdmin ? "/admin" : "/devices"} className="text-lg font-bold tracking-tight hover:text-gray-200 transition">
+          <Link to={isSuperAdmin ? "/admin" : "/devices"} className="text-lg font-bold tracking-tight hover:text-gray-200 transition">
             Spapp Monitor
           </Link>
-          {isAdmin && (
+          {isSuperAdmin && (
             <nav className="flex items-center gap-2 text-sm">
               <Link
                 to="/admin"
