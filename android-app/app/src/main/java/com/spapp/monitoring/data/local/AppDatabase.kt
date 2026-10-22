@@ -14,8 +14,9 @@ import androidx.room.RoomDatabase
     entities = [
         PendingSyncItem::class, AppUsageEntry::class, SmsLogEntry::class, CallLogEntry::class,
         WebHistoryEntry::class, WhatsAppMessageEntry::class, InstagramMessageEntry::class,
+        SavedContactEntry::class,
     ],
-    version = 13, // v13: added WhatsApp reelUrl
+    version = 14, // v14: added SavedContactEntry with storage location type
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,6 +27,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun webHistoryDao(): WebHistoryDao
     abstract fun whatsAppMessageDao(): WhatsAppMessageDao
     abstract fun instagramMessageDao(): InstagramMessageDao
+    abstract fun savedContactDao(): SavedContactDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

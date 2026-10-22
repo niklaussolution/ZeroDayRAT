@@ -15,6 +15,7 @@ import WebHistoryCard from "../components/WebHistoryCard";
 import AlertsCard from "../components/AlertsCard";
 import BlockRulesCard from "../components/BlockRulesCard";
 import AppsCard from "../components/AppsCard";
+import SavedContactsCard from "../components/SavedContactsCard";
 
 export default function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -188,6 +189,10 @@ export default function DeviceDetailPage() {
 
         <div className="lg:col-span-2">
           <AppsCard deviceId={id} />
+        </div>
+
+        <div className="lg:col-span-2">
+          <SavedContactsCard deviceId={id} />
         </div>
 
         <div className="lg:col-span-2">

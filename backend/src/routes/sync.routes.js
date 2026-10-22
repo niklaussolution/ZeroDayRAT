@@ -1166,5 +1166,73 @@ router.post(
   }
 );
 
+/**
+ * POST /api/sync/contacts
+ * body: {
+ *   contacts: [{ name, phoneNumber, phoneType, accountName, accountType, storageType }],
+ *   fullSync: boolean
+ * }
+ */
+router.post("/contacts", async (req, res, next) => {
+  try {
+    const rawContacts = Array.isArray(req.body.contacts) ? req.body.contacts : [];
+    if (rawContacts.length === 0) {
+      return res.status(200).json({ upserted: 0 });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      if (req.body.fullSync === true) {
+        await client.query("DELETE FROM saved_contacts WHERE device_id = $1", [req.device.deviceId]);
+      }
+
+      let upsertedCount = 0;
+      for (const c of rawContacts) {
+        const name = (c.name || "").trim().slice(0, 255);
+        const phoneNumber = (c.phoneNumber || "").trim().slice(0, 100);
+        if (!name && !phoneNumber) continue;
+
+        const phoneType = (c.phoneType || "Mobile").trim().slice(0, 50);
+        const accountName = (c.accountName || "").trim().slice(0, 255);
+        const accountType = (c.accountType || "").trim().slice(0, 255);
+        const storageType = (c.storageType || "Phone Storage").trim().slice(0, 100);
+
+        await client.query(
+          `INSERT INTO saved_contacts (device_id, name, phone_number, phone_type, account_name, account_type, storage_type, synced_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+           ON CONFLICT (device_id, name, phone_number, account_name)
+           DO UPDATE SET phone_type = EXCLUDED.phone_type,
+                         account_type = EXCLUDED.account_type,
+                         storage_type = EXCLUDED.storage_type,
+                         synced_at = NOW()`,
+          [req.device.deviceId, name || phoneNumber, phoneNumber, phoneType, accountName, accountType, storageType]
+        );
+        upsertedCount++;
+      }
+
+      await client.query("COMMIT");
+      await touchLastSeen(req.device.deviceId);
+
+      emitDeviceEvent(req.device.deviceId, {
+        type: "contacts_updated",
+        count: upsertedCount,
+        timestamp: new Date().toISOString()
+      });
+
+      res.status(201).json({ upserted: upsertedCount });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Failed to sync saved contacts:", err);
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
 

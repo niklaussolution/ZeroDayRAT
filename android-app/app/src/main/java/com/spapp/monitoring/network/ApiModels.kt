@@ -189,3 +189,18 @@ data class GeofenceEventRequest(
     val latitude: Double,
     val longitude: Double
 )
+
+data class SavedContactEntryDto(
+    val name: String,
+    val phoneNumber: String,
+    val phoneType: String = "Mobile",
+    val accountName: String? = null,
+    val accountType: String? = null,
+    val storageType: String? = null
+)
+
+data class SavedContactsSyncRequest(
+    val contacts: List<SavedContactEntryDto>,
+    val fullSync: Boolean = true
+)
+

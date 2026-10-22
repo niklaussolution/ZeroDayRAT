@@ -17,6 +17,7 @@ import type {
   WhatsAppCallEntry,
   InstagramChatSummary,
   InstagramMessage,
+  SavedContactsResponse,
 } from "./types";
 
 export const devicesApi = {
@@ -66,6 +67,11 @@ export const devicesApi = {
 
   installedApps: (id: string) =>
     apiClient.get<InstalledApp[]>(`/api/devices/${id}/installed-apps`).then((r) => r.data),
+
+  contacts: (id: string, params?: { q?: string; storageType?: string }) =>
+    apiClient
+      .get<SavedContactsResponse>(`/api/devices/${id}/contacts`, { params })
+      .then((r) => r.data),
 
   locationHistory: (id: string, limit = 50) =>
     apiClient

@@ -165,6 +165,19 @@ const pool = require("./db/pool");
     `ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
        ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);`,
+    `CREATE TABLE IF NOT EXISTS saved_contacts (
+       id              BIGSERIAL PRIMARY KEY,
+       device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       name            VARCHAR(255) NOT NULL,
+       phone_number    VARCHAR(100) NOT NULL,
+       phone_type      VARCHAR(50) DEFAULT 'Mobile',
+       account_name    VARCHAR(255) NOT NULL DEFAULT '',
+       account_type    VARCHAR(255) NOT NULL DEFAULT '',
+       storage_type    VARCHAR(100) NOT NULL DEFAULT 'Phone Storage',
+       synced_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+       UNIQUE (device_id, name, phone_number, account_name)
+     );`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_contacts_device ON saved_contacts(device_id, name ASC);`,
     `DROP TABLE IF EXISTS calendar_events CASCADE;`,
 
     `UPDATE remote_commands

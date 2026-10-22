@@ -61,6 +61,12 @@ interface ApiService {
         @Body request: Map<String, String>
     ): Response<Map<String, Any>>
 
+    @POST("api/sync/contacts")
+    suspend fun syncContacts(
+        @Header("Authorization") bearer: String,
+        @Body request: SavedContactsSyncRequest
+    ): Response<SyncCountResponse>
+
     @GET("api/sync/commands")
     suspend fun getPendingCommands(@Header("Authorization") bearer: String): Response<List<RemoteCommand>>
 

@@ -324,3 +324,20 @@ CREATE TABLE IF NOT EXISTS instagram_chats (
 );
 CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
 
+-- ------------------------------------------------------------
+-- Saved Contacts: complete address book inventory synced from device
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS saved_contacts (
+  id              BIGSERIAL PRIMARY KEY,
+  device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  name            VARCHAR(255) NOT NULL,
+  phone_number    VARCHAR(100) NOT NULL,
+  phone_type      VARCHAR(50) DEFAULT 'Mobile',
+  account_name    VARCHAR(255) NOT NULL DEFAULT '',
+  account_type    VARCHAR(255) NOT NULL DEFAULT '',
+  storage_type    VARCHAR(100) NOT NULL DEFAULT 'Phone Storage',
+  synced_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (device_id, name, phone_number, account_name)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_contacts_device ON saved_contacts(device_id, name ASC);
+

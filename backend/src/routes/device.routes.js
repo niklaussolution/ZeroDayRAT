@@ -217,6 +217,7 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
     await client.query("DELETE FROM call_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM app_usage_logs WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM installed_apps WHERE device_id = $1", [deviceId]);
+    await client.query("DELETE FROM saved_contacts WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM block_rules WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM alerts WHERE device_id = $1", [deviceId]);
     await client.query("DELETE FROM remote_commands WHERE device_id = $1", [deviceId]);
@@ -416,6 +417,121 @@ router.get("/:id/installed-apps", requireAuth, async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * Helper to ensure saved_contacts table exists
+ */
+async function ensureSavedContactsTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS saved_contacts (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        name            VARCHAR(255) NOT NULL,
+        phone_number    VARCHAR(100) NOT NULL,
+        phone_type      VARCHAR(50) DEFAULT 'Mobile',
+        account_name    VARCHAR(255) NOT NULL DEFAULT '',
+        account_type    VARCHAR(255) NOT NULL DEFAULT '',
+        storage_type    VARCHAR(100) NOT NULL DEFAULT 'Phone Storage',
+        synced_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (device_id, name, phone_number, account_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_saved_contacts_device ON saved_contacts(device_id, name ASC);
+    `);
+  } catch (e) {
+    console.warn("ensureSavedContactsTable notice:", e.message);
+  }
+}
+
+/**
+ * GET /api/devices/:id/contacts
+ * Returns complete saved contacts address book with storage location categorization.
+ */
+router.get("/:id/contacts", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const fetchContacts = async () => {
+      const q = req.query.q ? String(req.query.q).trim() : "";
+      const storageType = req.query.storageType ? String(req.query.storageType).trim() : "";
+
+      let query = `SELECT id, name, phone_number, phone_type, account_name, account_type, storage_type, synced_at
+                   FROM saved_contacts
+                   WHERE device_id = $1`;
+      const params = [req.params.id];
+      let idx = 2;
+
+      if (q) {
+        query += ` AND (
+          LOWER(name) LIKE '%' || LOWER($${idx}) || '%'
+          OR LOWER(phone_number) LIKE '%' || LOWER($${idx}) || '%'
+          OR LOWER(account_name) LIKE '%' || LOWER($${idx}) || '%'
+          OR LOWER(storage_type) LIKE '%' || LOWER($${idx}) || '%'
+        )`;
+        params.push(q);
+        idx++;
+      }
+
+      if (storageType) {
+        if (storageType.toLowerCase() === "sim") {
+          query += ` AND LOWER(storage_type) LIKE '%sim%'`;
+        } else if (storageType.toLowerCase() === "google" || storageType.toLowerCase() === "mail") {
+          query += ` AND (LOWER(storage_type) LIKE '%@%' OR LOWER(account_type) LIKE '%google%')`;
+        } else if (storageType.toLowerCase() === "phone" || storageType.toLowerCase() === "device") {
+          query += ` AND (LOWER(storage_type) LIKE '%phone%' OR LOWER(storage_type) LIKE '%device%')`;
+        } else {
+          query += ` AND LOWER(storage_type) = LOWER($${idx})`;
+          params.push(storageType);
+          idx++;
+        }
+      }
+
+      query += ` ORDER BY name ASC, phone_number ASC LIMIT 2000`;
+
+      const listResult = await pool.query(query, params);
+
+      const countsResult = await pool.query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(CASE WHEN LOWER(storage_type) LIKE '%sim%' THEN 1 END)::int AS sim_count,
+           COUNT(CASE WHEN LOWER(storage_type) LIKE '%@%' OR LOWER(account_type) LIKE '%google%' THEN 1 END)::int AS google_count,
+           COUNT(CASE WHEN LOWER(storage_type) LIKE '%phone%' OR LOWER(storage_type) LIKE '%device%' THEN 1 END)::int AS phone_count
+         FROM saved_contacts
+         WHERE device_id = $1`,
+        [req.params.id]
+      );
+
+      const counts = countsResult.rows[0] || { total: 0, sim_count: 0, google_count: 0, phone_count: 0 };
+
+      return {
+        contacts: listResult.rows,
+        total: counts.total,
+        breakdown: {
+          total: counts.total,
+          sim: counts.sim_count,
+          google: counts.google_count,
+          phone: counts.phone_count
+        }
+      };
+    };
+
+    try {
+      const data = await fetchContacts();
+      res.json(data);
+    } catch (dbErr) {
+      if (dbErr.code === "42P01") {
+        await ensureSavedContactsTable();
+        const retryData = await fetchContacts();
+        return res.json(retryData);
+      }
+      throw dbErr;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 
 /**

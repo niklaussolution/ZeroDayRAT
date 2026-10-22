@@ -226,3 +226,26 @@ export interface BlockRule {
   active: boolean;
   created_at: string;
 }
+
+export interface SavedContact {
+  id: string;
+  name: string;
+  phone_number: string;
+  phone_type: string;
+  account_name: string;
+  account_type: string;
+  storage_type: string;
+  synced_at: string;
+}
+
+export interface SavedContactsResponse {
+  contacts: SavedContact[];
+  total: number;
+  breakdown: {
+    total: number;
+    sim: number;
+    google: number;
+    phone: number;
+  };
+}
+
