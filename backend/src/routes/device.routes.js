@@ -1381,4 +1381,190 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/devices/:id/audio-recordings
+ * Lists audio recordings for this device (excludes audio_base64 for performance)
+ */
+router.get("/:id/audio-recordings", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const result = await pool.query(
+      `SELECT id, device_id, filename, file_url, duration_seconds, file_size_bytes,
+              sample_rate, channels, created_at
+       FROM audio_recordings
+       WHERE device_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [req.params.id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/devices/:id/audio-recordings
+ * Saves a new MP3 audio recording snippet
+ */
+router.post(
+  "/:id/audio-recordings",
+  requireAuth,
+  [
+    body("filename").isString().trim().notEmpty(),
+    body("audioBase64").isString().notEmpty(),
+  ],
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Validation failed", details: errors.array() });
+    }
+
+    try {
+      const device = await checkDeviceAccess(req.params.id, req.auth);
+      if (!device) return res.status(404).json({ error: "Device not found" });
+
+      const {
+        filename,
+        audioBase64,
+        durationSeconds = 0,
+        sampleRate = 44100,
+        channels = 2,
+        fileSizeBytes = 0,
+      } = req.body;
+
+      const tenantId = req.auth.tenantId || "super_admin";
+      const sizeBytes = fileSizeBytes || Math.round((audioBase64.length * 3) / 4);
+
+      const result = await pool.query(
+        `INSERT INTO audio_recordings (
+          device_id, tenant_id, filename, duration_seconds, file_size_bytes,
+          sample_rate, channels, audio_base64
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id, device_id, filename, duration_seconds, file_size_bytes,
+                  sample_rate, channels, created_at`,
+        [
+          req.params.id,
+          tenantId,
+          filename,
+          durationSeconds,
+          sizeBytes,
+          sampleRate,
+          channels,
+          audioBase64,
+        ]
+      );
+
+      const recording = result.rows[0];
+      recording.file_url = `/api/devices/${req.params.id}/audio-recordings/${recording.id}/download`;
+
+      await pool.query(
+        "UPDATE audio_recordings SET file_url = $1 WHERE id = $2",
+        [recording.file_url, recording.id]
+      );
+
+      res.status(201).json(recording);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/devices/:id/audio-recordings/:recordingId/stream
+ * Streams MP3 audio inline for browser <audio> elements
+ */
+router.get("/:id/audio-recordings/:recordingId/stream", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const result = await pool.query(
+      `SELECT filename, audio_base64, file_size_bytes
+       FROM audio_recordings
+       WHERE id = $1 AND device_id = $2`,
+      [req.params.recordingId, req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Recording not found" });
+    }
+
+    const row = result.rows[0];
+    const buffer = Buffer.from(row.audio_base64, "base64");
+
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": buffer.length,
+      "Content-Disposition": `inline; filename="${row.filename}"`,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=86400",
+    });
+
+    res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/devices/:id/audio-recordings/:recordingId/download
+ * Downloads MP3 file directly as attachment
+ */
+router.get("/:id/audio-recordings/:recordingId/download", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const result = await pool.query(
+      `SELECT filename, audio_base64, file_size_bytes
+       FROM audio_recordings
+       WHERE id = $1 AND device_id = $2`,
+      [req.params.recordingId, req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Recording not found" });
+    }
+
+    const row = result.rows[0];
+    const buffer = Buffer.from(row.audio_base64, "base64");
+
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": buffer.length,
+      "Content-Disposition": `attachment; filename="${row.filename}"`,
+      "Accept-Ranges": "bytes",
+    });
+
+    res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/devices/:id/audio-recordings/:recordingId
+ * Deletes a recording
+ */
+router.delete("/:id/audio-recordings/:recordingId", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    await pool.query(
+      "DELETE FROM audio_recordings WHERE id = $1 AND device_id = $2",
+      [req.params.recordingId, req.params.id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
+

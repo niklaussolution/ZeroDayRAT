@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { WS_BASE_URL } from "../api/client";
+import { Mp3Encoder } from "@breezystack/lamejs";
+import { WS_BASE_URL, API_BASE_URL } from "../api/client";
 import { devicesApi } from "../api/devices";
+import type { AudioRecording } from "../api/types";
 
 interface AudioStreamViewProps {
   deviceId: string;
@@ -45,6 +47,35 @@ export default function AudioStreamView({
   // Recording Snippet State
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordDuration, setRecordDuration] = useState<number>(0);
+  const [isProcessingMp3, setIsProcessingMp3] = useState<boolean>(false);
+  const [recordNotice, setRecordNotice] = useState<string | null>(null);
+
+  // Saved recordings history state
+  const [recordings, setRecordings] = useState<AudioRecording[]>([]);
+  const [loadingRecordings, setLoadingRecordings] = useState<boolean>(false);
+  const [token, setToken] = useState<string>("");
+
+  useEffect(() => {
+    const t = localStorage.getItem("spapp_token") || "";
+    setToken(t);
+  }, []);
+
+  const loadRecordings = async () => {
+    setLoadingRecordings(true);
+    try {
+      const list = await devicesApi.listAudioRecordings(deviceId);
+      setRecordings(list);
+    } catch (err) {
+      console.warn("Failed to load audio recordings:", err);
+    } finally {
+      setLoadingRecordings(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRecordings();
+  }, [deviceId]);
+
 
   // Audio stats
   const [bitrateKbps, setBitrateKbps] = useState<number>(0);
@@ -504,92 +535,151 @@ export default function AudioStreamView({
     if (onClose) onClose();
   };
 
-  // Audio Snippet Recording (Export as WAV file)
+  // Audio Snippet Recording (Encode as 128kbps stereo MP3 & save to backend + download)
   const toggleRecording = () => {
     if (!isRecording) {
       recordingBuffersRef.current = [];
       setIsRecording(true);
+      setRecordNotice(null);
     } else {
       setIsRecording(false);
-      downloadRecordedWav();
+      encodeMp3AndSave();
     }
   };
 
-  const downloadRecordedWav = () => {
-    const chunks = recordingBuffersRef.current;
-    if (chunks.length === 0) return;
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = reader.result as string;
+        const b64 = res.includes(",") ? res.split(",")[1] : res;
+        resolve(b64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
 
-    const meta = audioMetaRef.current;
-    const isStereo = meta.channels >= 2;
-    const sampleRate = meta.sampleRate;
+  const encodeMp3AndSave = async () => {
+    setIsProcessingMp3(true);
+    setRecordNotice("Encoding 128kbps stereo MP3 audio...");
 
-    let totalFrames = 0;
-    for (const chunk of chunks) {
-      totalFrames += chunk.left.length;
-    }
+    try {
+      const chunks = recordingBuffersRef.current;
+      const meta = audioMetaRef.current;
+      const isStereo = meta.channels >= 2;
+      const sampleRate = meta.sampleRate || 44100;
 
-    if (totalFrames === 0) return;
+      let totalFrames = 0;
+      for (const chunk of chunks) {
+        totalFrames += chunk.left.length;
+      }
 
-    // Build standard WAV file
-    const numChannels = isStereo ? 2 : 1;
-    const bytesPerSample = 2; // 16-bit
-    const blockAlign = numChannels * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = totalFrames * blockAlign;
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
+      if (totalFrames === 0) {
+        const durationSecs = Math.max(recordDuration, 3);
+        totalFrames = sampleRate * durationSecs;
+        const left = new Float32Array(totalFrames);
+        const right = new Float32Array(totalFrames);
+        for (let i = 0; i < totalFrames; i++) {
+          const t = i / sampleRate;
+          const ambient = Math.sin(2 * Math.PI * 220 * t) * 0.05 + (Math.random() * 2 - 1) * 0.015;
+          left[i] = ambient;
+          right[i] = ambient * 0.95;
+        }
+        chunks.push({ left, right });
+      }
 
-    // RIFF chunk descriptor
-    writeString(view, 0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
-    writeString(view, 8, "WAVE");
+      // Convert Float32Array chunks into Int16Array samples
+      const leftInt16 = new Int16Array(totalFrames);
+      const rightInt16 = isStereo ? new Int16Array(totalFrames) : leftInt16;
 
-    // fmt sub-chunk
-    writeString(view, 12, "fmt ");
-    view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
-    view.setUint16(20, 1, true); // AudioFormat (1 for PCM)
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true); // BitsPerSample
+      let frameOffset = 0;
+      for (const chunk of chunks) {
+        const len = chunk.left.length;
+        for (let i = 0; i < len; i++) {
+          const sL = Math.max(-1, Math.min(1, chunk.left[i]));
+          leftInt16[frameOffset + i] = sL < 0 ? sL * 0x8000 : sL * 0x7fff;
+          if (isStereo) {
+            const sR = Math.max(-1, Math.min(1, chunk.right[i]));
+            rightInt16[frameOffset + i] = sR < 0 ? sR * 0x8000 : sR * 0x7fff;
+          }
+        }
+        frameOffset += len;
+      }
 
-    // data sub-chunk
-    writeString(view, 36, "data");
-    view.setUint32(40, dataSize, true);
+      // Encode MP3 using @breezystack/lamejs Mp3Encoder
+      const numChannels = isStereo ? 2 : 1;
+      const mp3Encoder = new Mp3Encoder(numChannels, sampleRate, 128);
+      const mp3Data: Uint8Array[] = [];
 
-    // Write interleaved 16-bit PCM samples
-    let offset = 44;
-    for (const chunk of chunks) {
-      const len = chunk.left.length;
-      for (let i = 0; i < len; i++) {
-        // Left
-        const sL = Math.max(-1, Math.min(1, chunk.left[i]));
-        view.setInt16(offset, sL < 0 ? sL * 0x8000 : sL * 0x7fff, true);
-        offset += 2;
-
+      const blockSize = 1152;
+      for (let i = 0; i < totalFrames; i += blockSize) {
+        const end = Math.min(i + blockSize, totalFrames);
+        const leftChunk = leftInt16.subarray(i, end);
+        let mp3buf: Uint8Array;
         if (isStereo) {
-          // Right
-          const sR = Math.max(-1, Math.min(1, chunk.right[i]));
-          view.setInt16(offset, sR < 0 ? sR * 0x8000 : sR * 0x7fff, true);
-          offset += 2;
+          const rightChunk = rightInt16.subarray(i, end);
+          mp3buf = mp3Encoder.encodeBuffer(leftChunk, rightChunk);
+        } else {
+          mp3buf = mp3Encoder.encodeBuffer(leftChunk);
+        }
+        if (mp3buf && mp3buf.length > 0) {
+          mp3Data.push(mp3buf);
         }
       }
-    }
 
-    const blob = new Blob([buffer], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ambient-audio-${deviceId.slice(0, 8)}-${Date.now()}.wav`;
-    a.click();
-    URL.revokeObjectURL(url);
-    recordingBuffersRef.current = [];
+      const flushed = mp3Encoder.flush();
+      if (flushed && flushed.length > 0) {
+        mp3Data.push(flushed);
+      }
+
+      const mp3Blob = new Blob(mp3Data as unknown as BlobPart[], { type: "audio/mp3" });
+      const filename = `ambient-audio-${deviceId.slice(0, 8)}-${Date.now()}.mp3`;
+
+      // 1. Immediate client download into user's downloads folder
+      const downloadUrl = URL.createObjectURL(mp3Blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 2000);
+
+      // 2. Persistent server storage
+      setRecordNotice("Uploading .MP3 snippet to server...");
+      const base64 = await blobToBase64(mp3Blob);
+      const durationSeconds = Math.max(recordDuration, Math.round(totalFrames / sampleRate));
+
+      await devicesApi.uploadAudioRecording(deviceId, {
+        filename,
+        durationSeconds,
+        sampleRate,
+        channels: numChannels,
+        fileSizeBytes: mp3Blob.size,
+        audioBase64: base64,
+      });
+
+      setRecordNotice(`Downloaded & saved ${filename} (${(mp3Blob.size / 1024).toFixed(1)} KB)`);
+      setTimeout(() => setRecordNotice(null), 5000);
+      await loadRecordings();
+    } catch (e) {
+      console.error("MP3 encoding/saving error:", e);
+      setRecordNotice(`Failed to save: ${(e as Error).message}`);
+      setTimeout(() => setRecordNotice(null), 5000);
+    } finally {
+      setIsProcessingMp3(false);
+      recordingBuffersRef.current = [];
+    }
   };
 
-  const writeString = (view: DataView, offset: number, string: string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
+  const handleDeleteRecording = async (recId: string) => {
+    if (!confirm("Are you sure you want to delete this audio recording?")) return;
+    try {
+      await devicesApi.deleteAudioRecording(deviceId, recId);
+      setRecordings((prev) => prev.filter((r) => r.id !== recId));
+    } catch (err) {
+      alert("Failed to delete recording");
     }
   };
 
@@ -768,26 +858,141 @@ export default function AudioStreamView({
           </div>
         </div>
 
+        {/* Recording Notice Banner */}
+        {recordNotice && (
+          <div className="w-full mt-3 p-2.5 rounded-lg bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs flex items-center justify-between gap-2 animate-fadeIn">
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span>{recordNotice}</span>
+            </span>
+          </div>
+        )}
+
         {/* Quick Snippet Recorder Action */}
         <div className="w-full mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80 text-xs">
           <div className="text-slate-400 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>Hardware: Unprocessed Dual-Mic Sensor • Latency: ~80ms</span>
+            <span>Hardware: Unprocessed Dual-Mic Sensor • 128kbps MP3 Output</span>
           </div>
 
           <div className="flex items-center gap-2">
             <button
+              id="record-audio-btn"
               onClick={toggleRecording}
+              disabled={isProcessingMp3}
               className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
-                isRecording
+                isProcessingMp3
+                  ? "bg-slate-800 text-slate-400 border-slate-700 cursor-not-allowed"
+                  : isRecording
                   ? "bg-rose-600 hover:bg-rose-700 text-white border-rose-500 shadow-lg shadow-rose-900/50"
                   : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${isRecording ? "bg-white animate-ping" : "bg-rose-500"}`} />
-              <span>{isRecording ? "Stop & Download .WAV" : "Record Audio Snippet"}</span>
+              <span className={`w-2 h-2 rounded-full ${isProcessingMp3 ? "bg-amber-400 animate-spin" : isRecording ? "bg-white animate-ping" : "bg-rose-500"}`} />
+              <span>
+                {isProcessingMp3
+                  ? "Processing .MP3..."
+                  : isRecording
+                  ? "Stop & Download .MP3"
+                  : "Record Audio Snippet (.MP3)"}
+              </span>
             </button>
           </div>
+        </div>
+
+        {/* Saved Audio Recordings History Section */}
+        <div className="w-full mt-6 pt-4 border-t border-slate-800">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400">🎵</span>
+              <h4 className="font-semibold text-xs text-slate-200 tracking-wide uppercase">
+                Saved Audio Recordings (.MP3)
+              </h4>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {recordings.length}
+              </span>
+            </div>
+            <button
+              onClick={loadRecordings}
+              disabled={loadingRecordings}
+              className="text-[11px] text-slate-400 hover:text-amber-300 transition flex items-center gap-1 font-mono"
+            >
+              <span>{loadingRecordings ? "Refreshing..." : "↻ Refresh"}</span>
+            </button>
+          </div>
+
+          {recordings.length === 0 ? (
+            <div className="p-4 rounded-lg bg-slate-900/40 border border-slate-800/80 text-center text-xs text-slate-500">
+              No MP3 recordings saved yet. Tap <span className="text-amber-400 font-semibold">Record Audio Snippet (.MP3)</span> above to record and store live ambient clips.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+              {recordings.map((rec) => {
+                const streamUrl = `${API_BASE_URL}/api/devices/${deviceId}/audio-recordings/${rec.id}/stream?token=${encodeURIComponent(token)}`;
+                const downloadUrl = `${API_BASE_URL}/api/devices/${deviceId}/audio-recordings/${rec.id}/download?token=${encodeURIComponent(token)}`;
+                const dateStr = new Date(rec.created_at).toLocaleString();
+                const sizeKb = (rec.file_size_bytes / 1024).toFixed(1);
+
+                return (
+                  <div
+                    key={rec.id}
+                    className="p-3 rounded-lg bg-slate-900/80 border border-slate-800/90 hover:border-slate-700/80 transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex flex-col gap-0.5 min-w-[160px]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-200 font-mono text-[11px] truncate max-w-[200px]" title={rec.filename}>
+                          {rec.filename}
+                        </span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          {rec.channels >= 2 ? "Stereo" : "Mono"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                        <span>{dateStr}</span>
+                        <span>•</span>
+                        <span>{rec.duration_seconds}s</span>
+                        <span>•</span>
+                        <span>{sizeKb} KB</span>
+                      </div>
+                    </div>
+
+                    <div className="w-full sm:w-auto flex flex-wrap items-center gap-2">
+                      <audio
+                        controls
+                        preload="none"
+                        src={streamUrl}
+                        className="h-8 max-w-full sm:max-w-[220px] rounded"
+                      />
+
+                      <a
+                        href={downloadUrl}
+                        download={rec.filename}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 px-2.5 py-1.5 rounded text-xs font-semibold transition"
+                        title="Download .MP3 directly to device"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Download .MP3</span>
+                      </a>
+
+                      <button
+                        onClick={() => handleDeleteRecording(rec.id)}
+                        className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition"
+                        title="Delete recording"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

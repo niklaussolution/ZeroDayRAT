@@ -249,3 +249,16 @@ export interface SavedContactsResponse {
   };
 }
 
+export interface AudioRecording {
+  id: string;
+  device_id: string;
+  filename: string;
+  file_url: string;
+  duration_seconds: number;
+  file_size_bytes: number;
+  sample_rate: number;
+  channels: number;
+  created_at: string;
+}
+
+

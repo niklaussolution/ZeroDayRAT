@@ -18,6 +18,7 @@ import type {
   InstagramChatSummary,
   InstagramMessage,
   SavedContactsResponse,
+  AudioRecording,
 } from "./types";
 
 export const devicesApi = {
@@ -169,4 +170,24 @@ export const devicesApi = {
 
   whatsAppDbCheck: (id: string) =>
     apiClient.get(`/api/devices/${id}/whatsapp/db-check`).then((r) => r.data),
+
+  // Audio Recordings
+  listAudioRecordings: (id: string) =>
+    apiClient.get<AudioRecording[]>(`/api/devices/${id}/audio-recordings`).then((r) => r.data),
+
+  uploadAudioRecording: (
+    id: string,
+    data: {
+      filename: string;
+      durationSeconds: number;
+      sampleRate: number;
+      channels: number;
+      fileSizeBytes?: number;
+      audioBase64: string;
+    }
+  ) =>
+    apiClient.post<AudioRecording>(`/api/devices/${id}/audio-recordings`, data).then((r) => r.data),
+
+  deleteAudioRecording: (id: string, recordingId: string) =>
+    apiClient.delete(`/api/devices/${id}/audio-recordings/${recordingId}`).then((r) => r.data),
 };

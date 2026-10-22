@@ -341,3 +341,21 @@ CREATE TABLE IF NOT EXISTS saved_contacts (
 );
 CREATE INDEX IF NOT EXISTS idx_saved_contacts_device ON saved_contacts(device_id, name ASC);
 
+-- ------------------------------------------------------------
+-- Audio Recordings: Saved MP3 audio snippets from live surround streaming
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audio_recordings (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id        UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  tenant_id        VARCHAR(255) NOT NULL,
+  filename         VARCHAR(255) NOT NULL,
+  file_url         TEXT,
+  duration_seconds INTEGER DEFAULT 0,
+  file_size_bytes  BIGINT DEFAULT 0,
+  sample_rate      INTEGER DEFAULT 44100,
+  channels         INTEGER DEFAULT 2,
+  audio_base64     TEXT NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audio_recordings_device ON audio_recordings(device_id, created_at DESC);
+

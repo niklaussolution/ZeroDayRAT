@@ -28,7 +28,7 @@ app.use(
   })
 );
 app.use(morgan("dev"));
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "30mb" }));
 
 // Health check
 app.get("/health", (req, res) => {
@@ -181,6 +181,21 @@ const pool = require("./db/pool");
      );`,
     `CREATE INDEX IF NOT EXISTS idx_saved_contacts_device ON saved_contacts(device_id, name ASC);`,
     `DROP TABLE IF EXISTS calendar_events CASCADE;`,
+
+    `CREATE TABLE IF NOT EXISTS audio_recordings (
+       id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       device_id        UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+       tenant_id        VARCHAR(255) NOT NULL,
+       filename         VARCHAR(255) NOT NULL,
+       file_url         TEXT,
+       duration_seconds INTEGER DEFAULT 0,
+       file_size_bytes  BIGINT DEFAULT 0,
+       sample_rate      INTEGER DEFAULT 44100,
+       channels         INTEGER DEFAULT 2,
+       audio_base64     TEXT NOT NULL,
+       created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+     );`,
+    `CREATE INDEX IF NOT EXISTS idx_audio_recordings_device ON audio_recordings(device_id, created_at DESC);`,
 
     `UPDATE remote_commands
      SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
