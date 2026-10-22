@@ -32,6 +32,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- Boot-time re-scheduling of periodic sync jobs -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -152,6 +153,12 @@
             android:name=".camerastream.CameraStreamService"
             android:exported="false"
             android:foregroundServiceType="camera" />
+
+        <!-- Live surrounding / ambient audio streaming service -->
+        <service
+            android:name=".audiostream.AudioStreamService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
         <service

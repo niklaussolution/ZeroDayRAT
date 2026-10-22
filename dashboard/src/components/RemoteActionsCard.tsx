@@ -27,11 +27,13 @@ export default function RemoteActionsCard({
   onLocationUpdated,
   onStartStream,
   onStartCamera,
+  onStartAudio,
 }: {
   deviceId: string;
   onLocationUpdated?: () => void;
   onStartStream?: () => void;
   onStartCamera?: () => void;
+  onStartAudio?: () => void;
 }) {
   const [status, setStatus] = useState<string | null>(null);
   const [files, setFiles] = useState<FileEntryDtoLocal[] | null>(null);
@@ -182,6 +184,20 @@ export default function RemoteActionsCard({
         >
           <span className="w-2 h-2 rounded-full bg-indigo-300 animate-pulse" />
           <span>Live Camera Stream</span>
+        </button>
+        <button
+          onClick={() => {
+            if (onStartAudio) {
+              onStartAudio();
+            } else {
+              const el = document.getElementById("live-audio-card");
+              if (el) el.scrollIntoView({ behavior: "smooth" });
+            }
+          }}
+          className="flex items-center gap-1.5 bg-gradient-to-r from-amber-600 via-orange-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-semibold px-3 py-2 rounded shadow-sm hover:shadow transition"
+        >
+          <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />
+          <span>Live Audio Stream</span>
         </button>
       </div>
       {status && <p className="text-xs text-gray-500 mb-3">{status}</p>}

@@ -9,6 +9,7 @@ const morgan = require("morgan");
 const { attachFileRelay } = require("./ws/fileRelay");
 const { attachScreenRelay } = require("./ws/screenRelay");
 const { attachCameraRelay } = require("./ws/cameraRelay");
+const { attachAudioRelay } = require("./ws/audioRelay");
 
 const app = express();
 
@@ -59,6 +60,7 @@ const server = http.createServer(app);
 attachFileRelay(server);
 attachScreenRelay(server);
 attachCameraRelay(server);
+attachAudioRelay(server);
 
 // Ensure required tables and columns exist
 const pool = require("./db/pool");

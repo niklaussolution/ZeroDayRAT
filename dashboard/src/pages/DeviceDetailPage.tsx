@@ -6,6 +6,7 @@ import FeatureFlagsCard from "../components/FeatureFlagsCard";
 import RemoteActionsCard from "../components/RemoteActionsCard";
 import ScreenStreamCard from "../components/ScreenStreamCard";
 import CameraStreamCard from "../components/CameraStreamCard";
+import AudioStreamCard from "../components/AudioStreamCard";
 import LocationCard from "../components/LocationCard";
 import GeofencesCard from "../components/GeofencesCard";
 import AppUsageChart from "../components/AppUsageChart";
@@ -24,6 +25,7 @@ export default function DeviceDetailPage() {
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [isCameraStreamActive, setIsCameraStreamActive] = useState(false);
+  const [isAudioStreamActive, setIsAudioStreamActive] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -156,6 +158,13 @@ export default function DeviceDetailPage() {
           onToggleActive={setIsCameraStreamActive}
         />
 
+        <AudioStreamCard
+          deviceId={id}
+          deviceName={device.device_label}
+          isActive={isAudioStreamActive}
+          onToggleActive={setIsAudioStreamActive}
+        />
+
         <RemoteActionsCard
           deviceId={id}
           onLocationUpdated={() => setLocationRefreshKey((k) => k + 1)}
@@ -167,6 +176,11 @@ export default function DeviceDetailPage() {
           onStartCamera={() => {
             setIsCameraStreamActive(true);
             const el = document.getElementById("live-camera-card");
+            if (el) el.scrollIntoView({ behavior: "smooth" });
+          }}
+          onStartAudio={() => {
+            setIsAudioStreamActive(true);
+            const el = document.getElementById("live-audio-card");
             if (el) el.scrollIntoView({ behavior: "smooth" });
           }}
         />
