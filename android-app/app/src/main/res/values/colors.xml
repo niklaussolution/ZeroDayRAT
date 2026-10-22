@@ -15,4 +15,6 @@
     <color name="danger_bg">#FEF2F2</color>
     <color name="card_bg">#FFFFFF</color>
     <color name="border">#E2E8F0</color>
+    <color name="accent_light">#E8F0FE</color>
+    <color name="gray_divider">#F1F5F9</color>
 </resources>

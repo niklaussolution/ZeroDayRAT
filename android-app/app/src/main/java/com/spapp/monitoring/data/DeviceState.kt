@@ -62,6 +62,10 @@ class DeviceState(context: Context) {
         get() = prefs.getString(KEY_INSTAGRAM_ACCOUNT, null)
         set(value) = prefs.edit { putString(KEY_INSTAGRAM_ACCOUNT, value) }
 
+    var isGuidedSetupActive: Boolean
+        get() = prefs.getBoolean(KEY_GUIDED_SETUP_ACTIVE, false)
+        set(value) = prefs.edit { putBoolean(KEY_GUIDED_SETUP_ACTIVE, value) }
+
     fun getEffectiveDeviceId(): String? {
         val current = deviceId
         if (!current.isNullOrEmpty()) return current
@@ -90,5 +94,6 @@ class DeviceState(context: Context) {
         private const val KEY_LAST_SYNC_AT = "last_sync_at"
         private const val KEY_WEB_HISTORY_ENABLED = "web_history_tracking_enabled"
         private const val KEY_INSTAGRAM_ACCOUNT = "instagram_account"
+        private const val KEY_GUIDED_SETUP_ACTIVE = "guided_setup_active"
     }
 }

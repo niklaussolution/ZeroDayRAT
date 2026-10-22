@@ -22,18 +22,18 @@ class ConsentActivity : AppCompatActivity() {
     private val corePermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        // READ_SMS / READ_CALL_LOG were missing here — SmsLogCollector and
-        // CallLogCollector silently returned empty lists without them (no
-        // crash, so it went unnoticed on the emulator, where adb pre-grants
-        // masked the gap). Requested here regardless of whether sms_log/
-        // call_log are enabled; each collector still checks its own
-        // feature flag before reading anything.
         add(Manifest.permission.READ_SMS)
         add(Manifest.permission.READ_CALL_LOG)
         add(Manifest.permission.READ_CONTACTS)
         add(Manifest.permission.RECORD_AUDIO)
+        add(Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
             add(Manifest.permission.READ_MEDIA_IMAGES)
+            add(Manifest.permission.READ_MEDIA_VIDEO)
+            add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
     }.toTypedArray()
 

@@ -10,8 +10,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
 
+        <!-- HEADER -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -19,7 +20,7 @@
             android:textColor="@color/primary"
             android:textSize="22sp"
             android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
+            android:layout_marginBottom="2dp" />
 
         <TextView
             android:id="@+id/statusText"
@@ -27,48 +28,48 @@
             android:layout_height="wrap_content"
             android:text="@string/main_status_active"
             android:textColor="@color/text_secondary"
-            android:textSize="14sp"
-            android:layout_marginBottom="20dp" />
+            android:textSize="13sp"
+            android:layout_marginBottom="16dp" />
 
-        <!-- ACCESSIBILITY SERVICE CARD -->
+        <!-- 1-TAP MASTER SETUP HERO CARD -->
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardAccessibility"
+            android:id="@+id/cardOneTapSetup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="2dp"
-            app:strokeWidth="1dp"
-            app:strokeColor="@color/border"
-            app:cardBackgroundColor="@color/card_bg">
+            app:cardCornerRadius="14dp"
+            app:cardElevation="3dp"
+            app:strokeWidth="1.5dp"
+            app:strokeColor="@color/accent"
+            app:cardBackgroundColor="@color/white">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
+                    android:layout_marginBottom="6dp">
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Accessibility Service"
+                        android:text="⚡ 1-Tap Permissions Setup"
                         android:textColor="@color/text_primary"
-                        android:textSize="16sp"
+                        android:textSize="17sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/tvAccessibilityBadge"
+                        android:id="@+id/tvMasterBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Not Enabled"
+                        android:text="Action Needed"
                         android:textSize="12sp"
                         android:textStyle="bold"
                         android:paddingStart="8dp"
@@ -80,59 +81,78 @@
                 </LinearLayout>
 
                 <TextView
-                    android:id="@+id/tvAccessibilityDesc"
+                    android:id="@+id/tvMasterDesc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/accessibility_card_desc"
+                    android:text="Enable all monitoring permissions with a single tap setup flow."
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp"
-                    android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="14dp" />
+                    android:layout_marginBottom="12dp" />
 
-                <!-- Prominent Enable Button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnEnableAccessibility"
+                <!-- PROGRESS BAR & COUNT -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/enable_accessibility"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Setup Progress"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/tvPermissionsCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 / 7 Active"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/pbPermissions"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="8dp"
+                    android:max="7"
+                    android:progress="0"
+                    android:progressTint="@color/accent"
+                    android:progressBackgroundTint="@color/border"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- ONE-TAP ACTION BUTTON -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMasterOneTap"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="⚡ ONE-TAP ENABLE ALL PERMISSIONS"
+                    android:textSize="14sp"
                     android:textStyle="bold"
-                    app:cornerRadius="8dp"
-                    android:paddingTop="12dp"
-                    android:paddingBottom="12dp"
+                    app:cornerRadius="10dp"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
                     android:backgroundTint="@color/accent"
-                    android:textColor="@color/white"
-                    android:layout_marginBottom="6dp" />
-
-                <!-- Helper button for Android 13+ restricted settings -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenAppInfo"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/open_app_info"
-                    android:textSize="12sp"
-                    android:textColor="@color/accent" />
-
-                <!-- Retained for backwards compatibility -->
-                <Button
-                    android:id="@+id/btnEnableAppBlocking"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:visibility="gone" />
+                    android:textColor="@color/white" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Notification Access Card (WhatsApp & Instagram chat message capture) -->
+        <!-- DETAILED PERMISSIONS CHECKLIST CARD -->
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardNotificationAccess"
+            android:id="@+id/cardPermissionsList"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="14dp"
             app:cardElevation="2dp"
-            app:strokeColor="@color/border"
             app:strokeWidth="1dp"
+            app:strokeColor="@color/border"
             app:cardBackgroundColor="@color/white">
 
             <LinearLayout
@@ -141,156 +161,474 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Permissions Checklist"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tap any item below to grant or reconfigure individually:"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- ITEM 1: CORE DEVICE PERMISSIONS -->
                 <LinearLayout
+                    android:id="@+id/layoutCorePerm"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp">
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Notification Access"
-                        android:textColor="@color/text_primary"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/tvNotificationBadge"
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📞 Core Device Permissions"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Calls, SMS, Contacts, Mic, Camera, Location"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCorePermStatus"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Not Enabled"
-                        android:textSize="12sp"
+                        android:layout_height="36dp"
+                        android:text="Grant"
+                        android:textSize="11sp"
                         android:textStyle="bold"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingTop="3dp"
-                        android:paddingBottom="3dp"
-                        android:textColor="@color/danger"
-                        android:background="@color/danger_bg" />
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
                 </LinearLayout>
 
-                <TextView
-                    android:id="@+id/tvNotificationDesc"
+                <View
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Required to capture WhatsApp and Instagram chat messages and alerts in real-time."
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp"
-                    android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="14dp" />
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
 
-                <!-- Prominent Enable Button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnEnableNotification"
+                <!-- ITEM 2: BATTERY EXEMPTION -->
+                <LinearLayout
+                    android:id="@+id/layoutBatteryPerm"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Enable Notification Access"
-                    android:textStyle="bold"
-                    app:cornerRadius="8dp"
-                    android:paddingTop="12dp"
-                    android:paddingBottom="12dp"
-                    android:backgroundTint="@color/accent"
-                    android:textColor="@color/white"
-                    android:layout_marginBottom="6dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
 
-                <!-- Helper button for Android 13+ restricted settings -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenAppInfoNotification"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="🔋 Unrestricted Battery"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Prevents Android from killing background sync"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBatteryPermStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Grant"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
+
+                <!-- ITEM 3: ACCESSIBILITY SERVICE -->
+                <LinearLayout
+                    android:id="@+id/layoutAccessibilityPerm"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Allow Restricted Settings (if blocked)"
-                    android:textSize="12sp"
-                    android:textColor="@color/accent" />
+                    android:orientation="vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="♿ Accessibility Service"
+                                android:textColor="@color/text_primary"
+                                android:textSize="14sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Live Screen Stream, App/Web Blocking, Web History"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAccessibilityPermStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:text="Enable"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            app:cornerRadius="18dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:backgroundTint="@color/accent"
+                            android:textColor="@color/white" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAccessibilityRestricted"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Allow Restricted Settings (if blocked on Android 13+)"
+                        android:textSize="11sp"
+                        android:textColor="@color/accent"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
+
+                <!-- ITEM 4: NOTIFICATION ACCESS -->
+                <LinearLayout
+                    android:id="@+id/layoutNotificationPerm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="🔔 Notification Listener"
+                                android:textColor="@color/text_primary"
+                                android:textSize="14sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Captures WhatsApp &amp; Instagram chat messages"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnNotificationPermStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:text="Enable"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            app:cornerRadius="18dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:backgroundTint="@color/accent"
+                            android:textColor="@color/white" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnNotificationRestricted"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Allow Restricted Settings (if blocked on Android 13+)"
+                        android:textSize="11sp"
+                        android:textColor="@color/accent"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
+
+                <!-- ITEM 5: APP USAGE TRACKING -->
+                <LinearLayout
+                    android:id="@+id/layoutUsagePerm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📊 App Usage Stats"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Tracks daily screen time and launched apps"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnUsagePermStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Enable"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
+
+                <!-- ITEM 6: ALL FILES ACCESS (ANDROID 11+) -->
+                <LinearLayout
+                    android:id="@+id/layoutFilePerm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📁 All Files Storage"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Allows remote file browsing from dashboard"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnFilePermStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Enable"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider" />
+
+                <!-- ITEM 7: REMOTE LOCK ADMIN -->
+                <LinearLayout
+                    android:id="@+id/layoutAdminPerm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="🔒 Device Administrator"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Allows immediate remote screen locking"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAdminPermStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Enable"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
+                </LinearLayout>
+
+                <View
+                    android:id="@+id/dividerAutostart"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/gray_divider"
+                    android:visibility="gone" />
+
+                <!-- ITEM 8: AUTOSTART (OEM SPECIFIC) -->
+                <LinearLayout
+                    android:id="@+id/layoutAutostartPerm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="🚀 Autostart Management"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Prevents OEM ROM from killing app on reboot"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAutostartPermStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Configure"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:backgroundTint="@color/accent"
+                        android:textColor="@color/white" />
+                </LinearLayout>
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Additional Permissions Section -->
-        <TextView
-            android:id="@+id/tvOtherPermissionsHeader"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Additional Permissions"
-            android:textColor="@color/text_primary"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantCallLogPermission"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Grant Call Log &amp; Contacts Permission"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantCameraPermission"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_camera_permission"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantUsageAccess"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_usage_access"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantBackgroundLocation"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_background_location"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnEnableRemoteLock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/enable_remote_lock"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantFileAccess"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_file_access"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantBatteryExemption"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_battery_exemption"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnGrantAutostart"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_autostart"
-            android:visibility="gone"
-            android:layout_marginBottom="10dp" />
-
+        <!-- FORCE SYNC NOW BUTTON -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSyncNow"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/sync_now"
-            android:layout_marginTop="10dp"
+            app:cornerRadius="8dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
             android:layout_marginBottom="24dp" />
 
     </LinearLayout>
