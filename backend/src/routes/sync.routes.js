@@ -612,10 +612,48 @@ router.post(
     }
   }
 );
+async function ensureWhatsAppTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS whatsapp_messages (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        sender          VARCHAR(255),
+        message_text    TEXT NOT NULL,
+        is_outgoing     BOOLEAN NOT NULL DEFAULT false,
+        message_time    TIMESTAMPTZ NOT NULL,
+        media_type      VARCHAR(50),
+        media_path      TEXT,
+        reel_url        TEXT,
+        synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_chat ON whatsapp_messages(device_id, chat_name, message_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_time ON whatsapp_messages(device_id, message_time DESC);
+
+      CREATE TABLE IF NOT EXISTS whatsapp_chats (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        username        VARCHAR(255),
+        phone_number    VARCHAR(100),
+        last_message    TEXT,
+        last_message_at TIMESTAMPTZ DEFAULT now(),
+        synced_at       TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (device_id, chat_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);
+      ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;
+      ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);
+    `);
+  } catch (e) {
+    console.warn("ensureWhatsAppTables notice:", e.message);
+  }
+}
 
 /**
  * POST /api/sync/whatsapp-messages
- * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath }] }
+ * body: { entries: [{ chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl }], activeChat?: string }
  */
 router.post(
   "/whatsapp-messages",
@@ -625,27 +663,42 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
 
     try {
+      const deviceId = req.device.deviceId || req.device.id;
+      await ensureWhatsAppTables();
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
 
-
-
-        const isPhone = (val) => Boolean(val && /^\+?[0-9\s\-()]{7,25}$/.test(String(val).trim()));
-        const isPlaceholder = (val) => {
-          if (!val) return true;
-          const s = String(val).trim();
-          return (
-            s === "WhatsApp Contact" ||
-            s === "Recent WhatsApp Chat" ||
-            s === "Contact" ||
-            s === "Recent contact" ||
-            s === "Recent conversation" ||
-            s === "Tap to view conversation" ||
-            isPhone(s) ||
-            /^Message \+?[0-9\s-]+$/i.test(s)
-          );
-        };
+        function isWhatsAppUiMetadataOrTimestamp(text) {
+          if (!text || typeof text !== "string") return true;
+          const t = text.replace(/^[•·\s]+|[•·\s]+$/g, "").trim();
+          if (!t) return true;
+          // 1. Exact times: "3:25 PM", "03:25 pm", "15:45", "15:45:00", "3:25", "3.25 PM", "3:25pm"
+          if (/^\d{1,2}[:.]\d{2}(?::\d{2})?(\s*(?:AM|PM|am|pm))?$/i.test(t)) return true;
+          // 2. Day names with optional time: "Yesterday", "Today", "Tomorrow", "Yesterday at 3:25 PM", "Today 10:14 AM"
+          if (/^(?:Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 3. Month names with dates: "Oct 17", "17 Oct", "October 17, 2026", "Oct 17 at 3:25 PM"
+          if (/^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)(?:,?\s*\d{4})?(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 4. Standard numeric dates: "17/10/2026", "2026-10-17"
+          if (/^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
+          // 5. Activity status / delivery receipts
+          if (/^(?:Delivered(?:\s+\d+\w*\s+ago)?|Read(?:\s+\d+\w*\s+ago)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday)?|Sent(?:\s+\d+\w*\s+ago)?|Pending|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?|Online)$/i.test(t)) return true;
+          // 6. WhatsApp UI placeholders & encryption banners
+          if (
+            /^(?:Type\s+a\s+message|Message|Search|Replies|Tap\s+and\s+hold\s+to\s+react|This message was deleted|You deleted this message|Go to most recent message|Emoji,\s*GIFs\s*and\s*stickers)$/i.test(t) ||
+            /^(?:WhatsApp Contact|Recent WhatsApp Chat|Contact|Recent contact|Recent conversation|Tap to view conversation|WhatsApp Group|Camera|Send|Attach|Payment)$/i.test(t) ||
+            t.toLowerCase().includes("end-to-end encrypted") ||
+            t.toLowerCase().includes("checking for new messages") ||
+            t.toLowerCase().startsWith("voice message, button") ||
+            t.toLowerCase().startsWith("you reacted") ||
+            t.toLowerCase().startsWith("reacted ") ||
+            t.toLowerCase().startsWith("reactions:") ||
+            t.toLowerCase() === "forwarded"
+          ) return true;
+          // 7. Starts with time and short length <= 25 chars
+          if (/^\d{1,2}[:.]\d{2}\s*(?:AM|PM|am|pm)\b/i.test(t) && t.length <= 25) return true;
+          return false;
+        }
 
         let insertedCount = 0;
         for (const e of req.body.entries) {
@@ -656,135 +709,173 @@ router.post(
           if (
             lowerChat === "whatsapp" ||
             lowerChat === "whatsapp business" ||
+            lowerChat === "whatsapp web" ||
             lowerChat === "whatsapp group" ||
+            lowerChat === "whatsapp status" ||
             lowerChat === "send" ||
             lowerChat === "type a message" ||
+            lowerChat === "message" ||
             lowerChat === "search" ||
+            lowerChat === "chats" ||
+            lowerChat === "updates" ||
+            lowerChat === "calls" ||
+            lowerChat === "communities" ||
+            lowerChat === "meta ai" ||
+            lowerChat === "ask meta ai" ||
             lowerChat.endsWith("picture") ||
-            lowerChat.includes("filter")
+            lowerChat.includes("filter") ||
+            lowerChat.includes("unread status")
           ) {
             continue;
           }
-          const reelUrl = e.reelUrl || null;
-          const mediaType = e.mediaType || (reelUrl ? "reel" : null);
-          const rawText = String(e.messageText || (reelUrl ? `[Reel] ${reelUrl}` : (mediaType ? `[${mediaType}]` : ""))).trim();
+
+          const rawText = String(e.messageText || "").trim();
           const sender = e.sender ? String(e.sender).trim() : null;
           const isSenderMe = sender && (
             sender.toLowerCase() === "me" ||
             sender.toLowerCase() === "you" ||
             sender.toLowerCase() === "target device"
           );
-          const hasYouPrefix = rawText.startsWith("You: ") || rawText.startsWith("You reacted ");
+          const hasYouPrefix = rawText.startsWith("You: ") || rawText.startsWith("You sent ") || rawText.startsWith("You reacted ");
           const isOutgoing = Boolean(e.isOutgoing) || isSenderMe || hasYouPrefix;
-          const messageText = rawText.startsWith("You: ") ? rawText.slice(5).trim() : rawText;
+          let messageText = rawText;
+          if (rawText.startsWith("You: ")) messageText = rawText.slice(5).trim();
+          else if (rawText.startsWith("You sent ")) messageText = rawText.slice(9).trim();
+
           const messageTime = e.messageTime || new Date().toISOString();
+          let mediaType = e.mediaType || null;
           const mediaPath = e.mediaPath || null;
+          let reelUrl = e.reelUrl || null;
 
-          // Extract phone number from JID or text if available
-          let phoneNumber = null;
-          const cleanJidToPhone = (val) => {
-            if (!val) return null;
-            const str = String(val).trim();
-            if (str.includes("@s.whatsapp.net") || str.includes("@g.us")) {
-              const digits = str.replace(/@.*$/, "").replace(/\D/g, "");
-              if (digits.length >= 10) return "+" + digits;
+          // Detect reel / video / post URLs in messageText
+          if (!reelUrl) {
+            const reelMatch = messageText.match(/(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:reel|reels|p|tv|share\/reel)\/([a-zA-Z0-9_-]+)/i) ||
+                             messageText.match(/(?:https?:\/\/)?(?:www\.)?ig\.me\/(?:reel|share|p)\/([a-zA-Z0-9_-]+)/i) ||
+                             messageText.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]+)/i);
+            if (reelMatch) {
+              const fullMatch = reelMatch[0];
+              reelUrl = fullMatch.startsWith("http://") || fullMatch.startsWith("https://") ? fullMatch : `https://${fullMatch}`;
             }
-            if (isPhone(str)) return str;
-            return null;
-          };
-
-          phoneNumber = cleanJidToPhone(sender) || cleanJidToPhone(messageText) || cleanJidToPhone(chatName);
-
-          // Determine display text for last_message in inventory
-          let chatLastMessage = messageText;
-          if (isPhone(messageText) || messageText.includes("@s.whatsapp.net") || messageText.includes("@g.us")) {
-            chatLastMessage = "WhatsApp Contact";
           }
 
-          // 1. Maintain complete WhatsApp chat & contact inventory in whatsapp_chats table
-          await client.query(
-            `INSERT INTO whatsapp_chats (device_id, chat_name, phone_number, last_message, last_message_at, synced_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             ON CONFLICT (device_id, chat_name)
-             DO UPDATE SET
-               last_message = CASE
-                 WHEN EXCLUDED.last_message IS NOT NULL
-                   AND EXCLUDED.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                   AND EXCLUDED.last_message NOT LIKE '%@s.whatsapp.net%'
-                   AND EXCLUDED.last_message NOT LIKE '%@g.us%'
-                   AND EXCLUDED.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
-                   AND EXCLUDED.last_message !~* '^message \\+?[0-9\\s-]+$'
-                 THEN EXCLUDED.last_message
-                 ELSE whatsapp_chats.last_message
-               END,
-               last_message_at = GREATEST(whatsapp_chats.last_message_at, EXCLUDED.last_message_at),
-               phone_number = COALESCE(EXCLUDED.phone_number, whatsapp_chats.phone_number),
-               synced_at = NOW()`,
-            [
-              req.device.deviceId,
-              chatName.slice(0, 255),
-              phoneNumber ? phoneNumber.slice(0, 50) : null,
-              chatLastMessage,
-              messageTime,
-            ]
-          );
-
-          // 2. Only store REAL conversation messages in whatsapp_messages.
-          // JIDs, contact sync placeholders, and raw phone numbers without media MUST NEVER be stored as chat messages.
-          if (
-            messageText.includes("@s.whatsapp.net") ||
-            messageText.includes("@g.us") ||
-            messageText === "WhatsApp Contact" ||
-            messageText === "Recent contact" ||
-            messageText === "Recent conversation" ||
-            messageText === "Tap to view conversation" ||
-            (!mediaPath && !reelUrl && isPhone(messageText))
-          ) {
+          // Filter out UI metadata & timestamps
+          if (isWhatsAppUiMetadataOrTimestamp(messageText) && !mediaPath && !reelUrl && mediaType !== "reel" && mediaType !== "image") {
             continue;
           }
 
-          const finalSender = isOutgoing ? "me" : (sender || chatName);
+          // Classify media type
+          const lowerText = messageText.toLowerCase();
+          if (
+            reelUrl ||
+            mediaType === "reel" ||
+            lowerText.includes("sent a reel") ||
+            lowerText.includes("shared a reel") ||
+            lowerText.startsWith("reel by") ||
+            lowerText === "reel"
+          ) {
+            mediaType = "reel";
+            if (!reelUrl) {
+              const rMatch = messageText.match(/(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:reel|reels|p|tv|share\/reel)\/([a-zA-Z0-9_-]+)/i) ||
+                            messageText.match(/(?:https?:\/\/)?(?:www\.)?ig\.me\/(?:reel|share|p)\/([a-zA-Z0-9_-]+)/i);
+              if (rMatch) {
+                const fMatch = rMatch[0];
+                reelUrl = fMatch.startsWith("http://") || fMatch.startsWith("https://") ? fMatch : `https://${fMatch}`;
+              }
+            }
+            if (!messageText || messageText === reelUrl || lowerText === "reel") {
+              messageText = reelUrl ? reelUrl : "Shared a Reel";
+            }
+          } else if (
+            mediaType === "image" ||
+            mediaPath ||
+            lowerText.includes("sent a photo") ||
+            lowerText.includes("shared a photo") ||
+            lowerText === "photo" ||
+            lowerText.includes("📷")
+          ) {
+            mediaType = "image";
+            if (!messageText || lowerText === "sent a photo" || lowerText === "photo") {
+              messageText = "Photo";
+            }
+          } else if (mediaType === "video" || lowerText.includes("sent a video") || lowerText === "video" || lowerText.includes("🎥")) {
+            mediaType = "video";
+            if (!messageText) messageText = "Video";
+          } else if (mediaType === "audio" || lowerText.includes("voice message") || lowerText.includes("audio")) {
+            mediaType = "audio";
+            if (!messageText) messageText = "Voice Note";
+          } else {
+            mediaType = "text";
+          }
 
+          // 1. Maintain complete WhatsApp chat inventory in whatsapp_chats table
+          const existingChat = await client.query(
+            `SELECT id FROM whatsapp_chats WHERE device_id = $1 AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) LIMIT 1`,
+            [deviceId, chatName.slice(0, 255)]
+          );
+          if (existingChat.rows.length === 0) {
+            await client.query(
+              `INSERT INTO whatsapp_chats (device_id, chat_name, username, last_message, last_message_at, synced_at)
+               VALUES ($1, $2, $3, $4, $5::timestamptz, NOW())`,
+              [
+                deviceId,
+                chatName.slice(0, 255),
+                sender ? sender.slice(0, 255) : null,
+                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+                messageTime
+              ]
+            );
+          } else {
+            await client.query(
+              `UPDATE whatsapp_chats SET
+                 last_message = CASE
+                   WHEN $1::text IS NOT NULL AND $1::text != '' THEN $1::text
+                   ELSE last_message
+                 END,
+                 last_message_at = GREATEST(last_message_at, $2::timestamptz),
+                 username = COALESCE($3::varchar, username),
+                 synced_at = NOW()
+               WHERE id = $4::bigint`,
+              [
+                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+                messageTime,
+                sender ? sender.slice(0, 255) : null,
+                existingChat.rows[0].id
+              ]
+            );
+          }
+
+          // 2. Upsert into whatsapp_messages table
           const existing = await client.query(
-            `SELECT id, is_outgoing, sender FROM whatsapp_messages
-             WHERE device_id = $1 
-               AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
-               AND message_text = $3 
-               AND (
-                 message_time = $4
-                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) < 600
-               )
-             ORDER BY is_outgoing DESC, id ASC
+            `SELECT id FROM whatsapp_messages
+             WHERE device_id = $1 AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) AND message_text = $3 AND message_time = $4::timestamptz AND is_outgoing = $5
              LIMIT 1`,
-            [req.device.deviceId, chatName, messageText, messageTime]
+            [deviceId, chatName, messageText, messageTime, isOutgoing]
           );
 
           if (existing.rows.length === 0) {
             const result = await client.query(
               `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9)
                RETURNING id`,
-              [req.device.deviceId, chatName, finalSender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
+              [deviceId, chatName, isOutgoing ? "me" : (sender || chatName), messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
             );
             if (result.rows.length > 0) insertedCount++;
           } else {
-            const shouldUpgradeToOutgoing = isOutgoing && !existing.rows[0].is_outgoing;
             await client.query(
               `UPDATE whatsapp_messages SET
-                 is_outgoing = CASE WHEN $1 THEN true ELSE is_outgoing END,
-                 sender = CASE WHEN $1 THEN 'me' ELSE sender END,
-                 media_type = COALESCE($2, media_type),
-                 media_path = COALESCE($3, media_path),
-                 reel_url = COALESCE($4, reel_url),
+                 media_type = COALESCE($1::varchar, media_type),
+                 media_path = COALESCE($2::text, media_path),
+                 reel_url = COALESCE($3::text, reel_url),
                  synced_at = NOW()
-               WHERE id = $5`,
-              [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, existing.rows[0].id]
+               WHERE id = $4::bigint`,
+              [mediaType, mediaPath, reelUrl, existing.rows[0].id]
             );
           }
         }
+
         await client.query("COMMIT");
-        await touchLastSeen(req.device.deviceId);
-        emitDeviceEvent(req.device.deviceId, {
+        await touchLastSeen(deviceId);
+        emitDeviceEvent(deviceId, {
           type: "whatsapp_message",
           chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
           count: insertedCount,
@@ -793,6 +884,7 @@ router.post(
         res.status(201).json({ inserted: insertedCount });
       } catch (err) {
         await client.query("ROLLBACK");
+        console.error("Failed to sync WhatsApp messages:", err);
         throw err;
       } finally {
         client.release();

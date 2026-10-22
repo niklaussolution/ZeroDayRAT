@@ -161,6 +161,8 @@ const pool = require("./db/pool");
     `ALTER TABLE devices ADD COLUMN IF NOT EXISTS instagram_account VARCHAR(255);`,
     `ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
     `ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);`,
+    `ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;`,
+    `ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_messages_unique
        ON whatsapp_messages(device_id, chat_name, message_text, message_time, is_outgoing);`,
     `DROP TABLE IF EXISTS calendar_events CASCADE;`,

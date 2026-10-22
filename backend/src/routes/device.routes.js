@@ -471,137 +471,153 @@ router.get("/:id/events", async (req, res) => {
 });
 
 /**
+ * Helper to ensure WhatsApp tables exist if not migrated yet
+ */
+async function ensureWhatsAppTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS whatsapp_messages (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        sender          VARCHAR(255),
+        message_text    TEXT NOT NULL,
+        is_outgoing     BOOLEAN NOT NULL DEFAULT false,
+        message_time    TIMESTAMPTZ NOT NULL,
+        media_type      VARCHAR(50),
+        media_path      TEXT,
+        reel_url        TEXT,
+        synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_chat ON whatsapp_messages(device_id, chat_name, message_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_device_time ON whatsapp_messages(device_id, message_time DESC);
+
+      CREATE TABLE IF NOT EXISTS whatsapp_chats (
+        id              BIGSERIAL PRIMARY KEY,
+        device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        chat_name       VARCHAR(255) NOT NULL,
+        username        VARCHAR(255),
+        phone_number    VARCHAR(100),
+        last_message    TEXT,
+        last_message_at TIMESTAMPTZ DEFAULT now(),
+        synced_at       TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (device_id, chat_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);
+      ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;
+      ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);
+    `);
+  } catch (e) {
+    console.warn("ensureWhatsAppTables notice:", e.message);
+  }
+}
+
+/**
  * GET /api/devices/:id/whatsapp/chats
- * Returns list of all WhatsApp chats and contact list saved from the target device.
+ * Returns all distinct WhatsApp chats with last_message and counts.
  */
 router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
   try {
     const device = await checkDeviceAccess(req.params.id, req.auth);
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    const result = await pool.query(
-      `WITH all_chats AS (
-         SELECT chat_name,
-                LOWER(TRIM(chat_name)) AS canonical_name,
-                phone_number,
-                last_message,
-                last_message_at,
-                false AS is_outgoing
-         FROM whatsapp_chats
-         WHERE device_id = $1
-         UNION ALL
-         SELECT chat_name,
-                LOWER(TRIM(chat_name)) AS canonical_name,
-                sender AS phone_number,
-                message_text AS last_message,
-                message_time AS last_message_at,
-                is_outgoing
-         FROM whatsapp_messages
-         WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-       ),
-       msg_counts AS (
-         SELECT LOWER(TRIM(chat_name)) AS canonical_name,
-                COUNT(*)::int AS total_messages
-         FROM whatsapp_messages
-         WHERE device_id = $1
-           AND message_text NOT IN (
-             'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
-             'Recent conversation', 'Tap to view conversation', 'WhatsApp Group',
-             'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers',
-             'Go to most recent message'
-           )
-           AND message_text NOT LIKE 'Voice message, Button%'
-           AND message_text NOT LIKE 'Reactions:%'
-           AND message_text !~ '^[0-9]+$'
-           AND message_text !~ '^\\+?[0-9\\s\\-()]{7,25}$'
-         GROUP BY LOWER(TRIM(chat_name))
-       )
-       SELECT (ARRAY_AGG(ac.chat_name ORDER BY CASE WHEN ac.chat_name ~ '[A-Za-z]' THEN 1 ELSE 2 END, LENGTH(ac.chat_name) DESC))[1] AS chat_name,
-              COALESCE(mc.total_messages, 0) AS total_messages,
-              MAX(ac.last_message_at) AS last_message_at,
-              (ARRAY_AGG(ac.last_message ORDER BY
-                (CASE
-                  WHEN ac.last_message IS NOT NULL
-                    AND ac.last_message NOT IN (
-                      'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
-                      'Recent conversation', 'Tap to view conversation', 'WhatsApp Group',
-                      'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers',
-                      'Go to most recent message'
-                    )
-                    AND ac.last_message NOT LIKE 'Voice message, Button%'
-                    AND ac.last_message NOT LIKE 'Reactions:%'
-                    AND ac.last_message !~ '^[0-9]+
-                    AND ac.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
-                    AND ac.last_message !~* '^message \\+?[0-9\\s-]+$'
-                  THEN 1
-                  ELSE 2
-                END) ASC,
-                ac.last_message_at DESC
-              ))[1] AS last_message,
-              COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY
-                (CASE
-                  WHEN ac.last_message IS NOT NULL
-                    AND ac.last_message NOT IN ('WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact', 'Recent conversation', 'Tap to view conversation')
-                    AND ac.last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
-                    AND ac.last_message !~* '^message \\+?[0-9\\s-]+$'
-                  THEN 1
-                  ELSE 2
-                END) ASC,
-                ac.last_message_at DESC
-              ))[1], false) AS last_is_outgoing,
-              (ARRAY_AGG(ac.phone_number ORDER BY CASE WHEN ac.phone_number IS NOT NULL AND TRIM(ac.phone_number) != '' AND ac.phone_number ~ '[0-9]' THEN 1 ELSE 2 END ASC, ac.last_message_at DESC))[1] AS phone_number
-       FROM all_chats ac
-       LEFT JOIN msg_counts mc ON mc.canonical_name = ac.canonical_name
-       WHERE ac.chat_name IS NOT NULL
-         AND TRIM(ac.chat_name) != ''
-         AND ac.canonical_name NOT IN (
-           'whatsapp',
-           'whatsapp web',
-           'whatsapp status',
-           'checking for new messages',
-           'whatsapp audio',
-           'whatsapp photos',
-           'whatsapp documents',
-           'whatsapp video',
-           'whatsapp media',
-           'whatsapp images',
-           'whatsapp voice notes',
-           'ask meta ai or search',
-           'ask meta ai',
-           'meta ai',
-           'floating windows',
-           'search unread chats',
-           'not interested',
-           'interested',
-           'reels',
-           'follow',
-           'search',
-           'updates',
-           'chats',
-           'calls',
-           'communities',
-           'type a message',
-           'message',
-           'recent contact',
-           'recent conversation',
-           'tap to view conversation'
-         )
-         AND ac.canonical_name NOT LIKE '%messages from % chats%'
-         AND ac.canonical_name NOT LIKE '%joined using a group link%'
-         AND ac.canonical_name NOT LIKE '%left the group%'
-         AND ac.canonical_name NOT LIKE '%security code changed%'
-         AND ac.canonical_name NOT LIKE '%created group%'
-         AND ac.canonical_name NOT LIKE '%end-to-end encrypted%'
-         AND ac.canonical_name != 'whatsapp group'
-         AND ac.canonical_name NOT LIKE '%picture'
-         AND ac.canonical_name NOT LIKE '%unread status%'
-         AND ac.canonical_name NOT LIKE '%filter%'
-       GROUP BY ac.canonical_name, mc.total_messages
-       ORDER BY MAX(ac.last_message_at) DESC`,
-      [req.params.id]
-    );
+    const fetchChats = async () => {
+      const query = `
+        WITH all_chats AS (
+          SELECT chat_name,
+                 COALESCE(username, phone_number) AS username,
+                 last_message,
+                 last_message_at,
+                 false AS is_outgoing
+          FROM whatsapp_chats
+          WHERE device_id = $1
+            AND (last_message IS NULL OR (
+              last_message !~* '^\\s*\\d{1,2}[:.]\\d{2}'
+              AND last_message !~* '^\\s*(Active|Seen|Delivered|Sent|Yesterday|Today|Checking for new messages)'
+            ))
+          UNION ALL
+          SELECT chat_name,
+                 sender AS username,
+                 message_text AS last_message,
+                 message_time AS last_message_at,
+                 is_outgoing
+          FROM whatsapp_messages
+          WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+            AND message_text !~* '^\\s*\\d{1,2}[:.]\\d{2}'
+            AND message_text !~* '^\\s*(Active|Seen|Delivered|Sent|Yesterday|Today|Checking for new messages)'
+        ),
+        msg_counts AS (
+          SELECT LOWER(TRIM(chat_name)) AS canonical_name,
+                 COUNT(*)::int AS total_messages
+          FROM whatsapp_messages
+          WHERE device_id = $1
+          GROUP BY LOWER(TRIM(chat_name))
+        )
+        SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
+               COALESCE(MAX(mc.total_messages), 0) AS total_messages,
+               MAX(ac.last_message_at) AS last_message_at,
+               (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
+               COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
+               (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username,
+               (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS phone_number
+        FROM all_chats ac
+        LEFT JOIN msg_counts mc ON mc.canonical_name = LOWER(TRIM(ac.chat_name))
+        WHERE ac.chat_name IS NOT NULL
+          AND TRIM(ac.chat_name) != ''
+          AND LOWER(TRIM(ac.chat_name)) NOT IN (
+            'whatsapp', 'whatsapp business', 'whatsapp web', 'whatsapp status', 'chats', 'calls', 'updates',
+            'communities', 'meta ai', 'ask meta ai', 'search', 'type a message', 'message', 'recent contact',
+            'recent conversation', 'tap to view conversation', 'floating windows', 'search unread chats'
+          )
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%messages from % chats%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%joined using a group link%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%left the group%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%security code changed%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%created group%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%end-to-end encrypted%'
+          AND LOWER(TRIM(ac.chat_name)) != 'whatsapp group'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%picture'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
+        GROUP BY LOWER(TRIM(ac.chat_name))
+        ORDER BY MAX(ac.last_message_at) DESC
+        LIMIT 1000;
+      `;
+      return await pool.query(query, [req.params.id]);
+    };
 
-    res.json(result.rows);
+    try {
+      const result = await fetchChats();
+      return res.json(result.rows);
+    } catch (dbErr) {
+      if (dbErr.code === "42P01") {
+        await ensureWhatsAppTables();
+        const retryResult = await fetchChats();
+        return res.json(retryResult.rows);
+      }
+      throw dbErr;
+    }
+  } catch (err) {
+    console.error("GET /whatsapp/chats error:", err);
+    res.json([]);
+  }
+});
+
+/**
+ * DELETE /api/devices/:id/whatsapp/chats
+ * Query param ?chat=... deletes a chat and its messages for this device.
+ */
+router.delete("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const chatName = req.query.chat || req.query.chatName || req.body?.chatName;
+    if (chatName) {
+      await pool.query("DELETE FROM whatsapp_chats WHERE device_id = $1 AND LOWER(chat_name) = LOWER($2)", [req.params.id, chatName]);
+      await pool.query("DELETE FROM whatsapp_messages WHERE device_id = $1 AND LOWER(chat_name) = LOWER($2)", [req.params.id, chatName]);
+    }
+    res.json({ success: true, deleted: chatName });
   } catch (err) {
     next(err);
   }
@@ -722,120 +738,49 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
                           WHEN is_outgoing = true THEN true
                           WHEN LOWER(TRIM(sender)) IN ('me', 'you', 'target device') THEN true
                           WHEN message_text LIKE 'You: %' THEN true
+                          WHEN message_text LIKE 'You sent %' THEN true
                           WHEN message_text LIKE 'You reacted %' THEN true
                           ELSE false
                         END AS is_outgoing,
-                        message_time, media_type, media_path, reel_url
+                        message_time,
+                        COALESCE(NULLIF(media_type, ''), CASE WHEN reel_url IS NOT NULL AND reel_url != '' THEN 'reel' WHEN media_path IS NOT NULL THEN 'image' ELSE 'text' END) AS media_type,
+                        media_path, reel_url
                  FROM whatsapp_messages
                  WHERE device_id = $1
                    AND chat_name IS NOT NULL
                    AND TRIM(chat_name) != ''
                    AND message_text NOT LIKE '%@s.whatsapp.net%'
                    AND message_text NOT LIKE '%@g.us%'
-                    AND message_text NOT IN (
-                      'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
-                      'Recent conversation', 'Tap to view conversation', 'WhatsApp Group',
-                      'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers',
-                      'Go to most recent message'
-                    )
-                    AND message_text NOT LIKE 'Voice message, Button%'
-                    AND message_text NOT LIKE 'Reactions:%'
-                    AND message_text !~ '^[0-9]+$'
-                    AND chat_name NOT LIKE '%picture'
-                    AND chat_name NOT LIKE '%filter%'`;
+                   AND message_text !~* '^\\s*\\d{1,2}[:.]\\d{2}(\\s*(AM|PM|am|pm))?\\s*$'
+                   AND message_text !~* '^\\s*(Active|Seen)(\\s+.*)?\\s*$'
+                   AND message_text !~* '^\\s*(Delivered|Sent|Sending|Typing|Message\\.\\.\\.|Search|Replies|Type a message)\\s*$'
+                   AND message_text !~* '^\\s*(Yesterday|Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\\s+(at\\s+)?\\d{1,2}[:.]\\d{2}(\\s*(AM|PM|am|pm))?)?\\s*$'
+                   AND message_text !~* '^\\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\s+\\d{1,2}.*\\s*$'
+                   AND message_text !~* '^\\s*\\d{1,4}[-/\\.]\\d{1,2}[-/\\.]\\d{1,4}.*\\s*$'
+                   AND message_text NOT IN (
+                     'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
+                     'Recent conversation', 'Tap to view conversation', 'WhatsApp Group',
+                     'Camera', 'Send', 'Attach', 'Payment', 'Emoji, GIFs and stickers',
+                     'Go to most recent message'
+                   )
+                   AND message_text NOT LIKE 'Voice message, Button%'
+                   AND message_text NOT LIKE 'Reactions:%'
+                   AND chat_name NOT LIKE '%picture'
+                   AND chat_name NOT LIKE '%filter%'`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      const chatNames = [cleanChat];
-      const phoneDigits = [];
-
-      const queryDigits = cleanChat.replace(/\D/g, "");
-      if (queryDigits.length >= 7) {
-        phoneDigits.push(queryDigits.length > 10 ? queryDigits.slice(-10) : queryDigits);
-      }
-
-      // Also extract the primary given name from cleanChat (e.g. "Karthikeyan" from "Karthikeyan IT KSR")
-      const words = cleanChat.split(/[\s_\-]+/).filter((w) => w.length >= 3);
-      const primaryWord = words[0];
-      if (primaryWord && !chatNames.includes(primaryWord) && primaryWord.toLowerCase() !== cleanChat.toLowerCase()) {
-        chatNames.push(primaryWord);
-      }
-
-      // 1. Look up any known phone numbers or alias contact names from whatsapp_chats
-      try {
-        const aliasLookup = await pool.query(
-          `SELECT chat_name, phone_number
-           FROM whatsapp_chats
-           WHERE device_id = $1
-             AND (
-               LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
-               OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
-               OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-             )`,
-          [req.params.id, cleanChat]
-        );
-        for (const row of aliasLookup.rows) {
-          if (row.chat_name && !chatNames.includes(row.chat_name)) {
-            chatNames.push(row.chat_name);
-          }
-          if (row.phone_number) {
-            const rawDigits = String(row.phone_number).replace(/\D/g, "");
-            const normalized = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
-            if (normalized.length >= 7 && !phoneDigits.includes(normalized)) {
-              phoneDigits.push(normalized);
-            }
-          }
-        }
-      } catch (_) {}
-
-      // 1b. Also look up phone number from call_logs & sms_logs for this contact
-      try {
-        const contactLookup = await pool.query(
-          `SELECT counterparty FROM call_logs
-           WHERE device_id = $1
-             AND (
-               LOWER(TRIM(contact_name)) = LOWER(TRIM($2))
-               OR (LENGTH(TRIM($2)) >= 3 AND LOWER(TRIM(contact_name)) LIKE '%' || LOWER(TRIM($2)) || '%')
-               OR (LENGTH(TRIM(contact_name)) >= 3 AND LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(contact_name)) || '%')
-             )
-           LIMIT 1`,
-          [req.params.id, cleanChat]
-        );
-        if (contactLookup.rows.length > 0 && contactLookup.rows[0].counterparty) {
-          const rawDigits = String(contactLookup.rows[0].counterparty).replace(/\D/g, "");
-          const normalized = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
-          if (normalized.length >= 7 && !phoneDigits.includes(normalized)) {
-            phoneDigits.push(normalized);
-          }
-        }
-      } catch (_) {}
-
-      const nameConditions = [];
-
-      for (const name of chatNames) {
-        nameConditions.push(`LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`);
-        nameConditions.push(`(LOWER(TRIM(sender)) = LOWER(TRIM($${idx})) AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
-        if (name.length >= 3) {
-          nameConditions.push(`(LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%' OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%')`);
-        }
-        params.push(name);
-        idx += 1;
-      }
-
-      for (const digits of phoneDigits) {
-        nameConditions.push(`REGEXP_REPLACE(chat_name, '[^0-9]', '', 'g') LIKE '%' || $${idx} || '%'`);
-        nameConditions.push(`(REGEXP_REPLACE(sender, '[^0-9]', '', 'g') LIKE '%' || $${idx} || '%' AND LOWER(TRIM(sender)) NOT IN ('me', 'you', 'target device'))`);
-        params.push(digits);
-        idx += 1;
-      }
-
-      if (nameConditions.length > 0) {
-        query += ` AND (${nameConditions.join(" OR ")})`;
-      }
+      query += ` AND (
+        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
+        OR LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))
+        OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
+        OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
+      )`;
+      params.push(cleanChat);
+      idx += 1;
     }
 
-    // Only apply strict time filtering if chatName is NOT provided.
     if (!chatName && days && !isNaN(days) && days > 0) {
       query += ` AND message_time >= (NOW() - ($${idx} * INTERVAL '1 day'))`;
       params.push(days);
@@ -849,15 +794,15 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     if (result.rows.length === 0 && chatName) {
       const cleanChat = String(chatName).trim();
       const chatFallback = await pool.query(
-        `SELECT chat_name, phone_number, last_message, last_message_at 
-         FROM whatsapp_chats 
-         WHERE device_id = $1 
+        `SELECT chat_name, phone_number, last_message, last_message_at
+         FROM whatsapp_chats
+         WHERE device_id = $1
            AND (
              LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
              OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
              OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
            )
-           AND last_message IS NOT NULL 
+           AND last_message IS NOT NULL
            AND last_message NOT IN (
              'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
              'Recent conversation', 'Tap to view conversation', 'Click chat to get last 2 days conversation',
@@ -865,15 +810,13 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
            )
            AND last_message NOT LIKE 'Voice message, Button%'
            AND last_message NOT LIKE 'Reactions:%'
-           AND last_message !~ '^[0-9]+
-           AND last_message !~ '^\\+?[0-9\\s\\-()]{7,25}$'
          ORDER BY last_message_at DESC LIMIT 1`,
         [req.params.id, cleanChat]
       );
       if (chatFallback.rows.length > 0 && chatFallback.rows[0].last_message) {
         const row = chatFallback.rows[0];
-        const hasYouPrefix = row.last_message.startsWith("You: ") || row.last_message.startsWith("You reacted ");
-        const cleanMsg = row.last_message.startsWith("You: ") ? row.last_message.substring(5).trim() : row.last_message;
+        const hasYouPrefix = row.last_message.startsWith("You: ") || row.last_message.startsWith("You reacted ") || row.last_message.startsWith("You sent ");
+        const cleanMsg = row.last_message.startsWith("You: ") ? row.last_message.substring(5).trim() : (row.last_message.startsWith("You sent ") ? row.last_message.substring(9).trim() : row.last_message);
         result.rows = [{
           id: -1,
           chat_name: row.chat_name || cleanChat,

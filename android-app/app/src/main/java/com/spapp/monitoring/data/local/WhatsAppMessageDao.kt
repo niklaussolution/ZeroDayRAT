@@ -106,4 +106,7 @@ interface WhatsAppMessageDao {
 
     @Query("DELETE FROM whatsapp_message_entries WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("DELETE FROM whatsapp_message_entries")
+    suspend fun clearAll()
 }
