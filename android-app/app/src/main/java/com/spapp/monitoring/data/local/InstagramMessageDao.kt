@@ -10,6 +10,35 @@ interface InstagramMessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(entries: List<InstagramMessageEntry>)
 
+    @Query("""
+        SELECT id FROM instagram_message_entries 
+        WHERE LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+          AND LOWER(TRIM(messageText)) = LOWER(TRIM(:messageText)) 
+          AND isOutgoing = :isOutgoing 
+          AND messageTimeEpochMs >= :sinceMs 
+        LIMIT 1
+    """)
+    suspend fun findExistingRecent(chatName: String, messageText: String, isOutgoing: Boolean, sinceMs: Long): Long?
+
+    @Query("""
+        SELECT isOutgoing FROM instagram_message_entries 
+        WHERE LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+          AND LOWER(TRIM(messageText)) = LOWER(TRIM(:messageText)) 
+          AND messageTimeEpochMs >= :sinceMs 
+        ORDER BY isOutgoing DESC 
+        LIMIT 1
+    """)
+    suspend fun findRecentMessageDirection(chatName: String, messageText: String, sinceMs: Long): Boolean?
+
+    @Query("""
+        UPDATE instagram_message_entries 
+        SET isOutgoing = 1, sender = 'me', synced = 0 
+        WHERE LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+          AND LOWER(TRIM(messageText)) = LOWER(TRIM(:messageText)) 
+          AND messageTimeEpochMs >= :sinceMs
+    """)
+    suspend fun updateToOutgoing(chatName: String, messageText: String, sinceMs: Long)
+
     @Query("SELECT * FROM instagram_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
     suspend fun getUnsynced(limit: Int = 200): List<InstagramMessageEntry>
 
