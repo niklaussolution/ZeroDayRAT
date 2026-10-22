@@ -91,6 +91,7 @@ export default function AudioStreamCard({
 
           <div className="w-full max-w-xs">
             <button
+              id="start-live-audio-btn"
               onClick={() => setActive(true)}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-600 via-orange-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-semibold rounded-lg shadow-sm hover:shadow transition"
             >

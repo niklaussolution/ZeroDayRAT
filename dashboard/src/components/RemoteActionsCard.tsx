@@ -186,6 +186,7 @@ export default function RemoteActionsCard({
           <span>Live Camera Stream</span>
         </button>
         <button
+          id="remote-action-live-audio-btn"
           onClick={() => {
             if (onStartAudio) {
               onStartAudio();
