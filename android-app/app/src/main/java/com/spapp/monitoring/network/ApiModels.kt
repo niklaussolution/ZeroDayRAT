@@ -149,7 +149,8 @@ data class PermissionStatusDto(
     val remoteLock: Boolean,
     val fileManager: Boolean,
     val installedAppsList: Boolean,
-    val notificationAccess: Boolean = false
+    val notificationAccess: Boolean = false,
+    val audioStream: Boolean = false
 )
 
 data class LockDeviceResult(val locked: Boolean)

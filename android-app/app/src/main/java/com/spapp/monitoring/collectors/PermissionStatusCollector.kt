@@ -39,6 +39,10 @@ class PermissionStatusCollector(private val context: Context) {
             false
         }
 
+        val hasAudio = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
         return PermissionStatusDto(
             locationOnDemand = hasFineLocation,
             geofencing = hasFineLocation,
@@ -50,7 +54,8 @@ class PermissionStatusCollector(private val context: Context) {
             remoteLock = SpappDeviceAdminReceiver.isActive(context),
             fileManager = FileManagerCollector(context).hasFullAccess(),
             installedAppsList = true, // manifest-level (QUERY_ALL_PACKAGES), no runtime grant needed
-            notificationAccess = hasNotificationAccess
+            notificationAccess = hasNotificationAccess,
+            audioStream = hasAudio
         )
     }
 }
