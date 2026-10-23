@@ -45,8 +45,9 @@ export default function CameraStreamView({
   const hasFirstFrameRef = useRef<boolean>(false);
   const frameCountRef = useRef<number>(0);
   const frameTimestampsRef = useRef<number[]>([]);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const isRenderingRef = useRef<boolean>(false);
+  const latestFrameRef = useRef<Uint8Array | null>(null);
 
   // Audio Context & scheduler refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -81,6 +82,45 @@ export default function CameraStreamView({
 
     return () => clearInterval(fpsInterval);
   }, []);
+
+  const renderNextFrame = async () => {
+    if (isRenderingRef.current || !latestFrameRef.current || !isMountedRef.current) return;
+    isRenderingRef.current = true;
+    const jpegBytes = latestFrameRef.current;
+    latestFrameRef.current = null;
+
+    try {
+      const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+      const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+      const canvas = canvasRef.current;
+      if (canvas && isMountedRef.current) {
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          ctxRef.current = null;
+        }
+        if (!ctxRef.current) {
+          ctxRef.current = canvas.getContext("2d", { alpha: false, desynchronized: true });
+        }
+        ctxRef.current?.drawImage(bitmap, 0, 0);
+
+        if (!hasFirstFrameRef.current) {
+          hasFirstFrameRef.current = true;
+          setHasFirstFrame(true);
+          setStatus("streaming");
+          setStatusMessage(`Live ${lens} camera active`);
+        }
+      }
+      bitmap.close();
+    } catch (err) {
+      console.debug("Camera frame decode error", err);
+    } finally {
+      isRenderingRef.current = false;
+      if (latestFrameRef.current && isMountedRef.current) {
+        renderNextFrame();
+      }
+    }
+  };
 
   const getAudioContext = () => {
     if (!audioCtxRef.current) {
@@ -143,7 +183,9 @@ export default function CameraStreamView({
             setStatusMessage(res.message || "Device reported an error starting camera stream.");
             return;
           } else {
-            setStatusMessage("Device started camera. Awaiting incoming frames...");
+            if (!hasFirstFrameRef.current) {
+              setStatusMessage("Device started camera. Awaiting incoming frames...");
+            }
             return;
           }
         } else if (cmd.status === "failed") {
@@ -256,32 +298,10 @@ export default function CameraStreamView({
         // 0xFF, 0xD8: Legacy raw JPEG frame
         if (bytes[0] === 0x01 || (bytes[0] === 0xff && bytes[1] === 0xd8)) {
           const jpegBytes = bytes[0] === 0x01 ? bytes.subarray(1) : bytes;
-          const blob = new Blob([jpegBytes], { type: "image/jpeg" });
-
-          createImageBitmap(blob)
-            .then((bitmap) => {
-              const canvas = canvasRef.current;
-              if (canvas && isMountedRef.current) {
-                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-                  canvas.width = bitmap.width;
-                  canvas.height = bitmap.height;
-                  ctxRef.current = null;
-                }
-                const ctx = ctxRef.current || canvas.getContext("2d", { alpha: false, desynchronized: true });
-                if (ctx) {
-                  ctxRef.current = ctx;
-                  ctx.drawImage(bitmap, 0, 0);
-                }
-                if (!hasFirstFrameRef.current) {
-                  hasFirstFrameRef.current = true;
-                  setHasFirstFrame(true);
-                  setStatus("streaming");
-                  setStatusMessage(`Live ${lens} camera active`);
-                }
-              }
-              bitmap.close();
-            })
-            .catch(() => {});
+          latestFrameRef.current = jpegBytes;
+          if (!isRenderingRef.current) {
+            renderNextFrame();
+          }
 
           frameCountRef.current += 1;
           frameTimestampsRef.current.push(Date.now());

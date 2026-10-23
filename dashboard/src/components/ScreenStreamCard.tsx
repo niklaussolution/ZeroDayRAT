@@ -52,7 +52,7 @@ export default function ScreenStreamCard({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
-            <h2 className="font-semibold text-sm text-slate-800">Live Screen &amp; Audio</h2>
+            <h2 className="font-semibold text-sm text-slate-800">Live Screen Stream</h2>
           </div>
           <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-500 uppercase tracking-wider">
             Standby
@@ -70,9 +70,9 @@ export default function ScreenStreamCard({
               />
             </svg>
           </div>
-          <h3 className="text-sm font-semibold text-slate-800 mb-1">Silent Screen &amp; Audio Stream</h3>
+          <h3 className="text-sm font-semibold text-slate-800 mb-1">Silent Screen Stream</h3>
           <p className="text-xs text-slate-500 max-w-sm leading-relaxed mb-4">
-            Stream real-time display frames and ambient audio directly in this dashboard without any popups or alerts on the device.
+            Stream real-time display frames directly in this dashboard without any popups, microphone usage, or alerts on the device.
           </p>
           <button
             onClick={() => setActive(true)}

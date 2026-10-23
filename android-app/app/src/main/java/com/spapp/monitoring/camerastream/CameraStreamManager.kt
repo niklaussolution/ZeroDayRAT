@@ -56,9 +56,11 @@ object CameraStreamManager {
     // Packet type indicator
     private const val PACKET_TYPE_VIDEO: Byte = 0x01
 
-    private const val MIN_FRAME_INTERVAL_MS = 50L // ~20 FPS: real-time smooth live motion
-    private const val JPEG_COMPRESSION_QUALITY = 40.toByte() // Fast hardware compression (~10-15KB/frame)
+    private const val MIN_FRAME_INTERVAL_MS = 60L // ~16 FPS: ultra-smooth with low bandwidth
+    private const val JPEG_COMPRESSION_QUALITY = 35.toByte() // Fast hardware compression (~12-18KB/frame)
+    private const val MAX_WS_QUEUE_BYTES = 128 * 1024L // 128 KB buffer headroom
     private var lastSentFrameTimestamp = 0L
+    private var selectedSensorOrientation: Int = 90
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var activeWebSocket: WebSocket? = null
@@ -181,22 +183,28 @@ object CameraStreamManager {
     @Synchronized
     fun switchLens(newLens: String) {
         val normalized = if (newLens == "front") "front" else "back"
+        if (normalized == currentLens && cameraDevice != null) return
         currentLens = normalized
         val context = activeContext ?: return
         val ws = activeWebSocket ?: return
 
         cameraHandler?.post {
             closeCameraDevice()
-            openCamera(context, normalized)
-            try {
-                val confirmJson = JSONObject().apply {
-                    put("type", "lens_switched")
-                    put("lens", normalized)
+            // Wait 150ms for Camera HAL to fully release the sensor before opening new lens
+            cameraHandler?.postDelayed({
+                if (isStreaming.get()) {
+                    openCamera(context, normalized)
+                    try {
+                        val confirmJson = JSONObject().apply {
+                            put("type", "lens_switched")
+                            put("lens", normalized)
+                        }
+                        ws.send(confirmJson.toString())
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to send lens_switched confirm", e)
+                    }
                 }
-                ws.send(confirmJson.toString())
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to send lens_switched confirm", e)
-            }
+            }, 150L)
         }
     }
 
@@ -270,11 +278,12 @@ object CameraStreamManager {
                 val facing = chars.get(CameraCharacteristics.LENS_FACING)
                 if (facing == targetFacing) {
                     selectedCameraId = id
+                    selectedSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
 
                     val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
                     if (!jpegSizes.isNullOrEmpty()) {
-                        // Pick lightweight preview size close to 480x360 or 640x480 for ultra-fast encoding & low bandwidth
+                        // Pick lightweight preview size close to 480x360 or 640x480 for fast hardware encoding & low bandwidth
                         selectedSize = jpegSizes
                             .filter { it.width in 320..640 && it.height in 240..480 }
                             .minByOrNull { Math.abs(it.width * it.height - 480 * 360) }
@@ -289,6 +298,8 @@ object CameraStreamManager {
             // Fallback if specific facing is missing
             if (selectedCameraId == null && cameraManager.cameraIdList.isNotEmpty()) {
                 selectedCameraId = cameraManager.cameraIdList[0]
+                val chars = cameraManager.getCameraCharacteristics(selectedCameraId)
+                selectedSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
             }
 
             if (selectedCameraId == null) {
@@ -296,58 +307,36 @@ object CameraStreamManager {
                 return
             }
 
-            Log.d(TAG, "Opening camera $selectedCameraId ($lens) with size: ${selectedSize.width}x${selectedSize.height}")
+            Log.d(TAG, "Opening camera $selectedCameraId ($lens) orientation: $selectedSensorOrientation with size: ${selectedSize.width}x${selectedSize.height}")
 
-            imageReader = ImageReader.newInstance(selectedSize.width, selectedSize.height, ImageFormat.JPEG, 3).apply {
+            imageReader = ImageReader.newInstance(selectedSize.width, selectedSize.height, ImageFormat.JPEG, 4).apply {
                 setOnImageAvailableListener({ reader ->
                     val now = android.os.SystemClock.uptimeMillis()
                     val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
                     try {
-                        // Frame pacing: enforce ~20 FPS (50ms)
+                        // Frame pacing: enforce ~16 FPS (60ms) for smooth playback without network choking
                         if (now - lastSentFrameTimestamp < MIN_FRAME_INTERVAL_MS) {
                             return@setOnImageAvailableListener
                         }
 
-                        // Strict backpressure: if socket has ANY queued bytes in flight, drop frame immediately
+                        // Backpressure headroom check: only drop if network buffer backs up (> 128 KB)
                         val currentWs = activeWebSocket
-                        if (currentWs == null || currentWs.queueSize() > 0) {
+                        if (currentWs == null || currentWs.queueSize() > MAX_WS_QUEUE_BYTES) {
                             return@setOnImageAvailableListener
                         }
 
                         val planes = image.planes
-                        if (planes.isNotEmpty()) {
+                        if (planes.isNotEmpty() && isStreaming.get()) {
                             val buffer = planes[0].buffer
                             val rawBytes = ByteArray(buffer.remaining())
                             buffer.get(rawBytes)
 
-                            if (isStreaming.get() && currentWs.queueSize() == 0L) {
-                                val finalBytes = if (rawBytes.size > 40 * 1024) {
-                                    // High-resolution safeguard: if device outputted large 1080p/720p frame,
-                                    // downsample to lightweight ~480p (~12KB)
-                                    try {
-                                        val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
-                                        val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
-                                        if (bmp != null) {
-                                            val out = ByteArrayOutputStream()
-                                            bmp.compress(Bitmap.CompressFormat.JPEG, 35, out)
-                                            bmp.recycle()
-                                            out.toByteArray()
-                                        } else {
-                                            rawBytes
-                                        }
-                                    } catch (_: Exception) {
-                                        rawBytes
-                                    }
-                                } else {
-                                    rawBytes
-                                }
-
-                                lastSentFrameTimestamp = now
-                                val packet = ByteArray(1 + finalBytes.size)
-                                packet[0] = PACKET_TYPE_VIDEO
-                                System.arraycopy(finalBytes, 0, packet, 1, finalBytes.size)
-                                currentWs.send(packet.toByteString())
-                            }
+                            // Send native hardware-compressed frame directly (0 CPU decode/re-encode overhead)
+                            lastSentFrameTimestamp = now
+                            val packet = ByteArray(1 + rawBytes.size)
+                            packet[0] = PACKET_TYPE_VIDEO
+                            System.arraycopy(rawBytes, 0, packet, 1, rawBytes.size)
+                            currentWs.send(packet.toByteString())
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error handling camera frame", e)
@@ -373,6 +362,15 @@ object CameraStreamManager {
                     Log.e(TAG, "Camera device error: $error")
                     camera.close()
                     if (cameraDevice == camera) cameraDevice = null
+                    // If camera was busy, retry once after 250ms
+                    if (isStreaming.get() && (error == CameraDevice.StateCallback.ERROR_CAMERA_IN_USE || error == CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE)) {
+                        cameraHandler?.postDelayed({
+                            if (isStreaming.get() && cameraDevice == null) {
+                                val ctx = activeContext
+                                if (ctx != null) openCamera(ctx, currentLens)
+                            }
+                        }, 250L)
+                    }
                 }
             }, cameraHandler)
 
@@ -389,6 +387,8 @@ object CameraStreamManager {
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.JPEG_QUALITY, JPEG_COMPRESSION_QUALITY)
+                // Correct camera sensor orientation so picture is upright
+                set(CaptureRequest.JPEG_ORIENTATION, selectedSensorOrientation)
                 set(CaptureRequest.CONTROL_CAPTURE_INTENT, CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD)
                 set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
                 set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_FAST)
@@ -405,7 +405,7 @@ object CameraStreamManager {
                         captureSession = session
                         try {
                             session.setRepeatingRequest(captureRequestBuilder.build(), null, cameraHandler)
-                            Log.d(TAG, "Camera repeating capture request active")
+                            Log.d(TAG, "Camera repeating capture request active (orientation: $selectedSensorOrientation)")
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to start camera repeating request", e)
                         }

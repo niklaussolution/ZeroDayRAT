@@ -168,9 +168,8 @@ function attachCameraRelay(httpServer) {
         // Broadcast binary frame to all connected admins watching this device
         for (const admin of stream.adminWsSet) {
           if (admin.readyState === WebSocket.OPEN) {
-            // Buffer bloat prevention: if admin client socket has ANY buffered bytes,
-            // drop this frame immediately to prevent queue buildup and eliminate stream latency
-            if (isBinary && admin.bufferedAmount > 0) {
+            // Buffer bloat prevention: drop stale frames only if admin socket has high backlog (> 128 KB)
+            if (isBinary && admin.bufferedAmount > 128 * 1024) {
               continue;
             }
             admin.send(data, { binary: isBinary });

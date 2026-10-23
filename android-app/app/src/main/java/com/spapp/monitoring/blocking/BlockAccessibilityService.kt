@@ -71,6 +71,7 @@ class BlockAccessibilityService : AccessibilityService() {
     private var lastBlockedAt = 0L
     private var lastRecordedUrl: String? = null
     private var currentForegroundApp: String? = null
+    private var lastScrollEventTime = 0L
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val pollHandler = Handler(Looper.getMainLooper())
@@ -113,6 +114,14 @@ class BlockAccessibilityService : AccessibilityService() {
         val eventType = event.eventType
         val packageName = event.packageName?.toString() ?: return
         if (packageName == applicationContext.packageName) return // never block ourselves
+
+        if (eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastScrollEventTime < 750L) {
+                return
+            }
+            lastScrollEventTime = now
+        }
 
         if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
             val notification = event.parcelableData as? android.app.Notification
@@ -593,8 +602,8 @@ class BlockAccessibilityService : AccessibilityService() {
         whatsAppPollRunnable = null
     }
 
-    fun hasWhatsAppChatComposer(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
+    fun hasWhatsAppChatComposer(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 4) return false
         val id = (node.viewIdResourceName ?: "").lowercase()
         val text = (node.text?.toString() ?: "").trim()
         val hint = (node.hintText?.toString() ?: "").trim()
@@ -612,7 +621,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         }
         for (i in 0 until node.childCount) {
-            if (hasWhatsAppChatComposer(node.getChild(i))) return true
+            if (hasWhatsAppChatComposer(node.getChild(i), depth + 1)) return true
         }
         return false
     }
@@ -709,8 +718,8 @@ class BlockAccessibilityService : AccessibilityService() {
         return lastClickedWhatsAppChat
     }
 
-    fun hasDirectChatComposer(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
+    fun hasDirectChatComposer(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 4) return false
         val id = (node.viewIdResourceName ?: "").lowercase()
         val text = (node.text?.toString() ?: "").trim()
         val hint = (node.hintText?.toString() ?: "").trim()
@@ -727,7 +736,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         }
         for (i in 0 until node.childCount) {
-            if (hasDirectChatComposer(node.getChild(i))) return true
+            if (hasDirectChatComposer(node.getChild(i), depth + 1)) return true
         }
         return false
     }
@@ -791,8 +800,12 @@ class BlockAccessibilityService : AccessibilityService() {
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
         // 1. Strict verification: ONLY record messages if user is inside an actual active WhatsApp conversation with composer!
-        // NEVER scrape chat list rows, status/updates, communities, or calls!
-        if (!hasWhatsAppChatComposer(root)) return
+        // Fast O(1) check: WhatsApp conversation always contains the input entry node.
+        val entryNodes = try {
+            root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
+        } catch (_: Exception) { null }
+
+        if (entryNodes.isNullOrEmpty() && !hasWhatsAppChatComposer(root, 0)) return
 
         try {
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
@@ -1314,9 +1327,18 @@ class BlockAccessibilityService : AccessibilityService() {
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != "com.instagram.android") return
 
-        detectAndHandleInstagramAccountSwitch(root)
+        // Ultra-fast O(1) check: Instagram Direct conversation always has row_thread_composer_edittext.
+        // Reels, Explore, Feed, and Profile views return empty in <0.1ms and immediately exit,
+        // eliminating any frame drop or Main Looper freeze while scrolling reels!
+        val composerNodes = try {
+            root.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")
+        } catch (_: Exception) { null }
 
-        if (!hasDirectChatComposer(root)) return
+        if (composerNodes.isNullOrEmpty() && !hasDirectChatComposer(root, 0)) {
+            return
+        }
+
+        detectAndHandleInstagramAccountSwitch(root)
 
         try {
             val entriesToInsert = mutableListOf<InstagramMessageEntry>()

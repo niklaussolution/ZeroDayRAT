@@ -199,60 +199,14 @@ class MainActivity : AppCompatActivity() {
     // =========================================================================
 
     private fun handleNextSetupStep() {
-        // Step 1: Core Runtime Permissions Batch
+        // Launch all missing runtime permissions at once in a single tap
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
             return
         }
 
-        // Step 2: Battery Optimization Exemption
-        if (!isBatteryExempted()) {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            batteryExemptionLauncher.launch(intent)
-            return
-        }
-
-        // Step 3: Accessibility Service
-        if (!isAccessibilityEnabled()) {
-            showAccessibilityDialog()
-            return
-        }
-
-        // Step 4: Notification Access (WhatsApp & Instagram messages)
-        if (!isNotificationAccessGranted()) {
-            showNotificationDialog()
-            return
-        }
-
-        // Step 5: App Usage Stats
-        if (!isUsageAccessGranted()) {
-            Toast.makeText(this, "Please enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
-            startActivity(usageCollector.usageAccessSettingsIntent())
-            return
-        }
-
-        // Step 6: All Files Access (Android 11+)
-        if (!isFileAccessGranted()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Toast.makeText(this, "Please allow All Files Access, then tap Back", Toast.LENGTH_LONG).show()
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivity(intent)
-                return
-            }
-        }
-
-        // Step 7: Remote Lock Admin
-        if (!isDeviceAdminActive()) {
-            deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
-            return
-        }
-
-        Toast.makeText(this, "🎉 All permissions are already active and configured!", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "All runtime permissions are already active ✓", Toast.LENGTH_SHORT).show()
     }
 
     private fun showAccessibilityDialog() {
@@ -454,25 +408,24 @@ class MainActivity : AppCompatActivity() {
             binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
             binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
             binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
+            binding.layoutPermissionsList.visibility = View.GONE
         } else {
             binding.tvMasterBadge.text = "ACTION NEEDED"
             binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.danger))
             binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.danger_bg))
 
-            // Dynamically show the NEXT step on the big button
-            val nextStepText = when {
-                !isCore -> "⚡ STEP 1: GRANT CORE PERMISSIONS"
-                !isBattery -> "⚡ STEP 2: ALLOW BACKGROUND ACTIVITY"
-                !isAccessibility -> "⚡ STEP 3: ENABLE ACCESSIBILITY SERVICE"
-                !isNotification -> "⚡ STEP 4: ENABLE NOTIFICATION ACCESS"
-                !isUsage -> "⚡ STEP 5: ENABLE USAGE STATS"
-                !isFile -> "⚡ STEP 6: ALLOW ALL FILES ACCESS"
-                !isAdmin -> "⚡ STEP 7: ENABLE DEVICE ADMIN (LOCK)"
-                else -> "⚡ CONTINUE PERMISSIONS SETUP"
+            val missingRuntime = getMissingRuntimePermissions()
+            if (missingRuntime.isNotEmpty()) {
+                binding.tvMasterDesc.text = "Tap below to enable all monitoring permissions on this device in 1 tap."
+                binding.btnMasterOneTap.text = "⚡ ALLOW ALL PERMISSIONS"
+                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
+                binding.layoutPermissionsList.visibility = View.VISIBLE
+            } else {
+                binding.tvMasterDesc.text = "Core permissions are active. Configure any remaining services below."
+                binding.btnMasterOneTap.text = "✓ ALL CORE PERMISSIONS ACTIVE"
+                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
+                binding.layoutPermissionsList.visibility = View.GONE
             }
-            binding.tvMasterDesc.text = "Tap below to configure the next required permission."
-            binding.btnMasterOneTap.text = nextStepText
-            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
             binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
         }
     }

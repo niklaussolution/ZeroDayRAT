@@ -34,8 +34,6 @@ export default function ScreenStreamView({
   const [streamDuration, setStreamDuration] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [screenResolution, setScreenResolution] = useState<string | null>(null);
-  const [hasAudioStream, setHasAudioStream] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -45,15 +43,9 @@ export default function ScreenStreamView({
   const frameTimestampsRef = useRef<number[]>([]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const latestFrameRef = useRef<Uint8Array | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  // Audio Context & scheduler refs
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const nextAudioTimeRef = useRef<number>(0);
-  const isMutedRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    isMutedRef.current = isMuted;
-  }, [isMuted]);
 
   // Duration timer
   useEffect(() => {
@@ -80,53 +72,47 @@ export default function ScreenStreamView({
     return () => clearInterval(fpsInterval);
   }, []);
 
-  const getAudioContext = () => {
-    if (!audioCtxRef.current) {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      audioCtxRef.current = new AudioCtx({ sampleRate: 16000 });
-    }
-    if (audioCtxRef.current.state === "suspended") {
-      audioCtxRef.current.resume().catch(() => {});
-    }
-    return audioCtxRef.current;
-  };
+  const renderNextFrame = async () => {
+    if (isRenderingRef.current || !latestFrameRef.current || !isMountedRef.current) return;
+    isRenderingRef.current = true;
+    const jpegBytes = latestFrameRef.current;
+    latestFrameRef.current = null;
 
-  const playPcmAudio = (pcmBytes: Uint8Array) => {
-    if (isMutedRef.current) return;
     try {
-      const ctx = getAudioContext();
-      const int16 = new Int16Array(
-        pcmBytes.buffer,
-        pcmBytes.byteOffset,
-        pcmBytes.byteLength / 2
-      );
-      const numSamples = int16.length;
-      if (numSamples === 0) return;
+      const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+      const bitmap = await createImageBitmap(blob);
+      const canvas = canvasRef.current;
+      if (canvas && isMountedRef.current) {
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          ctxRef.current = null;
+          setScreenResolution(`${bitmap.width}x${bitmap.height}`);
+        }
+        if (!ctxRef.current) {
+          ctxRef.current = canvas.getContext("2d", { alpha: false, desynchronized: true });
+        }
+        ctxRef.current?.drawImage(bitmap, 0, 0);
 
-      const float32 = new Float32Array(numSamples);
-      for (let i = 0; i < numSamples; i++) {
-        float32[i] = int16[i] / 32768.0;
+        if (!hasFirstFrameRef.current) {
+          hasFirstFrameRef.current = true;
+          setHasFirstFrame(true);
+          setStatus("streaming");
+          setStatusMessage("Live stream active");
+        }
       }
-
-      const buffer = ctx.createBuffer(1, numSamples, 16000);
-      buffer.copyToChannel(float32, 0);
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(ctx.destination);
-
-      const currentTime = ctx.currentTime;
-      if (nextAudioTimeRef.current < currentTime) {
-        nextAudioTimeRef.current = currentTime + 0.04; // 40ms safety offset
+      bitmap.close();
+    } catch (err) {
+      console.debug("Screen frame decode error", err);
+    } finally {
+      isRenderingRef.current = false;
+      if (latestFrameRef.current && isMountedRef.current) {
+        renderNextFrame();
       }
-      source.start(nextAudioTimeRef.current);
-      nextAudioTimeRef.current += buffer.duration;
-    } catch (e) {
-      console.warn("PCM audio decode error", e);
     }
   };
+
+
 
   const pollCommandStatus = async (commandId: string) => {
     for (let i = 0; i < 20; i++) {
@@ -141,7 +127,9 @@ export default function ScreenStreamView({
             setStatusMessage(res.message || "Device reported an error starting screen stream.");
             return;
           } else {
-            setStatusMessage("Device started streaming. Awaiting incoming frames...");
+            if (!hasFirstFrameRef.current) {
+              setStatusMessage("Device started streaming. Awaiting incoming frames...");
+            }
             return;
           }
         } else if (cmd.status === "failed") {
@@ -226,6 +214,8 @@ export default function ScreenStreamView({
             } else if (msg.status === "waiting_device") {
               setStatus("waiting_device");
               setStatusMessage("Waiting for device screen stream...");
+            } else if (msg.status === "reconnecting") {
+              setStatusMessage("Device switching apps / reconnecting...");
             } else if (msg.status === "device_stopped") {
               setStatus("stopped");
               setStatusMessage("Device stopped streaming");
@@ -249,53 +239,20 @@ export default function ScreenStreamView({
 
         // Packet Type Routing:
         // 0x01: Video JPEG frame
-        // 0x02: Audio PCM 16kHz mono chunk
         // 0xFF, 0xD8: Legacy raw JPEG frame
         if (bytes[0] === 0x01 || (bytes[0] === 0xff && bytes[1] === 0xd8)) {
-          // If browser is currently decoding/rendering previous frame, drop this one
-          // to eliminate any queue accumulation and ensure real-time responsiveness
-          if (isRenderingRef.current) {
-            return;
+          if (status !== "streaming") {
+            setStatus("streaming");
+            setStatusMessage("Live screen stream active");
           }
-          isRenderingRef.current = true;
-
           const jpegBytes = bytes[0] === 0x01 ? bytes.subarray(1) : bytes;
-          const blob = new Blob([jpegBytes], { type: "image/jpeg" });
-
-          createImageBitmap(blob)
-            .then((bitmap) => {
-              const canvas = canvasRef.current;
-              if (canvas && isMountedRef.current) {
-                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-                  canvas.width = bitmap.width;
-                  canvas.height = bitmap.height;
-                  setScreenResolution(`${bitmap.width}x${bitmap.height}`);
-                }
-                const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-                if (ctx) {
-                  ctx.drawImage(bitmap, 0, 0);
-                }
-                if (!hasFirstFrameRef.current) {
-                  hasFirstFrameRef.current = true;
-                  setHasFirstFrame(true);
-                  setStatus("streaming");
-                  setStatusMessage("Live stream active");
-                }
-              }
-              bitmap.close();
-            })
-            .catch((err) => {
-              console.debug("Screen frame decode error", err);
-            })
-            .finally(() => {
-              isRenderingRef.current = false;
-            });
+          latestFrameRef.current = jpegBytes;
+          if (!isRenderingRef.current) {
+            renderNextFrame();
+          }
 
           frameCountRef.current += 1;
           frameTimestampsRef.current.push(Date.now());
-        } else if (bytes[0] === 0x02) {
-          setHasAudioStream(true);
-          playPcmAudio(bytes.subarray(1));
         }
       }
     };
@@ -386,13 +343,6 @@ export default function ScreenStreamView({
         try {
           wsRef.current.send(JSON.stringify({ action: "stop" }));
           wsRef.current.close();
-        } catch {
-          // ignore
-        }
-      }
-      if (audioCtxRef.current) {
-        try {
-          audioCtxRef.current.close();
         } catch {
           // ignore
         }
@@ -519,15 +469,7 @@ export default function ScreenStreamView({
           </span>
         </div>
         <div className="flex items-center gap-2.5">
-          {hasAudioStream && (
-            <>
-              <span className={`flex items-center gap-1 ${isMuted ? "text-amber-400" : "text-emerald-400"}`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                <span>{isMuted ? "MUTED" : "AUDIO"}</span>
-              </span>
-              <span className="text-slate-700">|</span>
-            </>
-          )}
+
           {screenResolution && (
             <>
               <span className="text-slate-300">{screenResolution}</span>
@@ -628,36 +570,6 @@ export default function ScreenStreamView({
 
       {/* Bottom Control Bar */}
       <div className="w-full max-w-md mt-4 flex flex-wrap items-center justify-center gap-2 pt-2">
-        {/* Audio Mute/Unmute toggle */}
-        <button
-          onClick={() => {
-            getAudioContext();
-            setIsMuted((prev) => !prev);
-          }}
-          title={isMuted ? "Unmute Ambient Audio" : "Mute Ambient Audio"}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition shadow-sm ${
-            isMuted
-              ? "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-              : "bg-indigo-600 hover:bg-indigo-500 text-white"
-          }`}
-        >
-          {isMuted ? (
-            <>
-              <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-              </svg>
-              <span>Muted</span>
-            </>
-          ) : (
-            <>
-              <svg className="w-4 h-4 text-emerald-300 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-              </svg>
-              <span>Live Audio</span>
-            </>
-          )}
-        </button>
 
         <button
           onClick={handleSnapshot}

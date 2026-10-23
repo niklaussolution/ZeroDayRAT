@@ -46,7 +46,7 @@ class SpappFirebaseMessagingService : FirebaseMessagingService() {
             val deviceId = DeviceState(applicationContext).getEffectiveDeviceId()
             if (deviceId != null && com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) {
                 Log.d(TAG, "FCM fast-path: triggering screen stream immediately")
-                com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(applicationContext, authToken, deviceId)
+                com.spapp.monitoring.screenstream.ScreenStreamService.start(applicationContext)
             }
         }
 
