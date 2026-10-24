@@ -24,7 +24,6 @@ import kotlinx.coroutines.launch
  *    the device user types it into inputDeviceCode themselves.
  *  - Deep link: the dashboard's QR code / shareable link
  *    ("spappmonitor://activate?token=...&name=...") opens this screen
- *    ("zerodayrat://activate?token=...&name=...") opens this screen
  *    directly via the intent-filter in AndroidManifest.xml — the token is
  *    pre-filled from the link so nothing needs to be typed.
  */
@@ -51,7 +50,6 @@ class ActivationActivity : AppCompatActivity() {
 
     /**
      * If opened via the "spappmonitor://activate?token=...&name=..." deep link,
-     * If opened via the "zerodayrat://activate?token=...&name=..." deep link,
      * pre-fills the token field (and shows the device name the admin picked)
      * instead of requiring the device user to type the token in manually.
      */

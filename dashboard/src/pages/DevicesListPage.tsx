@@ -10,8 +10,7 @@ function buildActivationLink(device: Device): string {
     token: device.device_token || "",
     name: device.device_label,
   });
-  // return `spappmonitor://activate?${params.toString()}`;
-  return `zerodayrat://activate?${params.toString()}`;
+  return `spappmonitor://activate?${params.toString()}`;
 }
 
 export default function DevicesListPage() {

@@ -75,15 +75,13 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ZeroDayRAT">
-        <!-- android:theme="@style/Theme.SpappMonitoring"> -->
+        android:theme="@style/Theme.SpappMonitoring">
 
         <!-- Visible launcher entry point — app icon is always shown, per project policy -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
-            android:theme="@style/Theme.ZeroDayRAT">
-            <!-- android:theme="@style/Theme.SpappMonitoring"> -->
+            android:theme="@style/Theme.SpappMonitoring">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -97,7 +95,7 @@
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
              exported=true + the intent-filter below let the dashboard's QR code / shareable
-             activation link ("ZeroDayRAT://activate?token=...&name=...") open directly into
+             activation link ("spappmonitor://activate?token=...&name=...") open directly into
              this screen with the token pre-filled, so the device user doesn't have to type it. -->
         <activity
             android:name=".ui.ActivationActivity"
@@ -106,8 +104,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- <data android:scheme="spappmonitor" android:host="activate" /> -->
-                <data android:scheme="zerodayrat" android:host="activate" />
+                <data android:scheme="spappmonitor" android:host="activate" />
             </intent-filter>
         </activity>
 
