@@ -6,6 +6,7 @@ import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DevicesListPage from "./pages/DevicesListPage";
+import ConnectPage from "./pages/ConnectPage";
 import DeviceDetailPage from "./pages/DeviceDetailPage";
 import DeviceArchivePage from "./pages/DeviceArchivePage";
 import AdminPage from "./pages/AdminPage";
@@ -20,6 +21,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/connect" element={<ConnectPage />} />
 
           <Route element={<ProtectedRoute />}>
             <Route path="/devices/:id/screen-stream" element={<ScreenStreamPage />} />

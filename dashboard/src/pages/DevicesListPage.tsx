@@ -4,13 +4,18 @@ import QRCode from "qrcode";
 import { devicesApi } from "../api/devices";
 import type { Device } from "../api/types";
 
-/** Custom URI scheme the Android app registers an intent-filter for (see AndroidManifest.xml). */
+/**
+ * Public https URL (works in any browser, scannable by any QR reader) that
+ * opens the app directly via Android App Link if installed, or falls back to
+ * the /connect page's instructions otherwise. See ConnectPage.tsx and the
+ * https intent-filter on ActivationActivity in AndroidManifest.xml.
+ */
 function buildActivationLink(device: Device): string {
   const params = new URLSearchParams({
     token: device.device_token || "",
     name: device.device_label,
   });
-  return `spappmonitor://activate?${params.toString()}`;
+  return `${window.location.origin}/connect?${params.toString()}`;
 }
 
 export default function DevicesListPage() {

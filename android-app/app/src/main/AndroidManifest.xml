@@ -94,12 +94,28 @@
             android:exported="false" />
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
-             exported=true + the intent-filter below let the dashboard's QR code / shareable
-             activation link ("spappmonitor://activate?token=...&name=...") open directly into
-             this screen with the token pre-filled, so the device user doesn't have to type it. -->
+             exported=true + the intent-filters below let the dashboard's QR code / shareable
+             activation link open directly into this screen with the token pre-filled, so the
+             device user doesn't have to type it.
+               - https filter: matches the real link the dashboard generates
+                 (https://<dashboard-domain>/connect?token=...&name=...) — this is what a QR
+                 scanner or a tapped browser/WhatsApp link actually opens. Not autoVerify'd
+                 (no Digital Asset Links file published yet), so Android may show an "Open
+                 with" chooser between this app and the browser instead of opening silently.
+               - spappmonitor:// filter: the dashboard's /connect fallback page redirects here
+                 as a second attempt once it loads in the browser. -->
         <activity
             android:name=".ui.ActivationActivity"
             android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="zerodayrat.vercel.app"
+                    android:pathPrefix="/connect" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
