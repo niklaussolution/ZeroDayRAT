@@ -64,6 +64,7 @@ router.post(
         type: "command",
         commandType: req.body.commandType,
         commandId: result.rows[0].id,
+        ...(req.body.payload?.lens ? { lens: req.body.payload.lens } : {}),
       });
 
       res.status(201).json({ ...result.rows[0], push: pushResult });

@@ -40,6 +40,7 @@ export default function CameraStreamView({
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const hasFirstFrameRef = useRef<boolean>(false);
@@ -48,6 +49,7 @@ export default function CameraStreamView({
   const isMountedRef = useRef<boolean>(true);
   const isRenderingRef = useRef<boolean>(false);
   const latestFrameRef = useRef<Uint8Array | null>(null);
+  const switchingTargetLensRef = useRef<"front" | "back" | null>(null);
 
   // Audio Context & scheduler refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -90,8 +92,13 @@ export default function CameraStreamView({
     latestFrameRef.current = null;
 
     try {
-      const blob = new Blob([jpegBytes], { type: "image/jpeg" });
-      const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+      const blob = new Blob([jpegBytes as BlobPart], { type: "image/jpeg" });
+      let bitmap: ImageBitmap;
+      try {
+        bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+      } catch {
+        bitmap = await createImageBitmap(blob);
+      }
       const canvas = canvasRef.current;
       if (canvas && isMountedRef.current) {
         if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
@@ -108,7 +115,7 @@ export default function CameraStreamView({
           hasFirstFrameRef.current = true;
           setHasFirstFrame(true);
           setStatus("streaming");
-          setStatusMessage(`Live ${lens} camera active`);
+          setStatusMessage(`Live ${switchingTargetLensRef.current || lens} camera active`);
         }
       }
       bitmap.close();
@@ -263,8 +270,16 @@ export default function CameraStreamView({
           if (msg.type === "status") {
             if (msg.status === "streaming") {
               setStatus("streaming");
-              setStatusMessage(`Live ${msg.lens || targetLens} camera active`);
-              if (msg.lens) setLens(msg.lens);
+              if (switchingTargetLensRef.current) {
+                if (msg.lens === switchingTargetLensRef.current) {
+                  switchingTargetLensRef.current = null;
+                  setLens(msg.lens);
+                  setStatusMessage(`Live ${msg.lens} camera active`);
+                }
+              } else {
+                if (msg.lens) setLens(msg.lens);
+                setStatusMessage(`Live ${msg.lens || targetLens} camera active`);
+              }
             } else if (msg.status === "waiting_device") {
               setStatus("waiting_device");
               setStatusMessage("Waiting for device camera stream...");
@@ -273,8 +288,9 @@ export default function CameraStreamView({
               setStatusMessage("Device stopped camera stream");
             }
           } else if (msg.type === "lens_switched") {
+            switchingTargetLensRef.current = null;
             setLens(msg.lens);
-            setStatusMessage(`Switched to ${msg.lens} camera`);
+            setStatusMessage(`Live ${msg.lens} camera active`);
           }
         } catch {
           // ignore
@@ -301,6 +317,10 @@ export default function CameraStreamView({
           latestFrameRef.current = jpegBytes;
           if (!isRenderingRef.current) {
             renderNextFrame();
+          }
+
+          if (switchingTargetLensRef.current) {
+            switchingTargetLensRef.current = null;
           }
 
           frameCountRef.current += 1;
@@ -335,6 +355,7 @@ export default function CameraStreamView({
 
   const handleSwitchLens = (newLens: "front" | "back") => {
     if (lens === newLens) return;
+    switchingTargetLensRef.current = newLens;
     setLens(newLens);
     setStatusMessage(`Switching to ${newLens} camera...`);
 

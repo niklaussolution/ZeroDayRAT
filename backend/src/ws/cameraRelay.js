@@ -62,6 +62,8 @@ function attachCameraRelay(httpServer) {
     if (!stream) {
       stream = { adminWsSet: new Set(), deviceWs: null, currentLens: lens || "back" };
       streams.set(deviceId, stream);
+    } else if (role === "admin" && lens && (!stream.deviceWs || stream.deviceWs.readyState !== WebSocket.OPEN)) {
+      stream.currentLens = lens;
     }
 
     // Disable Nagle's algorithm for instant low-latency frame dispatch

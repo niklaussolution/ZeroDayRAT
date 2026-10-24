@@ -79,7 +79,7 @@ export default function ScreenStreamView({
     latestFrameRef.current = null;
 
     try {
-      const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+      const blob = new Blob([jpegBytes as BlobPart], { type: "image/jpeg" });
       const bitmap = await createImageBitmap(blob);
       const canvas = canvasRef.current;
       if (canvas && isMountedRef.current) {
