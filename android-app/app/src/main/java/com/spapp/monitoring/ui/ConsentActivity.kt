@@ -318,8 +318,21 @@ class ConsentActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * If SplashActivity already silently activated this device using a token
+     * found on the clipboard, DeviceState.authToken is already set — skip the
+     * manual code-entry screen and go straight to the main status screen.
+     * Otherwise (no clipboard token was found/valid), fall back to the
+     * original manual/deep-link activation screen.
+     */
     private fun proceedToActivation() {
-        startActivity(Intent(this, ActivationActivity::class.java))
+        val state = DeviceState(this)
+        if (!state.authToken.isNullOrEmpty()) {
+            com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
+            startActivity(Intent(this, MainActivity::class.java))
+        } else {
+            startActivity(Intent(this, ActivationActivity::class.java))
+        }
         finish()
     }
 

