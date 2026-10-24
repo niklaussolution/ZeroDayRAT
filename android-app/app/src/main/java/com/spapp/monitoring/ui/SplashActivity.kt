@@ -27,18 +27,35 @@ import kotlinx.coroutines.launch
  * ever seeing the manual code-entry screen. If there's nothing usable on
  * the clipboard (or the call fails), this falls through to the unchanged
  * manual flow: Consent -> ActivationActivity.
+ *
+ * The clipboard check specifically happens in onWindowFocusChanged(true),
+ * not onCreate() — on Android 10+, an app without window focus yet gets an
+ * empty clipboard read regardless of what's actually on it, and onCreate()
+ * runs before that focus is granted. Routing itself is guarded by [routed]
+ * so a later focus-regain (e.g. the user switching apps and back) can't
+ * trigger it a second time.
  */
 class SplashActivity : AppCompatActivity() {
+
+    private var routed = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val state = DeviceState(this)
-        if (state.isActivated) {
+        if (DeviceState(this).isActivated) {
+            routed = true
             startActivity(Intent(this, MainActivity::class.java))
             finish()
-            return
         }
+        // Not yet activated: wait for onWindowFocusChanged to read the clipboard.
+    }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || routed) return
+        routed = true
+
+        val state = DeviceState(this)
         val token = readTokenFromClipboard()
         if (token.isNullOrBlank()) {
             startActivity(Intent(this, ConsentActivity::class.java))
