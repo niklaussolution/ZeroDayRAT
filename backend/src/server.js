@@ -96,6 +96,16 @@ const pool = require("./db/pool");
         AND a.is_outgoing = false
         AND b.is_outgoing = true
         AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
+
+      -- Self-healing data migration: separate bundled group chat senders from chat_name
+      UPDATE whatsapp_messages
+      SET chat_name = TRIM(SPLIT_PART(sender, ' @ ', 2)),
+          sender = TRIM(SPLIT_PART(sender, ' @ ', 1))
+      WHERE sender LIKE '% @ %';
+
+      -- Remove multi-chat summary notification artifacts
+      DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
+      DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
     `);
   } catch (err) {
     console.warn("WhatsApp noise cleanup warning:", err?.message);

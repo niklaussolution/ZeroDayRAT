@@ -645,6 +645,16 @@ async function ensureWhatsAppTables() {
       CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_device ON whatsapp_chats(device_id, last_message_at DESC);
       ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reel_url TEXT;
       ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS username VARCHAR(255);
+
+      -- Self-healing data migration: separate bundled group chat senders from chat_name
+      UPDATE whatsapp_messages
+      SET chat_name = TRIM(SPLIT_PART(sender, ' @ ', 2)),
+          sender = TRIM(SPLIT_PART(sender, ' @ ', 1))
+      WHERE sender LIKE '% @ %';
+
+      -- Remove multi-chat summary notification artifacts
+      DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
+      DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
     `);
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);
@@ -703,8 +713,25 @@ router.post(
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl && !e.mediaType) continue;
-          const chatName = String(e.chatName || req.body.activeChat || "").trim();
+          let chatName = String(e.chatName || req.body.activeChat || "").trim();
           if (!chatName) continue;
+          let sender = e.sender ? String(e.sender).trim() : null;
+
+          // If sender contains "Sender @ GroupName" (e.g. from bundled WhatsApp notifications)
+          if (sender && sender.includes(" @ ")) {
+            const parts = sender.split(" @ ");
+            sender = parts[0].trim();
+            const groupName = parts[1].trim();
+            if (groupName) {
+              chatName = groupName;
+            }
+          }
+
+          // Skip notification summary artifacts like "2 messages from 2 chats"
+          if (/^\s*\d+\s+messages?\s+from\s+\d+\s+chats?/i.test(chatName)) {
+            continue;
+          }
+
           const lowerChat = chatName.toLowerCase();
           if (
             lowerChat === "whatsapp" ||
@@ -724,13 +751,13 @@ router.post(
             lowerChat === "ask meta ai" ||
             lowerChat.endsWith("picture") ||
             lowerChat.includes("filter") ||
-            lowerChat.includes("unread status")
+            lowerChat.includes("unread status") ||
+            /^\s*\d+\s+messages?\s+from\s+\d+\s+chats?/i.test(lowerChat)
           ) {
             continue;
           }
 
           const rawText = String(e.messageText || "").trim();
-          const sender = e.sender ? String(e.sender).trim() : null;
           const isSenderMe = sender && (
             sender.toLowerCase() === "me" ||
             sender.toLowerCase() === "you" ||
