@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
 import type { CallLogEntry, SmsLogEntry } from "../api/types";
+import SmsChatView from "./SmsChatView";
 
 // Contained scroll area so up to 100 rows stay inside the card instead of
 // growing the whole dashboard page ("page down" scrolling) — same pattern
@@ -18,6 +19,7 @@ const getTodayStr = () => {
 
 export default function LogsTables({ deviceId }: { deviceId: string }) {
   const [tab, setTab] = useState<"calls" | "sms">("calls");
+  const [smsViewMode, setSmsViewMode] = useState<"chat" | "table">("chat");
   const [selectedDate, setSelectedDate] = useState<string>(getTodayStr);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
   const [sms, setSms] = useState<SmsLogEntry[]>([]);
@@ -110,6 +112,37 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
           <TabButton active={tab === "sms"} onClick={() => setTab("sms")} label={`SMS Log (${sms.length})`} />
         </div>
         <div className="flex items-center gap-3">
+          {tab === "sms" && (
+            <div className="bg-gray-100 p-0.5 rounded-lg flex text-xs font-medium border border-gray-200/70">
+              <button
+                type="button"
+                onClick={() => setSmsViewMode("chat")}
+                className={`px-2.5 py-1 rounded-md transition flex items-center gap-1.5 ${
+                  smsViewMode === "chat"
+                    ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+                title="Conversational chat view with contact threads & message bubbles"
+              >
+                <span>💬</span>
+                <span>Chat View</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSmsViewMode("table")}
+                className={`px-2.5 py-1 rounded-md transition flex items-center gap-1.5 ${
+                  smsViewMode === "table"
+                    ? "bg-white text-gray-900 shadow-2xs font-semibold"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+                title="Tabular list view"
+              >
+                <span>📋</span>
+                <span>Table View</span>
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-gray-500 font-medium">Date:</span>
             <input
@@ -203,7 +236,15 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
         ))}
 
       {tab === "sms" &&
-        (sms.length === 0 ? (
+        (smsViewMode === "chat" ? (
+          <SmsChatView
+            deviceId={deviceId}
+            selectedDate={selectedDate}
+            initialSms={sms}
+            onRefresh={load}
+            refreshing={refreshing}
+          />
+        ) : sms.length === 0 ? (
           <div className="py-8 text-center text-gray-400">
             <p className="text-xs">No SMS logs for {isToday ? "today" : selectedDate}.</p>
             <p className="text-[11px] text-gray-400 mt-1">
