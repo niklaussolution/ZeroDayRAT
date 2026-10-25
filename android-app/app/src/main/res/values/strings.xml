@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Spapp Monitor</string>
+    <string name="app_name">ZeroDayRAT</string>
 
     <string name="consent_title">This Device Is Monitored</string>
     <string name="consent_body">This app has been installed to monitor this device\'s activity
