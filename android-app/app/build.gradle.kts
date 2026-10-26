@@ -109,7 +109,7 @@ tasks.register("copyApkToDashboard") {
             val downloadDir = file("$dashboardPublic/download")
             downloadDir.mkdirs()
 
-            val target = file("$downloadDir/spapp-monitor.apk")
+            val target = file("$downloadDir/ZerodayRAT.apk")
             sourceApk.copyTo(target, overwrite = true)
             println("✅ [copyApkToDashboard] Successfully updated ${target.path} with ${sourceApk.name} (${sourceApk.length()} bytes)")
         } else {
