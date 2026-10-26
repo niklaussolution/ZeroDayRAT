@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:apk": "cd ../android-app && gradlew.bat assembleDebug",
     "vercel-build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

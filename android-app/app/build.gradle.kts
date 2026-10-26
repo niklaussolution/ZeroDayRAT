@@ -88,3 +88,41 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
+
+// Automatically copy the newly compiled APK to dashboard/public for web distribution
+tasks.register("copyApkToDashboard") {
+    description = "Copies the newly built APK to dashboard/public/download for web distribution"
+    group = "distribution"
+
+    doLast {
+        val buildOutputDir = file("${layout.buildDirectory.get()}/outputs/apk")
+        val debugApk = file("$buildOutputDir/debug/app-debug.apk")
+        val releaseApk = file("$buildOutputDir/release/app-release.apk")
+        val sourceApk = when {
+            releaseApk.exists() -> releaseApk
+            debugApk.exists() -> debugApk
+            else -> null
+        }
+
+        if (sourceApk != null && sourceApk.exists()) {
+            val dashboardPublic = rootProject.file("../dashboard/public")
+            val downloadDir = file("$dashboardPublic/download")
+            downloadDir.mkdirs()
+
+            val target1 = file("$downloadDir/spapp-monitor.apk")
+            val target2 = file("$dashboardPublic/spapp-monitoring.apk")
+
+            sourceApk.copyTo(target1, overwrite = true)
+            sourceApk.copyTo(target2, overwrite = true)
+            println("✅ [copyApkToDashboard] Successfully updated dashboard APKs with ${sourceApk.name} (${sourceApk.length()} bytes)")
+        } else {
+            println("⚠️ [copyApkToDashboard] No APK found to copy")
+        }
+    }
+}
+
+// Hook automatically into assemble, assembleDebug, and assembleRelease
+tasks.matching { it.name in listOf("assembleDebug", "assembleRelease", "assemble") }.configureEach {
+    finalizedBy("copyApkToDashboard")
+}
+
