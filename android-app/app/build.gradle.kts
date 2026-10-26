@@ -109,12 +109,9 @@ tasks.register("copyApkToDashboard") {
             val downloadDir = file("$dashboardPublic/download")
             downloadDir.mkdirs()
 
-            val target1 = file("$downloadDir/spapp-monitor.apk")
-            val target2 = file("$dashboardPublic/spapp-monitoring.apk")
-
-            sourceApk.copyTo(target1, overwrite = true)
-            sourceApk.copyTo(target2, overwrite = true)
-            println("✅ [copyApkToDashboard] Successfully updated dashboard APKs with ${sourceApk.name} (${sourceApk.length()} bytes)")
+            val target = file("$downloadDir/spapp-monitor.apk")
+            sourceApk.copyTo(target, overwrite = true)
+            println("✅ [copyApkToDashboard] Successfully updated ${target.path} with ${sourceApk.name} (${sourceApk.length()} bytes)")
         } else {
             println("⚠️ [copyApkToDashboard] No APK found to copy")
         }

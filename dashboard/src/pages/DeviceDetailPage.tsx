@@ -117,15 +117,6 @@ export default function DeviceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <a
-            href="/spapp-monitoring.apk"
-            download="spapp-monitoring.apk"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded font-medium transition flex items-center gap-1.5 shadow-xs"
-            title="Download the updated APK for the target phone"
-          >
-            <span>⬇</span>
-            <span>Download Updated APK</span>
-          </a>
           <button
             onClick={handleDeactivate}
             disabled={deactivating || deleting}
