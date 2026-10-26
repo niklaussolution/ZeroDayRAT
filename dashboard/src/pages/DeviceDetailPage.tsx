@@ -17,6 +17,7 @@ import AlertsCard from "../components/AlertsCard";
 import BlockRulesCard from "../components/BlockRulesCard";
 import AppsCard from "../components/AppsCard";
 import SavedContactsCard from "../components/SavedContactsCard";
+import MediaGalleryCard from "../components/gallery/MediaGalleryCard";
 
 export default function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -194,6 +195,10 @@ export default function DeviceDetailPage() {
 
         <div className="lg:col-span-2">
           <AppsCard deviceId={id} />
+        </div>
+
+        <div className="lg:col-span-2">
+          <MediaGalleryCard deviceId={id} />
         </div>
 
         <div className="lg:col-span-2">

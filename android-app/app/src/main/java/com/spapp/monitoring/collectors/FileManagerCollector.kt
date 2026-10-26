@@ -173,6 +173,67 @@ class FileManagerCollector(private val context: Context) {
         return results.sortedWith(compareBy({ it.path.count { c -> c == '/' } }, { !it.isDirectory }, { it.name }))
     }
 
+    fun listGalleryMedia(maxEntries: Int = 3000): List<FileEntryDto> {
+        val root = try {
+            root().canonicalFile
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        if (!root.exists() || !root.isDirectory) return emptyList()
+
+        val mediaExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "mp4", "mkv", "mov", "3gp", "heic", "heif")
+        val candidateRoots = listOf(
+            File(root, "DCIM"),
+            File(root, "Pictures"),
+            File(root, "Movies"),
+            File(root, "Download"),
+            File(root, "Android/media/com.whatsapp/WhatsApp/Media"),
+            File(root, "WhatsApp/Media"),
+            File(root, "Android/media/com.whatsapp.w4b/WhatsApp Business/Media"),
+            File(root, "WhatsApp Business/Media")
+        ).filter { it.exists() && it.isDirectory }
+
+        val results = mutableListOf<FileEntryDto>()
+        val queue = ArrayDeque<File>()
+        queue.addAll(candidateRoots)
+
+        while (queue.isNotEmpty() && results.size < maxEntries) {
+            val dir = queue.removeFirst()
+            val children = try {
+                dir.listFiles()
+            } catch (e: Exception) {
+                null
+            } ?: continue
+
+            for (file in children) {
+                if (results.size >= maxEntries) break
+                try {
+                    val canonical = file.canonicalFile
+                    if (!canonical.path.startsWith(root.path)) continue
+
+                    if (file.isDirectory) {
+                        if (!file.name.startsWith(".") && !file.name.equals("cache", ignoreCase = true)) {
+                            queue.add(file)
+                        }
+                    } else if (file.isFile) {
+                        val ext = file.extension.lowercase()
+                        if (ext in mediaExtensions) {
+                            results += FileEntryDto(
+                                name = file.name,
+                                path = canonical.relativeTo(root).path,
+                                isDirectory = false,
+                                sizeBytes = file.length(),
+                                mimeType = guessMimeType(ext) ?: "application/octet-stream"
+                            )
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return results.sortedByDescending { it.sizeBytes ?: 0L }
+    }
+
     fun resolveFile(relativePath: String): File? = try {
         val root = root().canonicalFile
         val target = File(root, relativePath)
@@ -187,10 +248,16 @@ class FileManagerCollector(private val context: Context) {
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"
         "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "heic" -> "image/heic"
+        "heif" -> "image/heif"
         "pdf" -> "application/pdf"
         "txt" -> "text/plain"
         "json" -> "application/json"
         "mp4" -> "video/mp4"
+        "mkv" -> "video/x-matroska"
+        "mov" -> "video/quicktime"
+        "3gp" -> "video/3gpp"
         "mp3" -> "audio/mpeg"
         "opus" -> "audio/opus"
         "ogg" -> "audio/ogg"

