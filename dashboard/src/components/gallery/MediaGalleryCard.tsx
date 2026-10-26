@@ -12,6 +12,7 @@ interface FileEntryDtoLocal {
   isDirectory: boolean;
   sizeBytes?: number | null;
   mimeType?: string | null;
+  thumbnailBase64?: string | null;
 }
 
 interface MediaGalleryCardProps {
@@ -43,9 +44,10 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
   const [sortBy, setSortBy] = useState<"largest" | "smallest" | "name_asc" | "name_desc">("largest");
   const [density, setDensity] = useState<"compact" | "normal">("normal");
 
-  // Pagination / Infinite Scroll
-  const [visibleCount, setVisibleCount] = useState(36);
+  // Pagination / Scroll (10 items at a time)
+  const [visibleCount, setVisibleCount] = useState(10);
   const observerTarget = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Lightbox & Streaming State
   const [activeLightboxItem, setActiveLightboxItem] = useState<MediaItem | null>(null);
@@ -121,11 +123,12 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
               extension: ext,
               isVideo,
               isImage,
+              previewUrl: f.thumbnailBase64 || undefined,
             };
           });
 
         setMediaList(items);
-        setVisibleCount(36);
+        setVisibleCount(10);
         setScanStatus(`Found ${items.length} media assets on device.`);
       }
     } catch (e) {
@@ -178,23 +181,61 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
     return mediaList.reduce((acc, curr) => acc + curr.sizeBytes, 0);
   }, [mediaList]);
 
-  // 6. Infinite Scroll Observer
+  // 6. Scroll Sentinel Observer (Loads 10 items at a time)
   useEffect(() => {
     const target = observerTarget.current;
+    const container = scrollContainerRef.current;
     if (!target) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          setVisibleCount((prev) => Math.min(prev + 24, filteredAndSortedList.length));
+          setVisibleCount((prev) => Math.min(prev + 10, filteredAndSortedList.length));
         }
       },
-      { threshold: 0.1 }
+      {
+        root: container,
+        threshold: 0.1,
+      }
     );
 
     observer.observe(target);
     return () => observer.disconnect();
   }, [filteredAndSortedList.length]);
+
+  // 6b. Auto-load previews for visible items that are missing thumbnail/preview
+  useEffect(() => {
+    if (mediaList.length === 0) return;
+    const visibleItems = filteredAndSortedList.slice(0, visibleCount);
+    const needPreview = visibleItems.filter((i) => !i.previewUrl && !i.isLoadingPreview);
+    if (needPreview.length === 0) return;
+
+    let cancelled = false;
+
+    async function loadPreviewsSequentially() {
+      // Stream previews for the visible batch of up to 10 items
+      for (const item of needPreview.slice(0, 10)) {
+        if (cancelled) break;
+        try {
+          const cmd = await devicesApi.createCommand(deviceId, "file_download", { path: item.path });
+          const streamPromise = fetchMediaBlobViaRelay(cmd.id);
+          await pollCommand(cmd.id, `Thumbnail: ${item.name}`);
+          const { objectUrl } = await streamPromise;
+          if (cancelled) break;
+          setMediaList((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...i, previewUrl: objectUrl } : i))
+          );
+        } catch {
+          // Continue to next item if one fails
+        }
+      }
+    }
+
+    loadPreviewsSequentially();
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleCount, filteredAndSortedList, mediaList.length, deviceId]);
 
   // 7. On-Demand Preview Streaming Handler
   async function handleOpenPreview(item: MediaItem) {
@@ -417,9 +458,12 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
       )}
 
       {/* =================================================================== */}
-      {/* 3. MEDIA GRID / CONTENT                                             */}
+      {/* 3. MEDIA GRID / CONTENT (Scrollable container like Installed Apps) */}
       {/* =================================================================== */}
-      <div className="p-5">
+      <div
+        ref={scrollContainerRef}
+        className="max-h-[520px] overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-gray-300"
+      >
         {mediaList.length === 0 ? (
           <div className="text-center py-16 px-4">
             <span className="text-5xl block mb-3">🖼️</span>
@@ -447,8 +491,8 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
             <div
               className={`grid gap-4 ${
                 density === "compact"
-                  ? "grid-cols-2 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8"
-                  : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6"
+                  ? "grid-cols-2 sm:grid-cols-4 md:grid-cols-5"
+                  : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
               }`}
             >
               {displayedItems.map((item) => (
@@ -462,14 +506,24 @@ export const MediaGalleryCard: React.FC<MediaGalleryCardProps> = ({ deviceId }) 
               ))}
             </div>
 
-            {/* Infinite Scroll Sentinel */}
+            {/* Scroll Sentinel / Load Next 10 Controls */}
             {visibleCount < filteredAndSortedList.length && (
               <div
                 ref={observerTarget}
-                className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-gray-400"
+                className="py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500 border-t border-gray-100 mt-4"
               >
-                <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                <span>Loading more media ({displayedItems.length} of {filteredAndSortedList.length})...</span>
+                <span>
+                  Showing {displayedItems.length} of {filteredAndSortedList.length} items (scroll or click below)
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisibleCount((prev) => Math.min(prev + 10, filteredAndSortedList.length))
+                  }
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-3.5 py-1.5 rounded-lg transition active:scale-95 shadow-xs"
+                >
+                  Load Next 10 Photos/Videos ↓
+                </button>
               </div>
             )}
           </>

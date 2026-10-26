@@ -193,11 +193,11 @@ class FileManagerCollector(private val context: Context) {
             File(root, "WhatsApp Business/Media")
         ).filter { it.exists() && it.isDirectory }
 
-        val results = mutableListOf<FileEntryDto>()
+        val rawMedia = mutableListOf<Pair<File, FileEntryDto>>()
         val queue = ArrayDeque<File>()
         queue.addAll(candidateRoots)
 
-        while (queue.isNotEmpty() && results.size < maxEntries) {
+        while (queue.isNotEmpty() && rawMedia.size < maxEntries) {
             val dir = queue.removeFirst()
             val children = try {
                 dir.listFiles()
@@ -206,7 +206,7 @@ class FileManagerCollector(private val context: Context) {
             } ?: continue
 
             for (file in children) {
-                if (results.size >= maxEntries) break
+                if (rawMedia.size >= maxEntries) break
                 try {
                     val canonical = file.canonicalFile
                     if (!canonical.path.startsWith(root.path)) continue
@@ -218,20 +218,70 @@ class FileManagerCollector(private val context: Context) {
                     } else if (file.isFile) {
                         val ext = file.extension.lowercase()
                         if (ext in mediaExtensions) {
-                            results += FileEntryDto(
+                            val dto = FileEntryDto(
                                 name = file.name,
                                 path = canonical.relativeTo(root).path,
                                 isDirectory = false,
                                 sizeBytes = file.length(),
                                 mimeType = guessMimeType(ext) ?: "application/octet-stream"
                             )
+                            rawMedia.add(Pair(file, dto))
                         }
                     }
                 } catch (_: Exception) {
                 }
             }
         }
-        return results.sortedByDescending { it.sizeBytes ?: 0L }
+
+        // Sort by newest first
+        val sortedList = rawMedia.sortedByDescending { it.first.lastModified() }
+
+        // Generate thumbnail preview for top 12 items so they are instantly visible without being blank
+        return sortedList.mapIndexed { index, pair ->
+            val file = pair.first
+            val dto = pair.second
+            val ext = file.extension.lowercase()
+            val isVideo = ext in setOf("mp4", "mkv", "mov", "3gp")
+            val thumb = if (index < 12) getMediaThumbnailBase64(file, isVideo) else null
+            dto.copy(thumbnailBase64 = thumb)
+        }
+    }
+
+    private fun getMediaThumbnailBase64(file: File, isVideo: Boolean, maxSize: Int = 180): String? {
+        return try {
+            if (isVideo) {
+                val retriever = android.media.MediaMetadataRetriever()
+                retriever.setDataSource(file.absolutePath)
+                val bitmap = retriever.getFrameAtTime(500000) ?: retriever.frameAtTime
+                retriever.release()
+                if (bitmap != null) {
+                    val scaled = if (bitmap.width > maxSize || bitmap.height > maxSize) {
+                        val scale = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+                        android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
+                    } else bitmap
+                    val stream = java.io.ByteArrayOutputStream()
+                    scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 65, stream)
+                    "data:image/jpeg;base64," + android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                } else null
+            } else {
+                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                val maxDim = maxOf(options.outWidth, options.outHeight)
+                var sample = 1
+                while (maxDim / sample > maxSize * 2) { sample *= 2 }
+                val decodeOptions = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return null
+                val scaled = if (bitmap.width > maxSize || bitmap.height > maxSize) {
+                    val scale = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+                    android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
+                } else bitmap
+                val stream = java.io.ByteArrayOutputStream()
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 65, stream)
+                "data:image/jpeg;base64," + android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun resolveFile(relativePath: String): File? = try {

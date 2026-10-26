@@ -198,15 +198,15 @@ export default function DeviceDetailPage() {
         </div>
 
         <div className="lg:col-span-2">
-          <MediaGalleryCard deviceId={id} />
-        </div>
-
-        <div className="lg:col-span-2">
           <SavedContactsCard deviceId={id} />
         </div>
 
         <div className="lg:col-span-2">
           <LogsTables deviceId={id} />
+        </div>
+
+        <div className="lg:col-span-2">
+          <MediaGalleryCard deviceId={id} />
         </div>
       </div>
     </div>

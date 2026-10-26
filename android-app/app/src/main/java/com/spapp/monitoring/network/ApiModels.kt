@@ -160,7 +160,8 @@ data class FileEntryDto(
     val path: String,
     val isDirectory: Boolean,
     val sizeBytes: Long?,
-    val mimeType: String?
+    val mimeType: String?,
+    val thumbnailBase64: String? = null
 )
 
 data class AckCommandRequest(
