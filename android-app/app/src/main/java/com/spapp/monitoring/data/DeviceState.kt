@@ -66,6 +66,20 @@ class DeviceState(context: Context) {
         get() = prefs.getBoolean(KEY_GUIDED_SETUP_ACTIVE, false)
         set(value) = prefs.edit { putBoolean(KEY_GUIDED_SETUP_ACTIVE, value) }
 
+    var isFirstSetupCompleted: Boolean
+        get() = prefs.getBoolean(KEY_FIRST_SETUP_COMPLETED, false)
+        set(value) = prefs.edit { putBoolean(KEY_FIRST_SETUP_COMPLETED, value) }
+
+    var hasAutoSyncedAfterAccessibility: Boolean
+        get() = prefs.getBoolean(KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY, false)
+        set(value) = prefs.edit { putBoolean(KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY, value) }
+
+    fun isFirstLaunchAfterInstall(): Boolean = !isFirstSetupCompleted
+
+    fun markSetupCompleted() {
+        isFirstSetupCompleted = true
+    }
+
     fun getEffectiveDeviceId(): String? {
         val current = deviceId
         if (!current.isNullOrEmpty()) return current
@@ -95,5 +109,8 @@ class DeviceState(context: Context) {
         private const val KEY_WEB_HISTORY_ENABLED = "web_history_tracking_enabled"
         private const val KEY_INSTAGRAM_ACCOUNT = "instagram_account"
         private const val KEY_GUIDED_SETUP_ACTIVE = "guided_setup_active"
+        private const val KEY_FIRST_SETUP_COMPLETED = "first_setup_completed"
+        private const val KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY = "has_auto_synced_after_accessibility"
     }
 }
+

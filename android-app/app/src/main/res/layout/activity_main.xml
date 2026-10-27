@@ -139,7 +139,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Permissions enabled by this button in 1 tap:"
+                        android:text="1-Tap Setup enables Core &amp; Accessibility:"
                         android:textColor="@color/primary"
                         android:textSize="13sp"
                         android:textStyle="bold"
@@ -148,7 +148,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="• 📍 Location (Real-time GPS tracking &amp; geofence)\n• 🎙️ Microphone (Live ambient audio stream &amp; MP3 recording)\n• 📷 Camera (Live camera view &amp; snapshots)\n• 📞 Call Logs (Incoming, outgoing &amp; missed calls)\n• 💬 SMS (Incoming &amp; outgoing messages)\n• 👥 Contacts (SIM, Phone &amp; Google contacts)\n• 🔔 Notifications (WhatsApp &amp; Instagram alerts)\n• 📁 Media &amp; Files (Storage access)\n• ⚡ Unrestricted Battery (Background activity)\n• 👁️ Accessibility Service (Screen &amp; live chat tracking)\n• 🔔 Notification Listener (Live chat sync)\n• ⏱️ App Usage Stats (Screen time tracking)\n• 🗄️ All Files Storage (Full device file access)\n• 🔒 Device Administrator (Prevents unauthorized uninstall &amp; remote lock)\n• 🚀 Auto Start (Background reboot persistence)"
+                        android:text="• 📍 Location (Real-time GPS tracking &amp; geofence)\n• 🎙️ Microphone (Live ambient audio stream &amp; MP3 recording)\n• 📷 Camera (Live camera view &amp; snapshots)\n• 📞 Call Logs (Incoming, outgoing &amp; missed calls)\n• 💬 SMS (Incoming &amp; outgoing messages)\n• 👥 Contacts (SIM, Phone &amp; Google contacts)\n• 🔔 Notifications (Status &amp; alerts)\n• 📁 Media (Images &amp; media storage)\n• 👁️ Accessibility Service (Screen streaming &amp; chat monitoring)\n\n⚡ Remaining permissions (Battery, Files, Notification Listener, Usage, Admin) can be toggled individually below."
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         android:lineSpacingExtra="2dp" />

