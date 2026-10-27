@@ -13,10 +13,10 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         PendingSyncItem::class, AppUsageEntry::class, SmsLogEntry::class, CallLogEntry::class,
-        WebHistoryEntry::class, WhatsAppMessageEntry::class, InstagramMessageEntry::class,
+        WhatsAppMessageEntry::class, InstagramMessageEntry::class,
         SavedContactEntry::class,
     ],
-    version = 14, // v14: added SavedContactEntry with storage location type
+    version = 15, // v15: removed WebHistoryEntry
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,7 +24,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun appUsageDao(): AppUsageDao
     abstract fun smsLogDao(): SmsLogDao
     abstract fun callLogDao(): CallLogDao
-    abstract fun webHistoryDao(): WebHistoryDao
     abstract fun whatsAppMessageDao(): WhatsAppMessageDao
     abstract fun instagramMessageDao(): InstagramMessageDao
     abstract fun savedContactDao(): SavedContactDao

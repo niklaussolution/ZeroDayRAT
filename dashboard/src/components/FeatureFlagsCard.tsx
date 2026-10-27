@@ -3,11 +3,12 @@ import { devicesApi } from "../api/devices";
 import type { FeatureFlags, PermissionStatus } from "../api/types";
 import ToggleSwitch from "./ToggleSwitch";
 
-const FLAG_LABELS: Record<keyof Omit<FeatureFlags, "device_id" | "updated_at">, string> = {
+type FlagKey = Exclude<keyof Omit<FeatureFlags, "device_id" | "updated_at">, "web_history_tracking">;
+
+const FLAG_LABELS: Record<FlagKey, string> = {
   location_on_demand: "Location (on-demand)",
   geofencing: "Geofencing",
   app_usage_tracking: "App usage tracking",
-  web_history_tracking: "Web history",
   app_blocking: "App/website blocking",
   sms_log: "SMS log",
   call_log: "Call log",
@@ -16,14 +17,11 @@ const FLAG_LABELS: Record<keyof Omit<FeatureFlags, "device_id" | "updated_at">, 
   installed_apps_list: "Installed apps list",
 };
 
-type FlagKey = keyof typeof FLAG_LABELS;
-
 /** feature_flags column name -> PermissionStatus field name (snake_case -> camelCase). */
 const PERMISSION_KEYS: Record<FlagKey, keyof PermissionStatus> = {
   location_on_demand: "locationOnDemand",
   geofencing: "geofencing",
   app_usage_tracking: "appUsageTracking",
-  web_history_tracking: "webHistoryTracking",
   app_blocking: "appBlocking",
   sms_log: "smsLog",
   call_log: "callLog",

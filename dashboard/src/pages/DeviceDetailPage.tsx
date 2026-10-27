@@ -12,12 +12,9 @@ import GeofencesCard from "../components/GeofencesCard";
 import AppUsageChart from "../components/AppUsageChart";
 import LogsTables from "../components/LogsTables";
 import InstalledAppsCard from "../components/InstalledAppsCard";
-import WebHistoryCard from "../components/WebHistoryCard";
-import AlertsCard from "../components/AlertsCard";
 import BlockRulesCard from "../components/BlockRulesCard";
 import AppsCard from "../components/AppsCard";
 import SavedContactsCard from "../components/SavedContactsCard";
-import MediaGalleryCard from "../components/gallery/MediaGalleryCard";
 
 export default function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -76,7 +73,7 @@ export default function DeviceDetailPage() {
         `• Location history and geofences\n` +
         `• Call and SMS logs\n` +
         `• App usage and installed apps\n` +
-        `• Web history, alerts, and remote commands\n\n` +
+        `• Remote commands and settings\n\n` +
         `This action cannot be undone.`
     );
     if (!confirmed) return;
@@ -189,9 +186,7 @@ export default function DeviceDetailPage() {
         <GeofencesCard deviceId={id} />
         <AppUsageChart deviceId={id} />
         <InstalledAppsCard deviceId={id} />
-        <WebHistoryCard deviceId={id} />
         <BlockRulesCard deviceId={id} />
-        <AlertsCard deviceId={id} />
 
         <div className="lg:col-span-2">
           <AppsCard deviceId={id} />
@@ -203,10 +198,6 @@ export default function DeviceDetailPage() {
 
         <div className="lg:col-span-2">
           <LogsTables deviceId={id} />
-        </div>
-
-        <div className="lg:col-span-2">
-          <MediaGalleryCard deviceId={id} />
         </div>
       </div>
     </div>

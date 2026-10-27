@@ -80,51 +80,6 @@ router.post(
   }
 );
 
-/**
- * POST /api/sync/web-history
- * body: { entries: [{ url, title, visitedAt }] }
- * Best-effort — see android-app WebHistoryCollector's doc comment. On a
- * modern Chrome-only device this is called with an empty list (nothing to
- * insert) most of the time; that's expected, not a failure.
- */
-router.post(
-  "/web-history",
-  [body("entries").isArray({ min: 1 })],
-  async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ error: "Validation failed", details: errors.array() });
-
-    try {
-      const flags = await getFlags(req.device.deviceId);
-      if (!flags || !flags.web_history_tracking) {
-        return res.status(403).json({ error: "web_history_tracking is not enabled for this device" });
-      }
-
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        for (const e of req.body.entries) {
-          await client.query(
-            `INSERT INTO web_history_logs (device_id, url, title, visited_at)
-             VALUES ($1, $2, $3, $4)`,
-            [req.device.deviceId, e.url, e.title || null, e.visitedAt]
-          );
-        }
-        await client.query("COMMIT");
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
-      } finally {
-        client.release();
-      }
-
-      await touchLastSeen(req.device.deviceId);
-      res.status(201).json({ inserted: req.body.entries.length });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
 
 /**
  * POST /api/sync/sms-log

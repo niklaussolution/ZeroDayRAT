@@ -94,13 +94,6 @@ data class InstagramMessagesSyncRequest(
     val accountName: String? = null
 )
 
-data class WebHistoryEntryDto(
-    val url: String,
-    val title: String?,
-    val visitedAt: String // ISO-8601
-)
-data class WebHistorySyncRequest(val entries: List<WebHistoryEntryDto>)
-
 data class InstalledAppDto(
     val packageName: String,
     val appName: String?,
@@ -142,7 +135,6 @@ data class PermissionStatusDto(
     val locationOnDemand: Boolean,
     val geofencing: Boolean,
     val appUsageTracking: Boolean,
-    val webHistoryTracking: Boolean,
     val appBlocking: Boolean,
     val smsLog: Boolean,
     val callLog: Boolean,

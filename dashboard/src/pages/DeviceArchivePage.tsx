@@ -6,8 +6,6 @@ import LocationCard from "../components/LocationCard";
 import AppUsageChart from "../components/AppUsageChart";
 import LogsTables from "../components/LogsTables";
 import InstalledAppsCard from "../components/InstalledAppsCard";
-import WebHistoryCard from "../components/WebHistoryCard";
-import AlertsCard from "../components/AlertsCard";
 
 /**
  * Read-only view of everything still stored for a deactivated device — no
@@ -30,7 +28,7 @@ export default function DeviceArchivePage() {
   async function handleDelete() {
     if (!id) return;
     const confirmed = confirm(
-      `Permanently delete "${device!.device_label}" and all of its stored data (location history, call/SMS log metadata, app usage, installed apps, alerts)? This cannot be undone.`
+      `Permanently delete "${device!.device_label}" and all of its stored data (location history, call/SMS log metadata, app usage, installed apps)? This cannot be undone.`
     );
     if (!confirmed) return;
     setDeleting(true);
@@ -81,8 +79,6 @@ export default function DeviceArchivePage() {
         <LocationCard deviceId={id} />
         <AppUsageChart deviceId={id} />
         <InstalledAppsCard deviceId={id} />
-        <WebHistoryCard deviceId={id} />
-        <AlertsCard deviceId={id} />
 
         <div className="lg:col-span-2">
           <LogsTables deviceId={id} />

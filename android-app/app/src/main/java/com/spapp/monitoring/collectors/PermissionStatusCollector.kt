@@ -47,7 +47,6 @@ class PermissionStatusCollector(private val context: Context) {
             locationOnDemand = hasFineLocation,
             geofencing = hasFineLocation,
             appUsageTracking = AppUsageCollector(context).hasUsageAccess(),
-            webHistoryTracking = accessibilityOn,
             appBlocking = accessibilityOn,
             smsLog = hasSms,
             callLog = hasCallLog,

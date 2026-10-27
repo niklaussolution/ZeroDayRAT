@@ -44,7 +44,7 @@ export default function AdminPage() {
         `This will immediately and permanently delete:\n` +
         `• All admin/user accounts for this tenant in Firebase\n` +
         `• All ${deviceCount} registered device(s) belonging to this tenant\n` +
-        `• All synced device telemetry in PostgreSQL (WhatsApp messages, location history, calls, SMS, app usage, web history, alerts, remote commands, block rules)\n\n` +
+        `• All synced device telemetry in PostgreSQL (WhatsApp messages, location history, calls, SMS, app usage, remote commands, block rules)\n\n` +
         `This action cannot be undone.`
     );
     if (!confirmed) return;
@@ -63,7 +63,7 @@ export default function AdminPage() {
     const confirmed = confirm(
       `Permanently delete the login "${email}"? If this is the only login on "${tenantName}", ` +
         `the tenant and every device it ever synced data for (location, call/SMS log metadata, ` +
-        `app usage, installed apps, alerts) will be permanently deleted too. This cannot be undone.`
+        `app usage, installed apps) will be permanently deleted too. This cannot be undone.`
     );
     if (!confirmed) return;
     setDeletingUserId(userId);
@@ -169,12 +169,10 @@ export default function AdminPage() {
                           <th className="py-1 font-medium">Device</th>
                           <th className="py-1 font-medium">Status</th>
                           <th className="py-1 font-medium">Location</th>
-                          <th className="py-1 font-medium">Web</th>
                           <th className="py-1 font-medium">SMS</th>
                           <th className="py-1 font-medium">Calls</th>
                           <th className="py-1 font-medium">App usage</th>
                           <th className="py-1 font-medium">Apps</th>
-                          <th className="py-1 font-medium">Alerts</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
@@ -183,12 +181,10 @@ export default function AdminPage() {
                             <td className="py-1.5">{d.device_label}</td>
                             <td className="py-1.5">{d.status}</td>
                             <td className="py-1.5">{d.counts.location_count}</td>
-                            <td className="py-1.5">{d.counts.web_history_count}</td>
                             <td className="py-1.5">{d.counts.sms_count}</td>
                             <td className="py-1.5">{d.counts.call_count}</td>
                             <td className="py-1.5">{d.counts.app_usage_count}</td>
                             <td className="py-1.5">{d.counts.installed_apps_count}</td>
-                            <td className="py-1.5">{d.counts.alert_count}</td>
                           </tr>
                         ))}
                       </tbody>

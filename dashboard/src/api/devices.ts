@@ -1,6 +1,5 @@
 import { apiClient } from "./client";
 import type {
-  Alert,
   AppUsageEntry,
   BlockRule,
   CallLogEntry,
@@ -11,7 +10,6 @@ import type {
   LocationPoint,
   RemoteCommand,
   SmsLogEntry,
-  WebHistoryEntry,
   WhatsAppChatSummary,
   WhatsAppMessage,
   WhatsAppCallEntry,
@@ -63,9 +61,6 @@ export const devicesApi = {
       .get<CallLogEntry[]>(`/api/devices/${id}/call-log`, { params })
       .then((r) => r.data),
 
-  webHistory: (id: string) =>
-    apiClient.get<WebHistoryEntry[]>(`/api/devices/${id}/web-history`).then((r) => r.data),
-
   installedApps: (id: string) =>
     apiClient.get<InstalledApp[]>(`/api/devices/${id}/installed-apps`).then((r) => r.data),
 
@@ -78,8 +73,6 @@ export const devicesApi = {
     apiClient
       .get<LocationPoint[]>(`/api/devices/${id}/location-history`, { params: { limit } })
       .then((r) => r.data),
-
-  alerts: (id: string) => apiClient.get<Alert[]>(`/api/devices/${id}/alerts`).then((r) => r.data),
 
   // Commands
   createCommand: (id: string, commandType: string, payload?: Record<string, unknown>) =>

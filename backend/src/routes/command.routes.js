@@ -7,7 +7,7 @@ const { sendSyncNudge } = require("../services/fcm.service");
 const router = express.Router();
 router.use(requireAuth);
 
-const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "audio_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat", "sync_instagram", "get_instagram_chat", "gallery_list"];
+const ALLOWED_COMMAND_TYPES = ["location_check", "lock", "file_list", "file_download", "screen_stream", "camera_stream", "audio_stream", "sync_whatsapp", "whatsapp_file_list", "get_whatsapp_chat", "sync_instagram", "get_instagram_chat"];
 
 async function checkDeviceAccess(deviceId, auth) {
   if (!auth) return null;
@@ -194,25 +194,6 @@ router.delete("/:id/geofences/:geofenceId", async (req, res, next) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Geofence not found" });
     res.status(204).send();
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * GET /api/devices/:id/alerts
- * (Admin) Geofence breaches, block violations, etc.
- */
-router.get("/:id/alerts", async (req, res, next) => {
-  try {
-    const ownsDevice = await checkDeviceAccess(req.params.id, req.auth);
-    if (!ownsDevice) return res.status(404).json({ error: "Device not found" });
-
-    const result = await pool.query(
-      "SELECT id, alert_type, message, metadata, is_read, created_at FROM alerts WHERE device_id = $1 ORDER BY created_at DESC LIMIT 50",
-      [req.params.id]
-    );
-    res.json(result.rows);
   } catch (err) {
     next(err);
   }

@@ -86,7 +86,7 @@ export default function DevicesListPage() {
         `• Location history and geofences\n` +
         `• Call and SMS logs\n` +
         `• App usage and installed apps\n` +
-        `• Web history, alerts, and remote commands\n\n` +
+        `• Remote commands and settings\n\n` +
         `This action cannot be undone.`
     );
     if (!confirmed) return;

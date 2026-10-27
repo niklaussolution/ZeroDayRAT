@@ -10,7 +10,7 @@ const { deviceEvents, emitDeviceEvent } = require("../events/deviceEvents");
 const router = express.Router();
 
 const DEFAULT_FLAGS_COLUMNS = [
-  "location_on_demand", "geofencing", "app_usage_tracking", "web_history_tracking",
+  "location_on_demand", "geofencing", "app_usage_tracking",
   "app_blocking", "sms_log", "call_log", "remote_lock", "file_manager", "installed_apps_list",
 ];
 
@@ -346,23 +346,6 @@ router.get("/:id/sms-log", requireAuth, async (req, res, next) => {
   }
 });
 
-/**
- * GET /api/devices/:id/web-history
- */
-router.get("/:id/web-history", requireAuth, async (req, res, next) => {
-  try {
-    const device = await checkDeviceAccess(req.params.id, req.auth);
-    if (!device) return res.status(404).json({ error: "Device not found" });
-
-    const result = await pool.query(
-      "SELECT url, title, visited_at FROM web_history_logs WHERE device_id = $1 ORDER BY visited_at DESC LIMIT 100",
-      [req.params.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    next(err);
-  }
-});
 
 /**
  * GET /api/devices/:id/call-log

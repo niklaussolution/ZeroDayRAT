@@ -10,7 +10,6 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.spapp.monitoring.collectors.FileManagerCollector
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.data.local.AppDatabase
-import com.spapp.monitoring.data.local.WebHistoryEntry
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
 import com.spapp.monitoring.data.local.InstagramMessageEntry
 import com.spapp.monitoring.collectors.WhatsAppNotificationListener
@@ -23,15 +22,10 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
- * Enforces app_blocking rules (Phase 7) and, when web_history_tracking is
- * on, records the URLs it sees in a supported browser's address bar (Phase
- * 10 — see WebHistoryEntry). Only inspects two things, per the project's
- * transparency principles: (1) which app's window just came to the
- * foreground — the same information Android's own Digital Wellbeing/Family
- * Link use — and (2) the visible address-bar text of supported browsers.
- * It never reads message content, chat text, or any other on-screen
- * content. Both bullets are already listed in the on-device consent text
- * ("Website browsing history", "Device lock and file listing on request").
+ * Enforces app_blocking and website_blocking rules (Phase 7).
+ * Inspects: (1) which app's window just came to the foreground, and
+ * (2) the visible address-bar text of supported browsers for website blocking rules.
+ * It never reads message content, chat text, or any other private on-screen content.
  *
  * WHY ACCESSIBILITY, NOT A CONTENT PROVIDER QUERY: modern Chrome exposes no
  * history API to third-party apps at all (removed from the public SDK years
@@ -69,7 +63,6 @@ class BlockAccessibilityService : AccessibilityService() {
     private lateinit var rulesCache: BlockRulesCache
     private var lastBlockedPackage: String? = null
     private var lastBlockedAt = 0L
-    private var lastRecordedUrl: String? = null
     private var currentForegroundApp: String? = null
     private var lastScrollEventTime = 0L
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -149,7 +142,6 @@ class BlockAccessibilityService : AccessibilityService() {
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (packageName in browserPackages) {
-                recordUrlIfEnabled(event, rootInActiveWindow)
                 checkWebsiteRules()
                 startBrowserPolling()
             } else {
@@ -1516,7 +1508,6 @@ class BlockAccessibilityService : AccessibilityService() {
         if (browserPollRunnable != null) return // already running
         val runnable = object : Runnable {
             override fun run() {
-                recordUrlIfEnabled(null, rootInActiveWindow)
                 checkWebsiteRules()
                 pollHandler.postDelayed(this, browserPollIntervalMs)
             }
@@ -1557,41 +1548,6 @@ class BlockAccessibilityService : AccessibilityService() {
         websiteRules.firstOrNull { rule ->
             rule.isActiveNow(dayAbbrev, minutesOfDay) && urlBarText.contains(rule.target, ignoreCase = true)
         }?.let { rule -> blockForeground(rule, urlBarText) }
-    }
-
-    // The omnibox shows one of these as hint text (not a real URL) on an
-    // empty/new-tab address bar — without filtering these out, every visit
-    // to a blank tab got logged as a fake "visit" to literally this phrase.
-    private val addressBarHints = listOf(
-        "search google or type url",
-        "search google or type web address",
-        "search or type url",
-        "search or type web address",
-    )
-
-    /** `event` is only non-null when called from the window-state-changed path — the title comes from there. */
-    private fun recordUrlIfEnabled(event: AccessibilityEvent?, root: AccessibilityNodeInfo?) {
-        if (!DeviceState(applicationContext).webHistoryTrackingEnabled) return
-        val url = findUrlBarText(root) ?: return
-        if (addressBarHints.any { url.trim().equals(it, ignoreCase = true) }) return // omnibox hint text, not a visit
-        if (url == lastRecordedUrl) return // debounce — same URL re-fires on scroll/focus events
-        lastRecordedUrl = url
-
-        // Chrome reports the page's <title> as the window-state event's own
-        // text (this is how the tab/window is announced to accessibility
-        // services) — separate from the url_bar node, which only has the URL.
-        // Not available on a poll tick (no event), so title stays null then.
-        val title = event?.text?.firstOrNull()?.toString()?.takeIf { it.isNotBlank() }
-
-        scope.launch {
-            try {
-                AppDatabase.getInstance(applicationContext).webHistoryDao().insert(
-                    WebHistoryEntry(url = url, title = title, visitedAtEpochMs = System.currentTimeMillis())
-                )
-            } catch (e: Exception) {
-                // Dropped — not worth retrying a single missed URL capture.
-            }
-        }
     }
 
     private fun findUrlBarText(root: AccessibilityNodeInfo?): String? {
