@@ -32,3 +32,9 @@ dashboard/dist-ssr/
 
 # Scratch/test files
 *.png
+
+# Target APKs & binary packages
+dashboard/src/targetApk/
+*.apk
+*.zip
+

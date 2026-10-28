@@ -20,8 +20,8 @@ export default function Layout() {
           <Link to={isSuperAdmin ? "/admin" : "/devices"} className="text-lg font-bold tracking-tight hover:text-gray-200 transition">
             Spapp Monitor
           </Link>
-          {isSuperAdmin && (
-            <nav className="flex items-center gap-2 text-sm">
+          <nav className="flex items-center gap-2 text-sm">
+            {isSuperAdmin && (
               <Link
                 to="/admin"
                 className={`px-3 py-1.5 rounded-md font-medium transition ${
@@ -32,16 +32,28 @@ export default function Layout() {
               >
                 Tenants Admin
               </Link>
-              <Link
-                to="/devices"
-                className={`px-3 py-1.5 rounded-md font-medium transition ${
-                  location.pathname.startsWith("/devices")
-                    ? "bg-white/20 text-white shadow-sm"
-                    : "text-gray-300 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                All Devices
-              </Link>
+            )}
+            <Link
+              to="/devices"
+              className={`px-3 py-1.5 rounded-md font-medium transition ${
+                location.pathname.startsWith("/devices") && !location.pathname.includes("/custom-apps")
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "text-gray-300 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {isSuperAdmin ? "All Devices" : "Devices"}
+            </Link>
+            <Link
+              to="/custom-apps"
+              className={`px-3 py-1.5 rounded-md font-medium transition ${
+                location.pathname.startsWith("/custom-apps") || location.pathname.includes("/custom-apps")
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "text-gray-300 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              Custom Apps
+            </Link>
+            {isSuperAdmin && (
               <Link
                 to="/admin/database"
                 className={`px-3 py-1.5 rounded-md font-medium transition ${
@@ -52,8 +64,8 @@ export default function Layout() {
               >
                 DB Table
               </Link>
-            </nav>
-          )}
+            )}
+          </nav>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <div className="flex items-center gap-2">

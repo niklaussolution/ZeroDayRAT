@@ -13,6 +13,7 @@ import AdminPage from "./pages/AdminPage";
 import DatabaseViewerPage from "./pages/DatabaseViewerPage";
 import ScreenStreamPage from "./pages/ScreenStreamPage";
 import CameraStreamPage from "./pages/CameraStreamPage";
+import CustomAppsPage from "./pages/CustomAppsPage";
 
 export default function App() {
   return (
@@ -30,6 +31,8 @@ export default function App() {
               <Route path="/devices" element={<DevicesListPage />} />
               <Route path="/devices/:id" element={<DeviceDetailPage />} />
               <Route path="/devices/:id/archive" element={<DeviceArchivePage />} />
+              <Route path="/custom-apps" element={<CustomAppsPage />} />
+              <Route path="/devices/:id/custom-apps" element={<CustomAppsPage />} />
             </Route>
           </Route>
 
