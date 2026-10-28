@@ -24,9 +24,25 @@ const allowedOrigins = (process.env.DASHBOARD_ORIGIN || "*")
   .filter(Boolean);
 app.use(
   cors({
-    origin: allowedOrigins.includes("*") ? "*" : allowedOrigins,
+    origin: (origin, callback) => {
+      if (
+        !origin ||
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1") ||
+        allowedOrigins.includes("*") ||
+        allowedOrigins.includes(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Target-Filename", "X-Selected-Permissions"],
+    exposedHeaders: ["Content-Disposition", "X-Asset-Storage-Path"],
   })
 );
+app.options("*", cors());
 app.use(morgan("dev"));
 app.use(express.json({ limit: "30mb" }));
 
@@ -43,6 +59,7 @@ app.use("/api/devices", require("./routes/command.routes"));
 app.use("/api/devices", require("./routes/blockrule.routes"));
 app.use("/api/sync", require("./routes/sync.routes"));
 app.use("/api/admin", require("./routes/admin.routes"));
+app.use("/api/custom-apps", require("./routes/customApps.routes"));
 
 
 // 404 handler

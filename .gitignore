@@ -35,6 +35,7 @@ dashboard/dist-ssr/
 
 # Target APKs & binary packages
 dashboard/src/targetApk/
+backend/build_workspace/
 *.apk
 *.zip
 
