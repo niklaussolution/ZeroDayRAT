@@ -32,6 +32,8 @@ function getFirebaseAdmin() {
   }
 
   try {
+    const { syncClockSkew } = require("./clockSync");
+    syncClockSkew();
     const admin = require("firebase-admin");
     admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     firebaseAdmin = admin;

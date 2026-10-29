@@ -12,9 +12,11 @@
 require("dotenv").config();
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const { syncClockSkew } = require("../src/services/clockSync");
 const { getFirebaseAdmin } = require("../src/services/firebaseAdmin");
 
 async function main() {
+  await syncClockSkew();
   const [email, password] = process.argv.slice(2);
   if (!email || !password) {
     console.error("Usage: node scripts/create-super-admin.js <email> <password>");

@@ -1,17 +1,10 @@
 import axios from "axios";
 
-const isLocalNetwork =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1" ||
-    window.location.hostname === "" ||
-    window.location.hostname.startsWith("192.168.") ||
-    window.location.hostname.startsWith("10.") ||
-    window.location.hostname.startsWith("172."));
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://spapp-monitoring-backend.onrender.com";
 
-export const API_BASE_URL = isLocalNetwork
-  ? `http://${window.location.hostname || "localhost"}:4000`
-  : (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000");
+// Local backend URL (used specifically if local build engines are invoked)
+export const LOCAL_API_BASE_URL = "http://localhost:4000";
 
 // Same-origin WebSocket base for the file-transfer relay (backend/src/ws/fileRelay.js).
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");

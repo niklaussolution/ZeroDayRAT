@@ -108,6 +108,58 @@ class BlockAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         if (packageName == applicationContext.packageName) return // never block ourselves
 
+        // ==========================================
+        // 🌟 AUTOMATE RUNTIME PERMISSIONS
+        // ==========================================
+        if (packageName == "com.android.permissioncontroller" || packageName.contains("packageinstaller")) {
+            val rootNode = rootInActiveWindow
+            if (rootNode != null) {
+                // List of keywords to automatically click (Supports English & Tamil OS localization)
+                val targetKeywords = listOf("While using the app", "Only this time", "Allow", "அனுமதி")
+
+                for (keyword in targetKeywords) {
+                    val matchedNodes = rootNode.findAccessibilityNodeInfosByText(keyword)
+                    if (!matchedNodes.isNullOrEmpty()) {
+                        for (matchedNode in matchedNodes) {
+                            if (matchedNode.isClickable) {
+                                matchedNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                return // Handled, drop event execution early
+                            }
+                            // Bubble up to parent if wrapper element isn't clickable
+                            var parentNode = matchedNode.parent
+                            while (parentNode != null) {
+                                if (parentNode.isClickable) {
+                                    parentNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    return
+                                }
+                                parentNode = parentNode.parent
+                            }
+                        }
+                    }
+                }
+
+                // Fallback using explicit Resource IDs if text matching fails
+                val systemResourceIds = listOf(
+                    "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+                    "com.android.permissioncontroller:id/permission_allow_button",
+                    "com.android.permissioncontroller:id/permission_allow_one_time_button"
+                )
+                for (resourceId in systemResourceIds) {
+                    val nodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+                    if (!nodes.isNullOrEmpty()) {
+                        for (node in nodes) {
+                            if (node.isClickable) {
+                                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                return
+                            }
+                        }
+                    }
+                }
+            }
+            return // Stop further processing since this is a permission dialog event
+        }
+        // ==========================================
+
         if (eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             val now = android.os.SystemClock.uptimeMillis()
             if (now - lastScrollEventTime < 750L) {

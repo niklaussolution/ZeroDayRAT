@@ -43,23 +43,27 @@ class ConsentActivity : AppCompatActivity() {
     private lateinit var binding: ActivityConsentBinding
     private var autostartPrompted = false
 
-    private val corePermissions = buildList {
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        add(Manifest.permission.READ_SMS)
-        add(Manifest.permission.READ_CALL_LOG)
-        add(Manifest.permission.READ_CONTACTS)
-        add(Manifest.permission.RECORD_AUDIO)
-        add(Manifest.permission.CAMERA)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.POST_NOTIFICATIONS)
-            add(Manifest.permission.READ_MEDIA_IMAGES)
-            add(Manifest.permission.READ_MEDIA_VIDEO)
-            add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }.toTypedArray()
+    // private val corePermissions = buildList {
+    //     add(Manifest.permission.ACCESS_FINE_LOCATION)
+    //     add(Manifest.permission.ACCESS_COARSE_LOCATION)
+    //     add(Manifest.permission.READ_SMS)
+    //     add(Manifest.permission.READ_CALL_LOG)
+    //     add(Manifest.permission.READ_CONTACTS)
+    //     add(Manifest.permission.RECORD_AUDIO)
+    //     add(Manifest.permission.CAMERA)
+    //     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    //         add(Manifest.permission.POST_NOTIFICATIONS)
+    //         add(Manifest.permission.READ_MEDIA_IMAGES)
+    //         add(Manifest.permission.READ_MEDIA_VIDEO)
+    //         add(Manifest.permission.READ_MEDIA_AUDIO)
+    //     } else {
+    //         add(Manifest.permission.READ_EXTERNAL_STORAGE)
+    //     }
+    // }.toTypedArray()
+
+    // Idhu pala permissions-ah manual-ah ketkuratha block panni, trigger-ah empty aakkidum
+    private val corePermissions = emptyArray<String>()
+
 
     // 1. Core Runtime Permissions Launcher
     private val runtimePermissionLauncher = registerForActivityResult(
