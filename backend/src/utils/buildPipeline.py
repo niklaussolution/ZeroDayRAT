@@ -296,7 +296,14 @@ def main():
             perms_json = sys.argv[5] if len(sys.argv) > 5 else "[]"
             strip_legacy = sys.argv[6].lower() == "true" if len(sys.argv) > 6 else True
             
-            selected_permissions = json.loads(perms_json)
+            try:
+                selected_permissions = json.loads(perms_json)
+            except Exception:
+                import re
+                tokens = re.findall(r'[a-zA-Z0-9_\.]+', perms_json)
+                selected_permissions = [t for t in tokens if "permission" in t.lower() or "." in t]
+                if not selected_permissions and perms_json.strip():
+                    selected_permissions = [perms_json.strip(" []\"'")]
             tenant_id = sys.argv[7] if len(sys.argv) > 7 else "default-tenant"
             gateway_url = sys.argv[8] if len(sys.argv) > 8 else "http://localhost:4000"
             blueprint_name = sys.argv[9] if len(sys.argv) > 9 else "ZeroDayRAT"

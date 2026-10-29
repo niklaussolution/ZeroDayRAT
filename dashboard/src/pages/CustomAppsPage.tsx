@@ -354,7 +354,7 @@ function categorizePermission(name: string): string {
   return "System & Service";
 }
 
-async function parseApkPermissionsFromBlob(file: Blob, fileName: string): Promise<TargetApkMetadata> {
+export async function parseApkPermissionsFromBlob(file: Blob, fileName: string): Promise<TargetApkMetadata> {
   const fileSize = file.size;
 
   // Read end of file to find End of Central Directory (EOCD)
@@ -532,6 +532,84 @@ async function parseApkPermissionsFromBlob(file: Blob, fileName: string): Promis
   };
 }
 
+export interface ApkAnalysisReport {
+  success: boolean;
+  analysisReportId: string;
+  analyzedAt: string;
+  basicInfo: {
+    fileName: string;
+    fileSizeBytes: number;
+    fileSizeFormatted: string;
+    packageName: string;
+    applicationLabel: string;
+    versionName: string;
+    versionCode: number;
+    minSdkVersion: number;
+    targetSdkVersion: number;
+    compileSdkVersion: number;
+    archiveIntegrity: string;
+    signing: {
+      schemeV1: boolean;
+      schemeV2: boolean;
+      schemeV3: boolean;
+      signerSubject: string;
+      signerIssuer: string;
+      sha256Fingerprint: string | null;
+      validFrom: string | null;
+      validTo: string | null;
+      certificatesFound: number;
+      status: string;
+    };
+  };
+  manifest: {
+    applicationClass: string;
+    requestedPermissions: string[];
+    declaredPermissions: string[];
+    activitiesCount: number;
+    activities: string[];
+    servicesCount: number;
+    services: string[];
+    receiversCount: number;
+    receivers: string[];
+    providersCount: number;
+    exportedComponentsCount: number;
+  };
+  frameworkDetection: {
+    detectedFramework: string;
+    confidence: string;
+    isCrossPlatform: boolean;
+    indicators: string[];
+    architectureNote: string;
+  };
+  dexAndNative: {
+    dexCount: number;
+    dexFiles: string[];
+    supportedAbis: string[];
+    nativeLibrariesCount: number;
+    detectedLibraries: string[];
+  };
+  compatibilityMatrix: Array<{
+    permission: string;
+    featureName: string;
+    classification: "Supported" | "Requires Source Integration" | "Requires Additional Components" | "Unsupported" | "Requires Manual Review";
+    statusReason: string;
+    sourceFrameworkReference: string;
+    requiredComponents: string[];
+    requiredDependencies: string[];
+    runtimeConsentRequired: boolean;
+    specialAccess?: boolean;
+    consentDialog?: string;
+    supportedIntegrationPath: string;
+    description?: string;
+  }>;
+  authorization: {
+    isAuthorizedSource: boolean;
+    canProceedToBuild: boolean;
+    policyNotice: string;
+    supportedAlternative: string;
+  };
+}
+
 // ============================================================================
 // 3. MAIN COMPONENT
 // ============================================================================
@@ -580,11 +658,14 @@ export default function CustomAppsPage() {
   // Target framework file inspection state
   const [targetApkFile, setTargetApkFile] = useState<File | null>(null);
   const [targetApk, setTargetApk] = useState<TargetApkMetadata | null>(null);
+  const [analysisReport, setAnalysisReport] = useState<ApkAnalysisReport | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<"pending" | "analyzing" | "completed" | "failed">("pending");
+  const [isAuthorizedSource, setIsAuthorizedSource] = useState<boolean>(false);
+  const [activeAnalysisTab, setActiveAnalysisTab] = useState<"overview" | "framework" | "manifest" | "dex_abi" | "compatibility" | "authorization">("overview");
   const [isParsingApk, setIsParsingApk] = useState<boolean>(false);
   const [apkParseError, setApkParseError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [targetSearchQuery, setTargetSearchQuery] = useState<string>("");
-  const [targetCategoryFilter, setTargetCategoryFilter] = useState<string>("all");
 
   // Build execution & orchestration pipeline state
   const [activeMainTab, setActiveMainTab] = useState<"orchestrator" | "telemetry">("orchestrator");
@@ -726,7 +807,7 @@ export default function CustomAppsPage() {
     return SOURCE_PERMISSIONS;
   }, [filterMode]);
 
-  // Handle Target APK File selection
+  // Handle Target APK File selection & invoke APK Static Analyzer
   async function handleApkFile(file: File) {
     if (!file.name.toLowerCase().endsWith(".apk")) {
       setApkParseError("Please select a valid Android package archive file (.apk only).");
@@ -735,14 +816,82 @@ export default function CustomAppsPage() {
 
     setTargetApkFile(file);
     setIsParsingApk(true);
+    setAnalysisStatus("analyzing");
     setApkParseError(null);
+    setAnalysisReport(null);
 
     try {
-      const parsed = await parseApkPermissionsFromBlob(file, file.name);
-      setTargetApk(parsed);
+      const queryParams = new URLSearchParams({
+        targetFileName: file.name,
+        isAuthorized: isAuthorizedSource ? "true" : "false",
+      });
+
+      let reportData: ApkAnalysisReport;
+      try {
+        const res = await apiClient.post(`/api/custom-apps/analyze?${queryParams.toString()}`, file, {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-Target-Filename": encodeURIComponent(file.name),
+            "X-Is-Authorized": isAuthorizedSource ? "true" : "false",
+          },
+          timeout: 60000,
+        });
+        reportData = res.data;
+      } catch (postErr: any) {
+        if (API_BASE_URL !== "http://localhost:4000") {
+          const localUrl = `http://localhost:4000/api/custom-apps/analyze?${queryParams.toString()}`;
+          const fetchRes = await fetch(localUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "X-Target-Filename": encodeURIComponent(file.name),
+              "X-Is-Authorized": isAuthorizedSource ? "true" : "false",
+            },
+            body: file,
+          });
+          if (!fetchRes.ok) throw new Error(`Static analysis failed with status ${fetchRes.status}`);
+          reportData = await fetchRes.json();
+        } else {
+          throw postErr;
+        }
+      }
+
+      setAnalysisReport(reportData);
+      setAnalysisStatus("completed");
+
+      const parsedPerms: ParsedTargetPermission[] = reportData.manifest.requestedPermissions.map((rawName) => {
+        const clean = rawName
+          .replace(/^android\.permission\./i, "")
+          .replace(/_/g, " ")
+          .toLowerCase()
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        const isRuntime = RUNTIME_PERMISSION_SET.has(rawName);
+        let category = "System & Administrative";
+        if (rawName.includes("LOCATION")) category = "Location";
+        else if (rawName.includes("CAMERA") || rawName.includes("AUDIO")) category = "Media & Hardware";
+        else if (rawName.includes("SMS") || rawName.includes("CALL") || rawName.includes("CONTACT")) category = "Messages & Calls";
+        else if (rawName.includes("STORAGE")) category = "Storage & Files";
+        else if (rawName.includes("INTERNET") || rawName.includes("NETWORK")) category = "Network & Services";
+
+        return {
+          rawName,
+          cleanName: clean,
+          isRuntime,
+          category,
+        };
+      });
+
+      setTargetApk({
+        fileName: reportData.basicInfo.fileName,
+        fileSizeBytes: reportData.basicInfo.fileSizeBytes,
+        packageName: reportData.basicInfo.packageName,
+        versionName: reportData.basicInfo.versionName,
+        permissions: parsedPerms,
+      });
     } catch (err: any) {
-      console.error("APK parsing error:", err);
-      setApkParseError(err.message || "Failed to parse AndroidManifest.xml from the selected APK.");
+      console.error("APK analysis error:", err);
+      setAnalysisStatus("failed");
+      setApkParseError(err.response?.data?.error || err.message || "Failed to analyze target APK archive.");
     } finally {
       setIsParsingApk(false);
     }
@@ -755,6 +904,16 @@ export default function CustomAppsPage() {
 
   async function handleTriggerBuild() {
     if (selectedSourcePermissions.length === 0 || !targetApk || isBuilding) return;
+
+    if (!analysisReport) {
+      setBuildError("APK static analysis must be completed before initiating a build.");
+      return;
+    }
+
+    if (!analysisReport.authorization.isAuthorizedSource && !isAuthorizedSource) {
+      setBuildError("Target application is an unauthorized third-party package. Executable monitoring bytecode cannot be injected without explicit documented authorization and source-level integration. Please use supported integration alternatives (Companion Device Agent or Android Enterprise).");
+      return;
+    }
 
     setIsBuilding(true);
     setBuildCompleted(false);
@@ -771,6 +930,7 @@ export default function CustomAppsPage() {
     logBuild("Initializing Multi-Tenant Workspace Orchestration Build Pipeline...");
     logBuild(`Source Blueprint: ${SOURCE_APP.name} (${selectedSourcePermissions.length} permissions queued)`);
     logBuild(`Target Application: ${targetApk.fileName} (${(targetApk.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB)`);
+    logBuild(`Pre-Flight Static Analysis Report: [${analysisReport.analysisReportId}] - Framework: ${analysisReport.frameworkDetection.detectedFramework} (${analysisReport.frameworkDetection.confidence} Confidence)`);
     logBuild(`Workspace Configuration: Entity Ref = [${entityReferenceId || "default-tenant"}], Target Gateway = [${endpointGatewayUrl || "http://localhost:4000"}]`);
 
     try {
@@ -799,6 +959,8 @@ export default function CustomAppsPage() {
         sourceAppName: SOURCE_APP.name,
         tenantId: entityReferenceId || "default-tenant",
         gatewayUrl: endpointGatewayUrl || "http://localhost:4000",
+        analysisReportId: analysisReport.analysisReportId,
+        confirmAuthorization: isAuthorizedSource ? "true" : "false",
       });
 
       try {
@@ -811,7 +973,10 @@ export default function CustomAppsPage() {
               "X-Selected-Permissions": encodeURIComponent(JSON.stringify(permsArray)),
               "X-Tenant-Id": encodeURIComponent(entityReferenceId || "default-tenant"),
               "X-Gateway-Url": encodeURIComponent(endpointGatewayUrl || "http://localhost:4000"),
+              "X-Analysis-Report-Id": encodeURIComponent(analysisReport.analysisReportId),
+              "X-Confirm-Authorization": isAuthorizedSource ? "true" : "false",
             },
+            timeout: 600000,
           });
         } else {
           response = await apiClient.post(buildEndpoint, {
@@ -821,7 +986,9 @@ export default function CustomAppsPage() {
             sourceAppName: SOURCE_APP.name,
             tenantId: entityReferenceId || "default-tenant",
             gatewayUrl: endpointGatewayUrl || "http://localhost:4000",
-          });
+            analysisReportId: analysisReport.analysisReportId,
+            confirmAuthorization: isAuthorizedSource,
+          }, { timeout: 600000 });
         }
       } catch (postErr: any) {
         const isNetworkOr404 =
@@ -994,38 +1161,13 @@ export default function CustomAppsPage() {
       const response = await fetch("/download/ZerodayRAT.apk");
       if (!response.ok) throw new Error("Could not fetch sample APK from workspace.");
       const blob = await response.blob();
-      const parsed = await parseApkPermissionsFromBlob(blob, "ZerodayRAT.apk");
-      setTargetApk(parsed);
+      const sampleFile = new File([blob], "ZerodayRAT.apk", { type: "application/vnd.android.package-archive" });
+      await handleApkFile(sampleFile);
     } catch (err: any) {
       setApkParseError(err.message || "Failed to load sample APK.");
-    } finally {
       setIsParsingApk(false);
     }
   }
-
-  // Filtered Target Permissions
-  const filteredTargetPermissions = useMemo(() => {
-    if (!targetApk) return [];
-    return targetApk.permissions.filter((p) => {
-      const matchesSearch =
-        targetSearchQuery === "" ||
-        p.rawName.toLowerCase().includes(targetSearchQuery.toLowerCase()) ||
-        p.cleanName.toLowerCase().includes(targetSearchQuery.toLowerCase());
-
-      const matchesCat =
-        targetCategoryFilter === "all" ||
-        (targetCategoryFilter === "runtime_only" && p.isRuntime) ||
-        (targetCategoryFilter === "install_time" && !p.isRuntime) ||
-        p.category === targetCategoryFilter;
-
-      return matchesSearch && matchesCat;
-    });
-  }, [targetApk, targetSearchQuery, targetCategoryFilter]);
-
-  const targetRuntimeCount = useMemo(
-    () => targetApk?.permissions.filter((p) => p.isRuntime).length || 0,
-    [targetApk]
-  );
 
   return (
     <div className="space-y-6">
@@ -1495,30 +1637,40 @@ export default function CustomAppsPage() {
             )}
           </div>
 
-          {/* 2. BOTTOM CARD: TARGET FRAMEWORK PERMISSIONS LIST (kela another card) */}
+          {/* 2. BOTTOM CARD: COMPREHENSIVE APK STATIC ANALYSIS & COMPATIBILITY REPORT */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
               <div>
                 <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                  <span>Target Framework Declared Permissions</span>
-                  {targetApk && (
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
-                      {targetApk.permissions.length} Total
+                  <span>APK Static Analysis & Compatibility Report</span>
+                  {analysisStatus === "completed" && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ✓ Analyzed
+                    </span>
+                  )}
+                  {analysisStatus === "analyzing" && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 animate-pulse border border-purple-300">
+                      ⏳ Analyzing...
+                    </span>
+                  )}
+                  {analysisStatus === "failed" && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-300">
+                      ✕ Analysis Failed
                     </span>
                   )}
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Extracted from target APK's <code>AndroidManifest.xml</code> binary schema.
+                  Static inspection of APK manifest, bytecode architectures, frameworks, and feature compatibility.
                 </p>
               </div>
 
-              {targetApk && (
+              {analysisReport && (
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold">
-                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
-                    ⚡ {targetRuntimeCount} Runtime
+                  <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 rounded-md border border-purple-200">
+                    {analysisReport.frameworkDetection.detectedFramework}
                   </span>
-                  <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded-md border border-gray-200">
-                    ⚙️ {targetApk.permissions.length - targetRuntimeCount} Install-Time
+                  <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md border border-slate-200 font-mono">
+                    Target SDK {analysisReport.basicInfo.targetSdkVersion}
                   </span>
                 </div>
               )}
@@ -1532,95 +1684,321 @@ export default function CustomAppsPage() {
                 </div>
                 <h4 className="text-xs font-bold text-gray-700">No Target APK Loaded</h4>
                 <p className="text-xs text-gray-400 max-w-xs mx-auto mt-0.5">
-                  Select an .apk file in the card above to inspect all permissions requested by that app.
+                  Select an .apk file in the card above to trigger safe static analysis before considering build operations.
                 </p>
               </div>
+            ) : analysisStatus === "analyzing" ? (
+              <div className="py-12 px-4 text-center border border-dashed border-purple-200 rounded-xl bg-purple-50/30 space-y-3">
+                <div className="w-10 h-10 mx-auto rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center animate-spin">
+                  ⚙️
+                </div>
+                <h4 className="text-sm font-bold text-purple-900">Performing Static Analysis...</h4>
+                <p className="text-xs text-purple-600 max-w-md mx-auto">
+                  Parsing binary AndroidManifest.xml, inspecting DEX bytecode and native libraries, detecting frameworks, and evaluating permission compatibility.
+                </p>
+              </div>
+            ) : !analysisReport ? (
+              <div className="py-6 px-4 text-center border border-dashed border-gray-200 rounded-xl bg-gray-50">
+                <p className="text-xs text-gray-500">Analysis pending. Please upload or load an APK to begin.</p>
+              </div>
             ) : (
-              /* When Target APK is loaded: Search, Filters & Permissions List */
-              <div className="space-y-3">
-                {/* Search & Filter Bar */}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type="text"
-                      placeholder="Search target permissions..."
-                      value={targetSearchQuery}
-                      onChange={(e) => setTargetSearchQuery(e.target.value)}
-                      className="w-full text-xs pl-8 pr-3 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 focus:bg-white"
-                    />
-                    <span className="absolute left-2.5 top-2 text-gray-400 text-xs">🔍</span>
-                    {targetSearchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setTargetSearchQuery("")}
-                        className="absolute right-2.5 top-1.5 text-gray-400 hover:text-gray-600 text-xs font-bold"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-
-                  <select
-                    value={targetCategoryFilter}
-                    onChange={(e) => setTargetCategoryFilter(e.target.value)}
-                    className="text-xs bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-2 text-gray-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
-                  >
-                    <option value="all">All ({targetApk.permissions.length})</option>
-                    <option value="runtime_only">⚡ Runtime Only ({targetRuntimeCount})</option>
-                    <option value="install_time">⚙️ Install-Time ({targetApk.permissions.length - targetRuntimeCount})</option>
-                    <option value="Location">Location</option>
-                    <option value="Media & Hardware">Media & Hardware</option>
-                    <option value="Telephony & Contacts">Telephony & Contacts</option>
-                    <option value="Storage & Media">Storage & Media</option>
-                    <option value="Network & Internet">Network & Internet</option>
-                    <option value="Notifications">Notifications</option>
-                    <option value="System & Service">System & Service</option>
-                  </select>
+              <div className="space-y-4">
+                {/* Analysis Navigation Sub-Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2 text-xs">
+                  {[
+                    { id: "overview", label: "📊 Overview & Framework" },
+                    { id: "manifest", label: `📜 Manifest (${analysisReport.manifest.requestedPermissions.length})` },
+                    { id: "dex_abi", label: `⚙️ DEX & ABIs (${analysisReport.dexAndNative.dexCount})` },
+                    { id: "compatibility", label: `⚖️ Compatibility Matrix (${analysisReport.compatibilityMatrix.length})` },
+                    { id: "authorization", label: `🛡️ Governance & Policy` },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveAnalysisTab(tab.id as any)}
+                      className={`px-3 py-1.5 font-bold rounded-lg transition cursor-pointer text-xs ${
+                        activeAnalysisTab === tab.id
+                          ? "bg-purple-600 text-white shadow-2xs"
+                          : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Permissions List Items */}
-                <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                  {filteredTargetPermissions.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-6 italic bg-gray-50 rounded-lg border border-dashed border-gray-200">
-                      No permissions match the current filter or search query.
-                    </p>
-                  ) : (
-                    filteredTargetPermissions.map((perm, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition ${
-                          perm.isRuntime
-                            ? "bg-emerald-50/50 border-emerald-200 hover:bg-emerald-50"
-                            : "bg-white border-gray-200 hover:bg-gray-50"
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-gray-900 truncate">
-                              {perm.cleanName}
-                            </span>
-                            <span className="text-[10px] font-medium text-gray-500 px-1.5 py-0.2 rounded bg-gray-100 border border-gray-200 shrink-0">
-                              {perm.category}
-                            </span>
-                          </div>
-                          <span className="font-mono text-[10px] text-gray-500 block truncate mt-0.5 select-all">
-                            {perm.rawName}
+                {/* TAB 1: OVERVIEW & FRAMEWORK */}
+                {activeAnalysisTab === "overview" && (
+                  <div className="space-y-4 text-xs">
+                    {/* Framework Hero Banner */}
+                    <div className="p-4 rounded-xl border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50/60 space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🎯</span>
+                          <span className="font-bold text-gray-900 text-sm">
+                            Detected Framework: {analysisReport.frameworkDetection.detectedFramework}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-200 text-purple-900 border border-purple-300">
+                            {analysisReport.frameworkDetection.confidence} Confidence
                           </span>
                         </div>
-
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${
-                            perm.isRuntime
-                              ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                              : "bg-gray-100 text-gray-600 border border-gray-200"
-                          }`}
-                        >
-                          {perm.isRuntime ? "⚡ Runtime" : "⚙️ Install"}
+                        <span className="font-mono text-gray-600 text-[11px]">
+                          {analysisReport.basicInfo.fileSizeFormatted}
                         </span>
                       </div>
-                    ))
-                  )}
-                </div>
+                      <p className="text-gray-600 text-xs">
+                        {analysisReport.frameworkDetection.architectureNote}
+                      </p>
+                      {analysisReport.frameworkDetection.indicators.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {analysisReport.frameworkDetection.indicators.map((ind, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-white/90 text-purple-900 border border-purple-200 rounded font-mono text-[10px]">
+                              {ind}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Metadata Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-0.5">
+                        <div className="text-[10px] text-gray-400 font-bold uppercase">Package Name</div>
+                        <div className="font-mono font-bold text-gray-900 truncate" title={analysisReport.basicInfo.packageName}>
+                          {analysisReport.basicInfo.packageName}
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-0.5">
+                        <div className="text-[10px] text-gray-400 font-bold uppercase">Version</div>
+                        <div className="font-mono font-bold text-gray-900">
+                          v{analysisReport.basicInfo.versionName} ({analysisReport.basicInfo.versionCode})
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-0.5">
+                        <div className="text-[10px] text-gray-400 font-bold uppercase">Target / Min SDK</div>
+                        <div className="font-mono font-bold text-gray-900">
+                          SDK {analysisReport.basicInfo.targetSdkVersion} / {analysisReport.basicInfo.minSdkVersion}
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-0.5">
+                        <div className="text-[10px] text-gray-400 font-bold uppercase">Integrity</div>
+                        <div className="font-bold text-emerald-700 flex items-center gap-1">
+                          <span>✓</span>
+                          <span>Verified Zip</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Signing Certificate Card */}
+                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 flex items-center gap-1.5">
+                          <span>🔏</span>
+                          <span>APK Signing Certificate & Schemes</span>
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                          <span className={`px-2 py-0.5 rounded border ${analysisReport.basicInfo.signing.schemeV1 ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                            v1 (JAR): {analysisReport.basicInfo.signing.schemeV1 ? 'Yes' : 'No'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded border ${analysisReport.basicInfo.signing.schemeV2 ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                            v2 (Sig Block): {analysisReport.basicInfo.signing.schemeV2 ? 'Yes' : 'No'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded border ${analysisReport.basicInfo.signing.schemeV3 ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                            v3: {analysisReport.basicInfo.signing.schemeV3 ? 'Yes' : 'No'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-[11px] text-gray-600 font-mono">
+                        <div className="truncate"><span className="text-gray-400 font-bold">Subject:</span> {analysisReport.basicInfo.signing.signerSubject}</div>
+                        {analysisReport.basicInfo.signing.sha256Fingerprint && (
+                          <div className="truncate"><span className="text-gray-400 font-bold">SHA-256:</span> {analysisReport.basicInfo.signing.sha256Fingerprint}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: MANIFEST & COMPONENTS */}
+                {activeAnalysisTab === "manifest" && (
+                  <div className="space-y-4 text-xs">
+                    {/* Components Counters */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                      <div className="p-2.5 rounded-lg border border-purple-200 bg-purple-50/50">
+                        <div className="text-lg font-bold text-purple-900">{analysisReport.manifest.activitiesCount}</div>
+                        <div className="text-[10px] font-semibold text-purple-700 uppercase">Activities</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50">
+                        <div className="text-lg font-bold text-blue-900">{analysisReport.manifest.servicesCount}</div>
+                        <div className="text-[10px] font-semibold text-blue-700 uppercase">Services</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/50">
+                        <div className="text-lg font-bold text-indigo-900">{analysisReport.manifest.receiversCount}</div>
+                        <div className="text-[10px] font-semibold text-indigo-700 uppercase">Receivers</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg border border-emerald-200 bg-emerald-50/50">
+                        <div className="text-lg font-bold text-emerald-900">{analysisReport.manifest.exportedComponentsCount}</div>
+                        <div className="text-[10px] font-semibold text-emerald-700 uppercase">Exported</div>
+                      </div>
+                    </div>
+
+                    {/* Permissions list */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900">Declared Permissions ({analysisReport.manifest.requestedPermissions.length})</span>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search manifest permissions..."
+                        value={targetSearchQuery}
+                        onChange={(e) => setTargetSearchQuery(e.target.value)}
+                        className="w-full text-xs px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 focus:bg-white"
+                      />
+                      <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                        {analysisReport.manifest.requestedPermissions
+                          .filter((p) => targetSearchQuery === "" || p.toLowerCase().includes(targetSearchQuery.toLowerCase()))
+                          .map((perm, idx) => (
+                            <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200 font-mono text-[11px] text-gray-800 select-all">
+                              {perm}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: DEX & ABIS */}
+                {activeAnalysisTab === "dex_abi" && (
+                  <div className="space-y-4 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5">
+                        <span className="font-bold text-gray-900 block">📦 Executable Dalvik Units</span>
+                        <div className="text-sm font-bold text-gray-800">{analysisReport.dexAndNative.dexCount} DEX File(s)</div>
+                        <div className="space-y-1 font-mono text-[10px] text-gray-500">
+                          {analysisReport.dexAndNative.dexFiles.map((d, i) => (
+                            <div key={i}>• {d}</div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5">
+                        <span className="font-bold text-gray-900 block">⚙️ Supported CPU Architectures (ABIs)</span>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {analysisReport.dexAndNative.supportedAbis.map((abi, i) => (
+                            <span key={i} className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-mono text-[10px] font-bold border border-blue-200">
+                              {abi}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 pt-1">
+                          Native binary libraries: {analysisReport.dexAndNative.nativeLibrariesCount} compiled .so files
+                        </p>
+                      </div>
+                    </div>
+
+                    {analysisReport.dexAndNative.detectedLibraries.length > 0 && (
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                        <span className="font-bold text-gray-900 block">Recognized Android Plugins & SDKs</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {analysisReport.dexAndNative.detectedLibraries.map((lib, i) => (
+                            <span key={i} className="px-2 py-0.5 rounded bg-white text-slate-800 border border-slate-300 font-semibold text-[10px]">
+                              {lib}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 4: COMPATIBILITY MATRIX */}
+                {activeAnalysisTab === "compatibility" && (
+                  <div className="space-y-3 text-xs">
+                    <p className="text-gray-500 text-[11px]">
+                      Comparison of target application architecture against SPAPP Monitoring's Android source framework implementation:
+                    </p>
+                    <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                      {analysisReport.compatibilityMatrix.map((item, idx) => {
+                        const badgeColor =
+                          item.classification === "Supported"
+                            ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                            : item.classification === "Requires Source Integration"
+                            ? "bg-amber-100 text-amber-900 border-amber-300"
+                            : item.classification === "Requires Additional Components"
+                            ? "bg-orange-100 text-orange-900 border-orange-300"
+                            : "bg-red-100 text-red-800 border-red-300";
+
+                        return (
+                          <div key={idx} className="p-3 rounded-lg border border-gray-200 bg-gray-50/70 space-y-1.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-bold text-gray-900">{item.featureName}</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeColor}`}>
+                                {item.classification}
+                              </span>
+                            </div>
+                            <code className="text-[10px] font-mono text-purple-800 block">{item.permission}</code>
+                            <p className="text-[11px] text-gray-600 leading-relaxed">{item.statusReason}</p>
+                            
+                            <div className="pt-1.5 border-t border-gray-200/60 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] text-gray-500">
+                              <div>
+                                <span className="font-bold text-gray-700">Source Class:</span> {item.sourceFrameworkReference}
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-700">Consent Flow:</span> {item.consentDialog || "Standard Dialog"}
+                              </div>
+                            </div>
+                            {item.supportedIntegrationPath && (
+                              <div className="text-[10px] bg-white p-1.5 rounded border border-gray-200 text-gray-700">
+                                <span className="font-bold text-indigo-700">Supported Integration Path:</span> {item.supportedIntegrationPath}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 5: GOVERNANCE & POLICY */}
+                {activeAnalysisTab === "authorization" && (
+                  <div className="space-y-4 text-xs">
+                    <div className="p-4 rounded-xl border border-gray-200 bg-gray-50/60 space-y-3">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          id="chk-source-authorization"
+                          checked={isAuthorizedSource}
+                          onChange={(e) => setIsAuthorizedSource(e.target.checked)}
+                          className="mt-1 h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                        />
+                        <div>
+                          <label htmlFor="chk-source-authorization" className="font-bold text-gray-900 cursor-pointer block">
+                            Documented Source-Code Modification Authorization
+                          </label>
+                          <p className="text-gray-500 text-[11px] mt-0.5">
+                            Confirm that you own this application or hold explicit authorization to integrate modular monitoring SDK components at source/compilation level.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`p-4 rounded-xl border space-y-2 ${isAuthorizedSource ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                      <div className="font-bold flex items-center gap-2">
+                        <span>{isAuthorizedSource ? "✓" : "🛑"}</span>
+                        <span>{isAuthorizedSource ? "Authorized In-House Source Mode Active" : "Third-Party Application Governance Policy"}</span>
+                      </div>
+                      <p className="text-xs leading-relaxed">
+                        {isAuthorizedSource
+                          ? "Authorized mode enabled: Feasible features will be integrated via authorized SDK modules with full user runtime consent dialogs."
+                          : analysisReport.authorization.policyNotice}
+                      </p>
+                      {!isAuthorizedSource && (
+                        <div className="pt-2 border-t border-amber-200/80 text-[11px] font-semibold text-amber-950">
+                          Recommended Supported Alternative: {analysisReport.authorization.supportedAlternative}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1754,9 +2132,19 @@ export default function CustomAppsPage() {
               type="button"
               id="btn-trigger-build"
               onClick={handleTriggerBuild}
-              disabled={selectedSourcePermissions.length === 0 || !targetApk || isBuilding}
+              disabled={
+                selectedSourcePermissions.length === 0 ||
+                !targetApk ||
+                isBuilding ||
+                analysisStatus !== "completed" ||
+                (!isAuthorizedSource && analysisReport?.authorization?.isAuthorizedSource === false)
+              }
               className={`px-10 py-3.5 rounded-xl font-bold text-sm tracking-wide transition flex items-center gap-2.5 mx-auto ${
-                selectedSourcePermissions.length > 0 && targetApk && !isBuilding
+                selectedSourcePermissions.length > 0 &&
+                targetApk &&
+                !isBuilding &&
+                analysisStatus === "completed" &&
+                (isAuthorizedSource || analysisReport?.authorization?.isAuthorizedSource)
                   ? "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md shadow-blue-600/20 hover:shadow-lg hover:shadow-purple-600/30 active:scale-[0.99] cursor-pointer"
                   : isBuilding
                   ? "bg-indigo-400 text-white cursor-wait"
@@ -1774,18 +2162,48 @@ export default function CustomAppsPage() {
               ) : (
                 <>
                   <span className="text-base">🔨</span>
-                  <span>Build</span>
+                  <span>Build Standardized App Package</span>
                 </>
               )}
             </button>
           </div>
 
-          {/* Helper Hint */}
-          <p className="text-xs text-gray-500 max-w-md">
-            {selectedSourcePermissions.length > 0 && targetApk
-              ? `Ready to build custom package: Purging legacy nodes from ${targetApk.fileName} and injecting ${selectedSourcePermissions.length} chosen permissions.`
-              : "To activate the Build button, select at least 1 permission from the Source Framework (left) and load a Target APK (right)."}
-          </p>
+          {/* Helper Hint & Static Analysis Pre-Condition Notice */}
+          <div className="max-w-xl mx-auto space-y-2">
+            {analysisStatus === "analyzing" && (
+              <div className="p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 text-xs flex items-center justify-center gap-2">
+                <svg className="animate-spin h-3.5 w-3.5 text-purple-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+                <span>APK static analysis in progress... Build is blocked until analysis completes.</span>
+              </div>
+            )}
+
+            {analysisStatus === "completed" && analysisReport && !analysisReport.authorization.isAuthorizedSource && !isAuthorizedSource && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs text-left shadow-2xs space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                  <span>🛑</span>
+                  <span>Third-Party Package Modification Blocked</span>
+                </div>
+                <p className="text-amber-800">
+                  Target package is a third-party application without verified modification authorization. Direct executable injection into third-party binaries is prohibited. To proceed, confirm source ownership above or use the supported <strong>Companion Device Agent</strong>.
+                </p>
+              </div>
+            )}
+
+            {selectedSourcePermissions.length > 0 && targetApk && (isAuthorizedSource || analysisReport?.authorization?.isAuthorizedSource) && (
+              <p className="text-xs text-emerald-700 font-medium">
+                ✓ Pre-flight static analysis verified [{analysisReport?.analysisReportId}]. Ready to build authorized package.
+              </p>
+            )}
+
+            {(!targetApk || selectedSourcePermissions.length === 0) && (
+              <p className="text-xs text-gray-400">
+                To activate the Build button, select at least 1 permission from the Source Framework (left) and load a Target APK (right).
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Live Execution Pipeline Panel (Shows when building or completed) */}
