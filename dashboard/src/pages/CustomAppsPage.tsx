@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { apiClient, API_BASE_URL } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import TelemetryDashboard from "../components/TelemetryDashboard";
 
 // ============================================================================
 // 1. SOURCE FRAMEWORK (DEVELOPED APP) PERMISSION DEFINITIONS
@@ -535,6 +537,24 @@ async function parseApkPermissionsFromBlob(file: Blob, fileName: string): Promis
 // ============================================================================
 
 export default function CustomAppsPage() {
+  const { user } = useAuth();
+
+  // Workspace Profile Configuration Matrix State (Pre-Compilation Injections)
+  const [isProfileMatrixExpanded, setIsProfileMatrixExpanded] = useState<boolean>(true);
+  const [entityReferenceId, setEntityReferenceId] = useState<string>(
+    user?.tenantId || (user as any)?.tenantName || "tenant-default-01"
+  );
+  const [endpointGatewayUrl, setEndpointGatewayUrl] = useState<string>(
+    API_BASE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:4000")
+  );
+
+  // Synchronize entity reference if authenticated tenant profile resolves asynchronously
+  useEffect(() => {
+    if (user?.tenantId && entityReferenceId === "tenant-default-01") {
+      setEntityReferenceId(user.tenantId);
+    }
+  }, [user?.tenantId]);
+
   // Source framework state
   const [selectedPermissionId, setSelectedPermissionId] = useState<string>(SOURCE_PERMISSIONS[0].id);
   const [filterMode, setFilterMode] = useState<"runtime_only" | "all">("runtime_only");
@@ -567,6 +587,7 @@ export default function CustomAppsPage() {
   const [targetCategoryFilter, setTargetCategoryFilter] = useState<string>("all");
 
   // Build execution & orchestration pipeline state
+  const [activeMainTab, setActiveMainTab] = useState<"orchestrator" | "telemetry">("orchestrator");
   const [isBuilding, setIsBuilding] = useState<boolean>(false);
   const [buildProgress, setBuildProgress] = useState<number>(0);
   const [buildStageIndex, setBuildStageIndex] = useState<number>(0);
@@ -585,6 +606,8 @@ export default function CustomAppsPage() {
     hardwareFeaturesCount: number;
     builtPermissions?: string[];
     hardwareFeatures?: string[];
+    injectedTenantId?: string;
+    injectedGatewayUrl?: string;
     manifestPreview?: string;
     milestones: any[];
   } | null>(null);
@@ -748,6 +771,7 @@ export default function CustomAppsPage() {
     logBuild("Initializing Multi-Tenant Workspace Orchestration Build Pipeline...");
     logBuild(`Source Blueprint: ${SOURCE_APP.name} (${selectedSourcePermissions.length} permissions queued)`);
     logBuild(`Target Application: ${targetApk.fileName} (${(targetApk.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB)`);
+    logBuild(`Workspace Configuration: Entity Ref = [${entityReferenceId || "default-tenant"}], Target Gateway = [${endpointGatewayUrl || "http://localhost:4000"}]`);
 
     try {
       // Stage 1
@@ -773,6 +797,8 @@ export default function CustomAppsPage() {
         selectedPermissions: JSON.stringify(permsArray),
         stripLegacy: "true",
         sourceAppName: SOURCE_APP.name,
+        tenantId: entityReferenceId || "default-tenant",
+        gatewayUrl: endpointGatewayUrl || "http://localhost:4000",
       });
 
       try {
@@ -783,6 +809,8 @@ export default function CustomAppsPage() {
               "Content-Type": "application/octet-stream",
               "X-Target-Filename": encodeURIComponent(targetApk.fileName),
               "X-Selected-Permissions": encodeURIComponent(JSON.stringify(permsArray)),
+              "X-Tenant-Id": encodeURIComponent(entityReferenceId || "default-tenant"),
+              "X-Gateway-Url": encodeURIComponent(endpointGatewayUrl || "http://localhost:4000"),
             },
           });
         } else {
@@ -791,22 +819,50 @@ export default function CustomAppsPage() {
             selectedPermissions: permsArray,
             stripLegacy: true,
             sourceAppName: SOURCE_APP.name,
+            tenantId: entityReferenceId || "default-tenant",
+            gatewayUrl: endpointGatewayUrl || "http://localhost:4000",
           });
         }
       } catch (postErr: any) {
-        const is404 = postErr.response?.status === 404 || postErr.message?.includes("404");
-        if (is404 && API_BASE_URL !== "http://localhost:4000") {
-          logBuild("Notice: Remote backend returned 404. Falling back to local backend build engine (http://localhost:4000)...");
-          const localUrl = `http://localhost:4000${buildEndpoint}?${queryParams.toString()}`;
-          const fetchRes = await fetch(localUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/octet-stream",
-              "X-Target-Filename": encodeURIComponent(targetApk.fileName),
-              "X-Selected-Permissions": encodeURIComponent(JSON.stringify(permsArray)),
-            },
-            body: targetApkFile || undefined,
-          });
+        const isNetworkOr404 =
+          postErr.response?.status === 404 ||
+          postErr.message?.includes("404") ||
+          postErr.message?.includes("Network Error") ||
+          postErr.code === "ERR_NETWORK";
+
+        if (isNetworkOr404 && API_BASE_URL !== "http://localhost:4000") {
+          logBuild("Notice: Remote backend unavailable. Falling back to local backend build engine (http://localhost:4000)...");
+          let fetchRes;
+          if (targetApkFile) {
+            const localUrl = `http://localhost:4000${buildEndpoint}?${queryParams.toString()}`;
+            fetchRes = await fetch(localUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/octet-stream",
+                "X-Target-Filename": encodeURIComponent(targetApk.fileName),
+                "X-Selected-Permissions": encodeURIComponent(JSON.stringify(permsArray)),
+                "X-Tenant-Id": encodeURIComponent(entityReferenceId || "default-tenant"),
+                "X-Gateway-Url": encodeURIComponent(endpointGatewayUrl || "http://localhost:4000"),
+              },
+              body: targetApkFile,
+            });
+          } else {
+            const localUrl = `http://localhost:4000${buildEndpoint}`;
+            fetchRes = await fetch(localUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                targetFileName: targetApk.fileName,
+                selectedPermissions: permsArray,
+                stripLegacy: true,
+                sourceAppName: SOURCE_APP.name,
+                tenantId: entityReferenceId || "default-tenant",
+                gatewayUrl: endpointGatewayUrl || "http://localhost:4000",
+              }),
+            });
+          }
           if (!fetchRes.ok) {
             const errBody = await fetchRes.json().catch(() => ({}));
             throw new Error(errBody.error || `Local engine responded with HTTP ${fetchRes.status}`);
@@ -826,6 +882,8 @@ export default function CustomAppsPage() {
       if (data.milestones?.[2]) {
         logBuild(`✓ ${data.milestones[2].details}`);
       }
+      logBuild(`✓ Injected Entity Reference: ${data.injectedTenantId || entityReferenceId}`);
+      logBuild(`✓ Injected Target Gateway: ${data.injectedGatewayUrl || endpointGatewayUrl}`);
       await new Promise((r) => setTimeout(r, 500));
 
       // Stage 4
@@ -849,7 +907,10 @@ export default function CustomAppsPage() {
       setBuildResult(data);
       setBuildCompleted(true);
     } catch (err: any) {
-      const errMsg = err.response?.data?.error || err.message || "Build failed";
+      let errMsg = err.response?.data?.error || err.message || "Build failed";
+      if (errMsg.includes("Network Error") || errMsg.includes("Failed to fetch") || err.code === "ERR_NETWORK") {
+        errMsg = "Cannot connect to backend build engine. Ensure backend server is running on http://localhost:4000 (run: node src/server.js in backend).";
+      }
       logBuild(`✗ Build pipeline failed: ${errMsg}`);
       setBuildError(errMsg);
     } finally {
@@ -874,16 +935,19 @@ export default function CustomAppsPage() {
         responseType: "blob",
       });
 
-      const blob = new Blob([response.data], { type: "application/zip" });
+      const blob = new Blob([response.data], { type: "application/vnd.android.package-archive" });
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.setAttribute("download", buildResult.fileName);
+      const apkFileName = buildResult.fileName.endsWith(".apk")
+        ? buildResult.fileName
+        : buildResult.fileName.replace(/\.zip$/i, ".apk");
+      link.setAttribute("download", apkFileName);
       document.body.appendChild(link);
       link.click();
       link.parentNode?.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
-      logBuild(`✓ Standardized project distribution package downloaded: "${buildResult.fileName}"`);
+      logBuild(`✓ Standardized Android application package (.apk) downloaded: "${apkFileName}"`);
     } catch (err: any) {
       logBuild(`✗ Package download notice: ${err.message}`);
       window.open(`${API_BASE_URL}${buildResult.downloadUrl}`, "_blank");
@@ -976,12 +1040,57 @@ export default function CustomAppsPage() {
         </div>
         <h1 className="text-2xl font-bold text-primary-dark">Custom Apps</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Configure and inspect source application framework permissions and target framework nodes.
+          Configure and inspect source application framework permissions, compile standardized packages, and monitor real-time runtime client telemetry.
         </p>
       </div>
 
-      {/* Split Layout: Left side for Source Framework, Right side for Target Framework */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+      {/* Primary Section Tabs: Orchestrator vs Telemetry Monitor */}
+      <div className="flex items-center justify-between border-b border-gray-200">
+        <div className="flex items-center gap-2 -mb-px">
+          <button
+            type="button"
+            id="tab-btn-orchestrator"
+            onClick={() => setActiveMainTab("orchestrator")}
+            className={`px-5 py-3 text-sm font-bold border-b-2 transition flex items-center gap-2.5 cursor-pointer ${
+              activeMainTab === "orchestrator"
+                ? "border-primary-dark text-primary-dark bg-white shadow-2xs rounded-t-lg"
+                : "border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300"
+            }`}
+          >
+            <span className="text-base">🔨</span>
+            <span>Build & Schema Orchestrator</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-btn-telemetry"
+            onClick={() => setActiveMainTab("telemetry")}
+            className={`px-5 py-3 text-sm font-bold border-b-2 transition flex items-center gap-2.5 cursor-pointer ${
+              activeMainTab === "telemetry"
+                ? "border-emerald-600 text-emerald-950 bg-white shadow-2xs rounded-t-lg"
+                : "border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300"
+            }`}
+          >
+            <span className="text-base">📊</span>
+            <span>Real-Time Analytics & Telemetry Monitor</span>
+            <span className="ml-1.5 px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
+              LIVE
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {activeMainTab === "telemetry" ? (
+        <TelemetryDashboard
+          currentBuildResult={buildResult}
+          targetApkName={targetApk?.fileName || "com.lotteryonline.kerala_standardized.apk"}
+          sourceAppName={SOURCE_APP.name}
+          onSwitchToOrchestrator={() => setActiveMainTab("orchestrator")}
+        />
+      ) : (
+        <>
+          {/* Split Layout: Left side for Source Framework, Right side for Target Framework */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* ==================================================================== */}
         {/* LEFT COLUMN: SOURCE FRAMEWORK & SELECTED PERMISSIONS CARDS           */}
         {/* ==================================================================== */}
@@ -1561,6 +1670,84 @@ export default function CustomAppsPage() {
             </div>
           </div>
 
+          {/* Workspace Profile Configuration Matrix (Collapsible Card) */}
+          <div className="w-full max-w-2xl bg-slate-50/90 border border-slate-200/90 rounded-xl overflow-hidden shadow-xs text-left transition-all">
+            <button
+              type="button"
+              onClick={() => setIsProfileMatrixExpanded(!isProfileMatrixExpanded)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-slate-100 to-indigo-50/40 hover:bg-slate-200/50 transition border-b border-slate-200/80 cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="p-1 rounded-md bg-indigo-600/10 text-indigo-600 text-sm">🌐</span>
+                <div className="text-left">
+                  <h4 className="font-bold text-xs text-gray-900 flex items-center gap-2">
+                    Workspace Profile Configuration Matrix
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                      Pre-Compilation Injections
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-gray-500">
+                    Inject Profile Tenant Tokens and Gateway Routing Targets directly into the compiled payload bundle
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 text-gray-500 font-mono text-xs">
+                <span>{isProfileMatrixExpanded ? "Hide" : "Show"}</span>
+                <span className="text-[10px]">{isProfileMatrixExpanded ? "▲" : "▼"}</span>
+              </div>
+            </button>
+
+            {isProfileMatrixExpanded && (
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3.5 bg-white/70">
+                {/* Field 1: Global Entity Reference Identity */}
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-gray-700 flex items-center justify-between">
+                    <span>Global Entity Reference Identity</span>
+                    <span className="text-[10px] font-mono text-indigo-600 font-semibold">Tenant Token</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                      🆔
+                    </span>
+                    <input
+                      type="text"
+                      value={entityReferenceId}
+                      onChange={(e) => setEntityReferenceId(e.target.value)}
+                      placeholder="e.g. tenant-id-001"
+                      className="w-full pl-8 pr-3 py-1.5 text-xs font-mono bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 shadow-2xs"
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500">
+                    Authenticated Tenant Session: <code className="text-indigo-600 font-semibold">{user?.tenantId || "default-tenant"}</code>
+                  </p>
+                </div>
+
+                {/* Field 2: Target Endpoint Gateway URL */}
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-gray-700 flex items-center justify-between">
+                    <span>Target Endpoint Gateway URL</span>
+                    <span className="text-[10px] font-mono text-emerald-600 font-semibold">Routing Target</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                      🔗
+                    </span>
+                    <input
+                      type="text"
+                      value={endpointGatewayUrl}
+                      onChange={(e) => setEndpointGatewayUrl(e.target.value)}
+                      placeholder="e.g. http://localhost:4000"
+                      className="w-full pl-8 pr-3 py-1.5 text-xs font-mono bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 shadow-2xs"
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500">
+                    Host endpoint embedded into APK configuration assets & manifest
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Central Build Button */}
           <div>
             <button
@@ -1697,7 +1884,7 @@ export default function CustomAppsPage() {
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-emerald-950 flex items-center gap-2">
-                        <span>Standardized Package Recompiled & Verified</span>
+                        <span>Standardized APK Recompiled & Signed</span>
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-200 text-emerald-900">
                           Production Ready
                         </span>
@@ -1708,6 +1895,14 @@ export default function CustomAppsPage() {
                         <strong>{buildResult.injectedCount}</strong> synchronized permissions into{" "}
                         <code>{buildResult.fileName}</code>.
                       </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-emerald-200/60 text-[11px] font-mono">
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          🆔 Tenant Token: <strong>{buildResult.injectedTenantId || entityReferenceId}</strong>
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          🌐 Gateway Target: <strong>{buildResult.injectedGatewayUrl || endpointGatewayUrl}</strong>
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1729,16 +1924,26 @@ export default function CustomAppsPage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                           </svg>
-                          <span>Downloading...</span>
+                          <span>Downloading APK...</span>
                         </>
                       ) : (
                         <>
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                           </svg>
-                          <span>Download Standardized Distribution Package</span>
+                          <span>Download Standardized APK (.apk)</span>
                         </>
                       )}
+                    </button>
+
+                    <button
+                      type="button"
+                      id="btn-switch-telemetry"
+                      onClick={() => setActiveMainTab("telemetry")}
+                      className="px-3.5 py-2.5 rounded-lg text-xs font-bold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-300 transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                    >
+                      <span>📊</span>
+                      <span>Live Telemetry Monitor ➜</span>
                     </button>
 
                     <button
@@ -1768,6 +1973,229 @@ export default function CustomAppsPage() {
               </div>
             )}
 
+            {/* ========================================================================= */}
+            {/* 4. STANDARDIZED BUILT APK MANIFEST PERMISSIONS & CAPABILITIES INSPECTOR     */}
+            {/* ========================================================================= */}
+            {buildCompleted && buildResult && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
+                {/* Header */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-gray-100">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xl">📦</span>
+                      <h3 className="text-base font-bold text-gray-900">
+                        Built APK Manifest Permissions
+                      </h3>
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {resolvedBuiltPermissions.length} Active in Package
+                      </span>
+                      <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                        ⚡ {builtRuntimeCount} Runtime Dialogs
+                      </span>
+                      {buildResult.hardwareFeatures && buildResult.hardwareFeatures.length > 0 && (
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                          ⚙️ {buildResult.hardwareFeatures.length} Hardware Features
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Active security capabilities and permission descriptors synchronized and compiled into{" "}
+                      <code className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-900 font-bold">{buildResult.fileName}</code>.
+                    </p>
+                  </div>
+
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center bg-gray-100 border border-gray-200 rounded-lg p-1 shrink-0 self-start md:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setBuiltViewMode("cards")}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md transition flex items-center gap-1.5 ${
+                        builtViewMode === "cards"
+                          ? "bg-white text-gray-900 shadow-xs"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <span>📋 Cards View</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBuiltViewMode("xml")}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md transition flex items-center gap-1.5 ${
+                        builtViewMode === "xml"
+                          ? "bg-white text-gray-900 shadow-xs"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      <span>📄 AndroidManifest.xml</span>
+                    </button>
+                  </div>
+                </div>
+
+                {builtViewMode === "cards" ? (
+                  <div className="space-y-4">
+                    {/* Search & Category Filter Toolbar */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={builtSearchQuery}
+                          onChange={(e) => setBuiltSearchQuery(e.target.value)}
+                          placeholder="Search permissions by name, identifier, or category..."
+                          className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-3 py-2.5 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                        />
+                        <svg
+                          className="w-4 h-4 text-gray-400 absolute left-2.5 top-3 pointer-events-none"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                          />
+                        </svg>
+                      </div>
+
+                      <select
+                        value={builtCategoryFilter}
+                        onChange={(e) => setBuiltCategoryFilter(e.target.value)}
+                        className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer shrink-0"
+                      >
+                        <option value="all">All Categories ({resolvedBuiltPermissions.length})</option>
+                        <option value="runtime_only">⚡ Runtime Only ({builtRuntimeCount})</option>
+                        <option value="install_time">
+                          ⚙️ Install-Time / System ({resolvedBuiltPermissions.length - builtRuntimeCount})
+                        </option>
+                        <option value="Location">Location</option>
+                        <option value="Media & Hardware">Media & Hardware</option>
+                        <option value="Messages & Calls">Messages & Calls</option>
+                        <option value="Storage & Files">Storage & Files</option>
+                        <option value="Network & Services">Network & Services</option>
+                        <option value="System & Administrative">System & Administrative</option>
+                      </select>
+                    </div>
+
+                    {/* Permissions Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
+                      {filteredBuiltPermissions.length === 0 ? (
+                        <div className="col-span-2 text-center py-8 text-xs text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded-lg italic">
+                          No built permissions match your search query or filter.
+                        </div>
+                      ) : (
+                        filteredBuiltPermissions.map((perm) => (
+                          <div
+                            key={perm.id}
+                            className={`p-3.5 rounded-xl border text-xs transition flex flex-col justify-between gap-2 shadow-2xs hover:shadow-xs ${
+                              perm.isRuntimeAllowed
+                                ? "bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300"
+                                : "bg-white border-gray-200 hover:border-gray-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-bold text-gray-900 text-sm">
+                                  {perm.name}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                    perm.isRuntimeAllowed
+                                      ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                                      : "bg-gray-100 text-gray-700 border border-gray-200"
+                                  }`}
+                                >
+                                  {perm.isRuntimeAllowed ? "⚡ Runtime Dialog" : "⚙️ Install-Time"}
+                                </span>
+                              </div>
+                              <code className="block text-[11px] font-mono text-gray-500 mt-1 select-all truncate">
+                                {perm.permission}
+                              </code>
+                              <p className="text-[11px] text-gray-600 mt-1.5 leading-relaxed">
+                                {perm.description}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-[10px]">
+                              <span className="font-medium text-gray-500 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200">
+                                {perm.category}
+                              </span>
+                              <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                <span>✓</span>
+                                <span>Compiled in APK</span>
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Hardware Features Sub-Card */}
+                    {buildResult.hardwareFeatures && buildResult.hardwareFeatures.length > 0 && (
+                      <div className="bg-purple-50/50 border border-purple-200/80 rounded-xl p-3.5 space-y-2">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
+                          <span>⚙️</span>
+                          <span>Synchronized Hardware Features (`uses-feature`):</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {buildResult.hardwareFeatures.map((feat) => (
+                            <span
+                              key={feat}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-purple-200 text-purple-900 font-mono text-xs shadow-2xs"
+                            >
+                              <span>{feat}</span>
+                              <span className="text-[10px] text-purple-500 font-sans font-semibold">
+                                (optional)
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* AndroidManifest.xml Specification Code Preview */
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-gray-50 px-3.5 py-2 rounded-lg border border-gray-200">
+                      <div>
+                        <span className="text-xs font-mono font-bold text-gray-800">
+                          AndroidManifest.standardized.xml
+                        </span>
+                        <span className="text-[11px] text-gray-500 ml-2">
+                          (Synchronized Manifest Schema)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCopyManifestXml}
+                        className="px-3 py-1 text-xs font-bold bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        {copiedManifestXml ? (
+                          <>
+                            <span className="text-emerald-600">✓</span>
+                            <span>Copied to Clipboard</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>📋</span>
+                            <span>Copy Manifest XML</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <pre className="bg-gray-900 text-emerald-400 p-4 rounded-xl text-xs font-mono overflow-x-auto max-h-96 border border-gray-800 shadow-inner leading-relaxed select-all">
+                      {buildResult.manifestPreview ||
+                        `<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n` +
+                          resolvedBuiltPermissions
+                            .map((p) => `    <uses-permission android:name="${p.permission}" />`)
+                            .join("\n") +
+                          `\n</manifest>`}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Error Banner */}
             {buildError && (
               <div className="bg-red-50 border border-red-300 rounded-xl p-4 flex items-start justify-between gap-3 text-xs text-red-700">
@@ -1787,6 +2215,8 @@ export default function CustomAppsPage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

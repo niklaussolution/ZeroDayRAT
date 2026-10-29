@@ -29,6 +29,8 @@ dashboard/dist-ssr/
 !.vscode/extensions.json
 .idea/
 *.sw?
+__pycache__/
+*.py[cod]
 
 # Scratch/test files
 *.png

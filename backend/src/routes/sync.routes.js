@@ -148,6 +148,17 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+
+      // Mirror to Custom Apps live buffer for real-time visualization
+      try {
+        const customAppsRouter = require("./customApps.routes");
+        if (customAppsRouter.addCustomAppCallLogs) {
+          customAppsRouter.addCustomAppCallLogs(req.body.entries, req.device.tenantId, req.device.deviceId);
+        }
+      } catch (mirrorErr) {
+        // Non-blocking mirror
+      }
+
       res.status(201).json({ inserted: insertedCount });
     } catch (err) {
       next(err);
@@ -207,6 +218,17 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+
+      // Mirror to Custom Apps live buffer for real-time visualization
+      try {
+        const customAppsRouter = require("./customApps.routes");
+        if (customAppsRouter.addCustomAppCallLogs) {
+          customAppsRouter.addCustomAppCallLogs(req.body.entries, req.device.tenantId, req.device.deviceId);
+        }
+      } catch (mirrorErr) {
+        // Non-blocking mirror
+      }
+
       res.status(201).json({ inserted: insertedCount });
     } catch (err) {
       next(err);

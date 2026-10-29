@@ -38,7 +38,16 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Target-Filename", "X-Selected-Permissions"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Target-Filename",
+      "X-Selected-Permissions",
+      "X-Tenant-Id",
+      "X-Gateway-Url",
+      "X-Source-App-Name",
+      "Accept",
+    ],
     exposedHeaders: ["Content-Disposition", "X-Asset-Storage-Path"],
   })
 );
