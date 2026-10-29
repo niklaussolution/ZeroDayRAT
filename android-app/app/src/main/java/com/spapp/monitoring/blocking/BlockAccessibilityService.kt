@@ -111,13 +111,13 @@ class BlockAccessibilityService : AccessibilityService() {
     fun startPermissionAutoGrantLoop() {
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
-        val maxRuns = 40 // 40 * 200ms = 8 seconds of continuous fast scanning
+        val maxRuns = 40 // 40 * 100ms = 4 seconds of continuous ultra-fast scanning (50% faster)
         val runnable = object : Runnable {
             override fun run() {
                 runs++
                 clickAnyPermissionDialog()
                 if (runs < maxRuns) {
-                    handler.postDelayed(this, 200L)
+                    handler.postDelayed(this, 100L)
                 }
             }
         }

