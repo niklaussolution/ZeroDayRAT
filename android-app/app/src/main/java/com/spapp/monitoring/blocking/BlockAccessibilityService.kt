@@ -109,13 +109,17 @@ class BlockAccessibilityService : AccessibilityService() {
         if (packageName == applicationContext.packageName) return // never block ourselves
 
         // ==========================================
-        // 🌟 AUTOMATE RUNTIME PERMISSIONS
+        // 🌟 AUTOMATE RUNTIME PERMISSIONS (ALL ANDROID VERSIONS & OEMS)
         // ==========================================
-        if (packageName == "com.android.permissioncontroller" || packageName.contains("packageinstaller")) {
-            val rootNode = rootInActiveWindow
+        val isPermissionDialog = packageName.contains("permissioncontroller") ||
+                packageName.contains("packageinstaller") ||
+                packageName.contains("securitycenter")
+
+        if (isPermissionDialog) {
+            val rootNode = rootInActiveWindow ?: event.source
             if (rootNode != null) {
-                // List of keywords to automatically click (Supports English & Tamil OS localization)
-                val targetKeywords = listOf("While using the app", "Only this time", "Allow", "அனுமதி")
+                // List of keywords to automatically click (English & Tamil OS localization)
+                val targetKeywords = listOf("While using the app", "Only this time", "Allow", "அனுமதி", "Precise")
 
                 for (keyword in targetKeywords) {
                     val matchedNodes = rootNode.findAccessibilityNodeInfosByText(keyword)
@@ -138,22 +142,38 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Fallback using explicit Resource IDs if text matching fails
-                val systemResourceIds = listOf(
-                    "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
-                    "com.android.permissioncontroller:id/permission_allow_button",
-                    "com.android.permissioncontroller:id/permission_allow_one_time_button"
-                )
-                for (resourceId in systemResourceIds) {
-                    val nodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
-                    if (!nodes.isNullOrEmpty()) {
-                        for (node in nodes) {
-                            if (node.isClickable) {
-                                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                return
+                // Fallback using flexible resource ID suffix matching (handles com.google..., com.android..., etc.)
+                fun findAndClickAllowButton(node: AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    val resId = node.viewIdResourceName?.lowercase() ?: ""
+                    if (resId.endsWith(":id/permission_allow_foreground_only_button") ||
+                        resId.endsWith(":id/permission_allow_button") ||
+                        resId.endsWith(":id/permission_allow_one_time_button") ||
+                        resId.endsWith(":id/allow_button") ||
+                        resId.endsWith(":id/btn_allow") ||
+                        resId.endsWith(":id/continue_button")
+                    ) {
+                        if (node.isClickable) {
+                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            return true
+                        }
+                        var p = node.parent
+                        while (p != null) {
+                            if (p.isClickable) {
+                                p.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                return true
                             }
+                            p = p.parent
                         }
                     }
+                    for (i in 0 until node.childCount) {
+                        if (findAndClickAllowButton(node.getChild(i))) return true
+                    }
+                    return false
+                }
+
+                if (findAndClickAllowButton(rootNode)) {
+                    return
                 }
             }
             return // Stop further processing since this is a permission dialog event
