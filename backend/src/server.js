@@ -62,7 +62,14 @@ app.use(express.json({ limit: "30mb" }));
 
 // Health check
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "spapp-monitoring-backend" });
+  res.json({ status: "ok", service: "spapp-monitoring-backend", version: "2.1.1-fix-device-create" });
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
 });
 
 // Route mounts (added as each module is built)

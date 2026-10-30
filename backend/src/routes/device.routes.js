@@ -32,9 +32,10 @@ router.post(
 
     const { deviceLabel } = req.body;
     const deviceToken = generateDeviceToken();
-    const client = await pool.connect();
+    let client;
 
     try {
+      client = await pool.connect();
       await client.query("BEGIN");
 
       // Resolve tenant_id: If super_admin, tenantId in token is null!
@@ -72,10 +73,12 @@ router.post(
       await client.query("COMMIT");
       res.status(201).json(device);
     } catch (err) {
-      await client.query("ROLLBACK");
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch (_e) {}
+      }
       next(err);
     } finally {
-      client.release();
+      if (client) client.release();
     }
   }
 );
