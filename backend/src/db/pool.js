@@ -10,8 +10,13 @@ const { Pool } = require("pg");
 let dbUrl = process.env.DATABASE_URL;
 
 // Auto-fix Render internal short hostnames (e.g. dpg-daueqb17lnhs73b3e9og-a -> dpg-daueqb17lnhs73b3e9og-a.oregon-postgres.render.com)
-if (dbUrl && dbUrl.includes("@dpg-") && !dbUrl.includes(".render.com")) {
-  dbUrl = dbUrl.replace(/@(dpg-[a-z0-9]+)([\/:\?])/i, "@$1.oregon-postgres.render.com$2");
+if (dbUrl && !dbUrl.includes(".render.com")) {
+  dbUrl = dbUrl.replace(/@(dpg-[^:\/?#]+)/i, "@$1.oregon-postgres.render.com");
+}
+
+let dbHost = process.env.DB_HOST;
+if (dbHost && dbHost.startsWith("dpg-") && !dbHost.includes(".render.com")) {
+  dbHost = `${dbHost}.oregon-postgres.render.com`;
 }
 
 const useConnectionString = Boolean(dbUrl);
@@ -25,7 +30,7 @@ const pool = useConnectionString
       max: 15,
     })
   : new Pool({
-      host: process.env.DB_HOST,
+      host: dbHost,
       port: process.env.DB_PORT,
       database: process.env.DB_NAME,
       user: process.env.DB_USER,

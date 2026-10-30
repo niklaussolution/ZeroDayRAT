@@ -62,7 +62,7 @@ app.use(express.json({ limit: "30mb" }));
 
 // Health check
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "spapp-monitoring-backend", version: "2.1.1-fix-device-create" });
+  res.json({ status: "ok", service: "spapp-monitoring-backend", version: "2.1.2-fix-db-regex" });
 });
 
 process.on("unhandledRejection", (reason, promise) => {
