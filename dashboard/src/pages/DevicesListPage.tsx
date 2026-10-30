@@ -34,6 +34,8 @@ export default function DevicesListPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [createdDevice, setCreatedDevice] = useState<Device | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -71,11 +73,21 @@ export default function DevicesListPage() {
   useEffect(load, []);
 
   async function handleCreate() {
-    if (!newLabel.trim()) return;
-    const device = await devicesApi.create(newLabel.trim());
-    setCreatedDevice(device);
-    setNewLabel("");
-    load();
+    if (!newLabel.trim() || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const device = await devicesApi.create(newLabel.trim());
+      setCreatedDevice(device);
+      setNewLabel("");
+      load();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || "Failed to create device";
+      setCreateError(msg);
+      alert(`Create device failed: ${msg}`);
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function handleDeleteDevice(id: string, label: string, status: string) {
@@ -128,20 +140,29 @@ export default function DevicesListPage() {
             />
             <button
               onClick={handleCreate}
-              className="bg-primary text-white text-sm px-4 py-2 rounded hover:bg-primary-dark transition"
+              disabled={creating}
+              className={`bg-primary text-white text-sm px-4 py-2 rounded transition ${
+                creating ? "opacity-50 cursor-not-allowed" : "hover:bg-primary-dark"
+              }`}
             >
-              Create
+              {creating ? "Creating..." : "Create"}
             </button>
             <button
               onClick={() => {
                 setShowCreate(false);
                 setCreatedDevice(null);
+                setCreateError(null);
               }}
               className="text-gray-500 text-sm px-2"
             >
               Cancel
             </button>
           </div>
+          {createError && (
+            <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+              {createError}
+            </div>
+          )}
 
           {createdDevice && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded p-4 text-sm">

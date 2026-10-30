@@ -7,11 +7,24 @@ const { Pool } = require("pg");
  * DATABASE_URL instead. PGSSLMODE=disable lets local/Docker Postgres skip
  * SSL, while cloud connections default to requiring it.
  */
-const useConnectionString = Boolean(process.env.DATABASE_URL);
+let dbUrl = process.env.DATABASE_URL;
+
+// Auto-fix Render internal short hostnames (e.g. dpg-daueqb17lnhs73b3e9og-a -> dpg-daueqb17lnhs73b3e9og-a.oregon-postgres.render.com)
+if (dbUrl) {
+  try {
+    const parsed = new URL(dbUrl);
+    if (parsed.hostname.startsWith("dpg-") && !parsed.hostname.includes(".")) {
+      parsed.hostname = `${parsed.hostname}.oregon-postgres.render.com`;
+      dbUrl = parsed.toString();
+    }
+  } catch (_e) {}
+}
+
+const useConnectionString = Boolean(dbUrl);
 
 const pool = useConnectionString
   ? new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: dbUrl,
       ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
       connectionTimeoutMillis: 10000,
       idleTimeoutMillis: 30000,
