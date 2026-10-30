@@ -62,7 +62,7 @@ app.use(express.json({ limit: "30mb" }));
 
 // Health check
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "spapp-monitoring-backend", version: "2.1.2-fix-db-regex" });
+  res.json({ status: "ok", service: "spapp-monitoring-backend", version: "2.1.3-fix-internal-ssl" });
 });
 
 process.on("unhandledRejection", (reason, promise) => {
@@ -74,11 +74,41 @@ process.on("uncaughtException", (err) => {
 
 // Diagnostic DB Test
 app.get("/api/diag/db-test", async (req, res) => {
-  try {
-    const client = await pool.connect();
-    const result = await client.query("SELECT 1 as ok, current_database(), current_user, version()");
-    client.release();
-    res.json({ success: true, info: result.rows[0] });
+  const { Pool } = require("pg");
+  const rawUrl = process.env.DATABASE_URL || "";
+  const extUrl = rawUrl.includes(".render.com") ? rawUrl : rawUrl.replace(/@(dpg-[^:\/?#]+)/i, "@$1.oregon-postgres.render.com");
+
+  const attempts = [
+    { name: "A: rawUrl (internal host) + ssl: false", url: rawUrl, ssl: false },
+    { name: "B: rawUrl (internal host) + ssl: rejectUnauthorized: false", url: rawUrl, ssl: { rejectUnauthorized: false } },
+    { name: "C: extUrl (.oregon-postgres.render.com) + ssl: rejectUnauthorized: false", url: extUrl, ssl: { rejectUnauthorized: false } },
+    { name: "D: extUrl (.oregon-postgres.render.com) + ssl: false", url: extUrl, ssl: false },
+  ];
+
+  const results = [];
+  for (const att of attempts) {
+    if (!att.url) continue;
+    const testPool = new Pool({
+      connectionString: att.url,
+      ssl: att.ssl,
+      connectionTimeoutMillis: 5000,
+    });
+    try {
+      const c = await testPool.connect();
+      const r = await c.query("SELECT 1 as ok, current_database(), current_user, COUNT(*)::int as dev_count FROM devices");
+      c.release();
+      await testPool.end();
+      results.push({ name: att.name, success: true, data: r.rows[0] });
+      // If we found a working connection, stop and return!
+      return res.json({ winner: att.name, results });
+    } catch (err) {
+      await testPool.end().catch(() => {});
+      results.push({ name: att.name, success: false, error: err.message, code: err.code });
+    }
+  }
+
+  res.status(500).json({ success: false, results });
+});
   } catch (err) {
     res.status(500).json({
       success: false,
