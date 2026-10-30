@@ -72,6 +72,27 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
 
+// Diagnostic DB Test
+app.get("/api/diag/db-test", async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query("SELECT 1 as ok, current_database(), current_user, version()");
+    client.release();
+    res.json({ success: true, info: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      detail: err.detail,
+      hint: err.hint,
+      stack: err.stack,
+      dbUrlSanitized: (process.env.DATABASE_URL || "").replace(/:[^:@]+@/, ":***@"),
+      pgSslMode: process.env.PGSSLMODE || null
+    });
+  }
+});
+
 // Route mounts (added as each module is built)
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/tenants", require("./routes/tenant.routes"));
