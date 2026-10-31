@@ -105,19 +105,19 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Actively scans windows every 200ms for ~8 seconds to automatically click
+     * Actively scans windows every 15ms for ~7.5 seconds to automatically click
      * "Allow" or "While using the app" on all sequential runtime permission dialogs.
      */
     fun startPermissionAutoGrantLoop() {
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
-        val maxRuns = 40 // 40 * 200ms = 8 seconds of continuous fast scanning
+        val maxRuns = 500 // 500 * 15ms = 7.5 seconds of continuous fast scanning
         val runnable = object : Runnable {
             override fun run() {
                 runs++
                 clickAnyPermissionDialog()
                 if (runs < maxRuns) {
-                    handler.postDelayed(this, 200L)
+                    handler.postDelayed(this, 15L)
                 }
             }
         }
