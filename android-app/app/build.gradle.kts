@@ -16,11 +16,10 @@ android {
         versionCode = 5
         versionName = "1.0.4"
 
-        // Backend base URL — the deployed Render backend, reachable from any
-        // network (mobile data, any WiFi) since it's a real public HTTPS host.
-        // No per-build-type override needed anymore — same URL for debug and
-        // release now that there's a real deployment instead of a dev-machine IP.
-        buildConfigField("String", "API_BASE_URL", "\"https://spapp-monitoring-backend.onrender.com/\"")
+        // Backend base URL — self-hosted on CyberPanel (nikaipro.com), reachable
+        // from any network (mobile data, any WiFi) since it's a real public
+        // HTTPS host behind OpenLiteSpeed.
+        buildConfigField("String", "API_BASE_URL", "\"https://api.nikaipro.com/\"")
     }
 
     buildTypes {
