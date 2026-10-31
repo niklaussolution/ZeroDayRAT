@@ -20,7 +20,8 @@ function attachCameraRelay(httpServer) {
 
   httpServer.on("upgrade", (req, socket, head) => {
     const { pathname, query } = url.parse(req.url, true);
-    if (pathname !== "/ws/camera-stream") return;
+    const normalizedPath = (pathname || "").replace(/\/+/g, "/").replace(/\/$/, "");
+    if (normalizedPath !== "/ws/camera-stream") return;
 
     const { role, token, deviceId, lens } = query;
     if (!role || !token || !deviceId || !["admin", "device"].includes(role)) {

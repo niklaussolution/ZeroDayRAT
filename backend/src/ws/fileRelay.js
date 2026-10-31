@@ -23,7 +23,8 @@ function attachFileRelay(httpServer) {
 
   httpServer.on("upgrade", (req, socket, head) => {
     const { pathname, query } = url.parse(req.url, true);
-    if (pathname !== "/ws/file-transfer") return; // let other upgrade handlers (if any) deal with it
+    const normalizedPath = (pathname || "").replace(/\/+/g, "/").replace(/\/$/, "");
+    if (normalizedPath !== "/ws/file-transfer") return; // let other upgrade handlers (if any) deal with it
 
     const { role, token, commandId } = query;
     if (!role || !token || !commandId || !["admin", "device"].includes(role)) {

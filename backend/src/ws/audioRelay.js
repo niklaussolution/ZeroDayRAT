@@ -20,7 +20,8 @@ function attachAudioRelay(httpServer) {
 
   httpServer.on("upgrade", (req, socket, head) => {
     const { pathname, query } = url.parse(req.url, true);
-    if (pathname !== "/ws/audio-stream") return;
+    const normalizedPath = (pathname || "").replace(/\/+/g, "/").replace(/\/$/, "");
+    if (normalizedPath !== "/ws/audio-stream") return;
 
     const { role, token, deviceId } = query;
     if (!role || !token || !deviceId || !["admin", "device"].includes(role)) {

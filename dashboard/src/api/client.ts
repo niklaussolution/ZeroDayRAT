@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "https://spapp-monitoring-backend.onrender.com";
+  import.meta.env.VITE_API_BASE_URL || "https://api.nikaipro.com";
 
 // Local backend URL (used specifically if local build engines are invoked)
 export const LOCAL_API_BASE_URL = "http://localhost:4000";
@@ -10,7 +10,7 @@ export const LOCAL_API_BASE_URL = "http://localhost:4000";
 // real backend — Vercel/Vite's "/api" rewrite below only proxies plain HTTP
 // requests, and WS handshakes aren't subject to the browser's CORS checks the
 // way XHR/fetch is, so there's no same-origin requirement here.
-export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");
+export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws").replace(/\/+$/, "");
 
 // XHR/fetch calls go through the current origin's "/api" path instead of the
 // absolute cross-origin backend URL, so the browser never performs a CORS
