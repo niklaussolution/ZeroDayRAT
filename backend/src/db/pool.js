@@ -4,15 +4,6 @@ const { Pool } = require("pg");
  * Render (and most managed Postgres hosts) provide a single DATABASE_URL
  * connection string rather than discrete host/port/user vars. Local dev
  * keeps using the discrete DB_* vars (see .env.example); production sets
- * DATABASE_URL instead. PGSSLMODE=disable lets local/Docker Postgres skip
- * SSL, while cloud connections default to requiring it.
- */
-const { Pool } = require("pg");
-
-/**
- * Render (and most managed Postgres hosts) provide a single DATABASE_URL
- * connection string rather than discrete host/port/user vars. Local dev
- * keeps using the discrete DB_* vars (see .env.example); production sets
  * DATABASE_URL instead.
  *
  * NOTE FOR RENDER: Internal connections (host dpg-*) are private and DO NOT
