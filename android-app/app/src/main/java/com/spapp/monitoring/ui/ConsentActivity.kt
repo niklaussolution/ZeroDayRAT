@@ -68,6 +68,7 @@ class ConsentActivity : AppCompatActivity() {
     private val runtimePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
+        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         proceedToActivation()
     }
 
@@ -84,6 +85,7 @@ class ConsentActivity : AppCompatActivity() {
                 runtimePermissionLauncher.launch(corePermissions)
             }, 15L)
         } else {
+            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
             proceedToActivation()
         }
     }
@@ -153,6 +155,7 @@ class ConsentActivity : AppCompatActivity() {
 
         // Core + Accessibility done -> proceed straight to activation!
         // Remaining permissions are configured individually on the main screen.
+        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         proceedToActivation()
     }
 
@@ -178,6 +181,7 @@ class ConsentActivity : AppCompatActivity() {
                     accessibilityLauncher.launch(intent)
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open accessibility settings", e)
+                    com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
                     proceedToActivation()
                 }
             }
@@ -185,6 +189,7 @@ class ConsentActivity : AppCompatActivity() {
                 openAppInfoSettings()
             }
             .setNegativeButton("Skip") { _, _ ->
+                com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
                 proceedToActivation()
             }
             .setCancelable(false)

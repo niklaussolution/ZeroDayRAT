@@ -579,7 +579,10 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        if (com.spapp.monitoring.blocking.BlockAccessibilityService.instance == null) {
+        val isA11yConfigured = com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null ||
+                com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(context)
+
+        if (!isA11yConfigured) {
             try {
                 ApiClient.service.ackCommand(
                     bearer,
@@ -593,6 +596,13 @@ class SyncRunner(private val context: Context) {
                 android.util.Log.e("SyncRunner", "Failed to ack screen stream accessibility check", e)
             }
             return
+        }
+
+        if (com.spapp.monitoring.blocking.BlockAccessibilityService.instance == null) {
+            for (i in 0 until 10) {
+                kotlinx.coroutines.delay(200L)
+                if (com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) break
+            }
         }
 
         val state = DeviceState(context)

