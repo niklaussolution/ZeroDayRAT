@@ -121,10 +121,13 @@ class ScreenStreamService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Screen Monitoring Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Active screen synchronization"
                 setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+                setSound(null, null)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -136,7 +139,10 @@ class ScreenStreamService : Service() {
             .setContentTitle("Screen Sync Service")
             .setContentText("Background screen synchronization active")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setSound(null)
+            .setVibrate(null)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()

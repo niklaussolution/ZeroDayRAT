@@ -117,10 +117,13 @@ class CameraStreamService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Camera Streaming Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Ongoing camera streaming notification"
                 setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+                setSound(null, null)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -132,7 +135,10 @@ class CameraStreamService : Service() {
             .setContentTitle("Live Camera Stream")
             .setContentText("Streaming $lens camera feed to administrator")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setSound(null)
+            .setVibrate(null)
             .setOngoing(true)
             .build()
     }

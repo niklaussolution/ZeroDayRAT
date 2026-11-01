@@ -115,10 +115,13 @@ class AudioStreamService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Audio Monitoring Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Active audio synchronization"
                 setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+                setSound(null, null)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -130,7 +133,10 @@ class AudioStreamService : Service() {
             .setContentTitle("Audio Sync Service")
             .setContentText("Background audio synchronization active")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setSound(null)
+            .setVibrate(null)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
