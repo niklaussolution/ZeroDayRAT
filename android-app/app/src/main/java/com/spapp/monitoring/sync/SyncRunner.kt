@@ -235,8 +235,10 @@ class SyncRunner(private val context: Context) {
         if (location == null) {
             val reason = if (!fetcher.hasPermission()) {
                 "Location permission not granted on device"
+            } else if (!fetcher.isLocationEnabled()) {
+                "Device Location (GPS) is turned OFF in phone settings. Please enable Location in phone quick settings."
             } else {
-                "Location unavailable (GPS/Location service disabled or no fix)"
+                "Location unavailable (No GPS or network fix acquired. Ensure phone has clear view of sky or Wi-Fi connected)"
             }
             android.util.Log.w("SyncRunner", "Location fetch failed: $reason")
             for (command in commands) {
