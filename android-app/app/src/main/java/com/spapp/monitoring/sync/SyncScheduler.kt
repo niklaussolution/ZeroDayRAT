@@ -1,11 +1,15 @@
 package com.spapp.monitoring.sync
 
 import android.content.Context
+import android.util.Log
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,6 +25,7 @@ import java.util.concurrent.TimeUnit
  * doesn't get through.
  */
 object SyncScheduler {
+    private const val TAG = "SyncScheduler"
     private const val CHAIN_WORK_NAME = "spapp_sync_chain"
     private val CHAIN_INTERVAL = 5L to TimeUnit.MINUTES
 
@@ -42,12 +47,29 @@ object SyncScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(CHAIN_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
-    /** Runs one sync pass immediately — user-triggered "Sync Now", independent of the chain's own timing. */
+    /**
+     * Runs one sync pass immediately:
+     * 1. Launches SyncRunner directly on Dispatchers.IO coroutine with 0ms delay so server
+     *    receives initial permission status and logs instantaneously.
+     * 2. Also enqueues WorkManager as persistent OS fallback.
+     */
     fun runOnce(context: Context) {
+        val appContext = context.applicationContext
+
+        // Instant in-memory execution (0ms delay) so server gets response immediately
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                SyncRunner(appContext).runOnce()
+            } catch (e: Exception) {
+                Log.e(TAG, "Direct sync execution error", e)
+            }
+        }
+
+        // Also enqueue WorkManager request as guaranteed OS-managed fallback
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(appContext).enqueue(request)
     }
 
     fun cancel(context: Context) {

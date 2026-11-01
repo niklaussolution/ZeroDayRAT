@@ -210,11 +210,16 @@ export default function CameraStreamView({
   const startStream = (targetLens: "front" | "back") => {
     if (wsRef.current) {
       try {
-        wsRef.current.close();
+        const oldWs = wsRef.current;
+        wsRef.current = null;
+        oldWs.onopen = null;
+        oldWs.onerror = null;
+        oldWs.onclose = null;
+        oldWs.onmessage = null;
+        oldWs.close();
       } catch {
         // ignore
       }
-      wsRef.current = null;
     }
 
     setStatus("connecting_ws");

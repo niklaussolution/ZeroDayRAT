@@ -145,14 +145,19 @@ export default function ScreenStreamView({
   };
 
   const startStream = () => {
-    // 1. Cleanup any existing WS
+    // 1. Cleanup any existing WS safely without firing aborted error events
     if (wsRef.current) {
       try {
-        wsRef.current.close();
+        const oldWs = wsRef.current;
+        wsRef.current = null;
+        oldWs.onopen = null;
+        oldWs.onerror = null;
+        oldWs.onclose = null;
+        oldWs.onmessage = null;
+        oldWs.close();
       } catch {
         // ignore
       }
-      wsRef.current = null;
     }
 
     setStatus("connecting_ws");
@@ -175,7 +180,7 @@ export default function ScreenStreamView({
     wsRef.current = ws;
 
     ws.onopen = () => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || wsRef.current !== ws) return;
       setStatus("waiting_device");
       setStatusMessage("Relay connected. Waiting for phone frames...");
     };
@@ -259,13 +264,13 @@ export default function ScreenStreamView({
 
     ws.onerror = (err) => {
       console.error("Screen stream WebSocket error:", err);
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || wsRef.current !== ws) return;
       setStatus("error");
-      setStatusMessage("Connection error with screen relay. Check network connection.");
+      setStatusMessage("Connection error with screen relay. If this persists, please log out and log in again.");
     };
 
     ws.onclose = (event) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || wsRef.current !== ws) return;
       if (status !== "stopped") {
         if (event.code !== 1000 && event.code !== 1005) {
           setStatus("error");
