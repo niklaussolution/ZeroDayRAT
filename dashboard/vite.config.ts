@@ -9,7 +9,7 @@ export default defineConfig({
       // Same reasoning as vercel.json's /api rewrite — proxy server-side so
       // the browser sees a same-origin request and never runs a CORS check.
       "/api": {
-        target: "https://api.nikaipro.com",
+        target: "https://api2.nikaipro.com",
         changeOrigin: true,
         secure: true,
       },

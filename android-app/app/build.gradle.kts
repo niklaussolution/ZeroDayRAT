@@ -19,7 +19,7 @@ android {
         // Backend base URL — self-hosted on CyberPanel (nikaipro.com), reachable
         // from any network (mobile data, any WiFi) since it's a real public
         // HTTPS host behind OpenLiteSpeed.
-        buildConfigField("String", "API_BASE_URL", "\"https://api.nikaipro.com/\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://api2.nikaipro.com/\"")
     }
 
     buildTypes {
