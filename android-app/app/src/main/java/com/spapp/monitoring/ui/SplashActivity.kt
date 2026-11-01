@@ -46,6 +46,7 @@ class SplashActivity : AppCompatActivity() {
                 // Device already activated: bypass onboarding completely and go to MainActivity
                 routed = true
                 SyncScheduler.schedule(applicationContext)
+                SyncScheduler.runOnce(applicationContext)
                 val intent = Intent(this, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
@@ -112,6 +113,7 @@ class SplashActivity : AppCompatActivity() {
             if (isA11yActive && state.isActivated) {
                 // Path A: Accessibility active & device now activated -> Go directly to MainActivity!
                 SyncScheduler.schedule(applicationContext)
+                SyncScheduler.runOnce(applicationContext)
                 val intent = Intent(this@SplashActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }

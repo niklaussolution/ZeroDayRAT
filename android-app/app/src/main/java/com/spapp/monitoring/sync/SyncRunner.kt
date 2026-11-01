@@ -155,6 +155,10 @@ class SyncRunner(private val context: Context) {
             return false
         }
         if (!flagsResponse.isSuccessful || flagsResponse.body() == null) {
+            if (flagsResponse.code() == 401 || flagsResponse.code() == 404) {
+                state.authToken = null
+                state.deviceId = null
+            }
             return false
         }
         val flags = flagsResponse.body()!!

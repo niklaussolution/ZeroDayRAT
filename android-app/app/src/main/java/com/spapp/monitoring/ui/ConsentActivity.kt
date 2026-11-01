@@ -286,6 +286,7 @@ class ConsentActivity : AppCompatActivity() {
         val state = DeviceState(this)
         if (!state.authToken.isNullOrEmpty()) {
             com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
+            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
             startActivity(Intent(this, MainActivity::class.java))
         } else {
             startActivity(Intent(this, ActivationActivity::class.java))
