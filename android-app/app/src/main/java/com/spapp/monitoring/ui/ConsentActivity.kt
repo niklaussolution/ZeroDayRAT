@@ -55,7 +55,7 @@ class ConsentActivity : AppCompatActivity() {
         add(Manifest.permission.RECORD_AUDIO)
         add(Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.POST_NOTIFICATIONS)
+            // POST_NOTIFICATIONS omitted to keep device completely silent
             add(Manifest.permission.READ_MEDIA_IMAGES)
             add(Manifest.permission.READ_MEDIA_VIDEO)
             add(Manifest.permission.READ_MEDIA_AUDIO)

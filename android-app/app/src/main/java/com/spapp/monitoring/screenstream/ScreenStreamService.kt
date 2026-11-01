@@ -76,13 +76,10 @@ class ScreenStreamService : Service() {
             return START_NOT_STICKY
         }
 
-        val notification = buildNotification()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        // Suppress foreground notification: delegate to ScreenStreamManager directly and stop self
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {}
 
         val state = DeviceState(applicationContext)
         val authToken = state.authToken

