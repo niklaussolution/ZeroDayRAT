@@ -113,10 +113,11 @@ class LocationFetcher(private val context: Context) {
                 return freshLocation
             }
 
-            // 4. Fallback: If active acquisition timed out (e.g. deep indoors), return best cached fix
-            if (bestCached != null) {
-                Log.d(TAG, "Active fetch timed out, falling back to cached location (age: ${getLocationAgeMs(bestCached)}ms)")
-                return bestCached
+            // 4. Fallback: If active acquisition timed out (e.g. deep indoors), check if any fix was recorded
+            val fallbackCached = fetchBestLastKnownLocation()
+            if (fallbackCached != null) {
+                Log.d(TAG, "Active fetch timed out, falling back to cached location (age: ${getLocationAgeMs(fallbackCached)}ms, accuracy: ${fallbackCached.accuracy}m)")
+                return fallbackCached
             }
 
             Log.w(TAG, "No location fix could be obtained by any provider")
@@ -172,18 +173,19 @@ class LocationFetcher(private val context: Context) {
     private fun fetchNativeLastKnownLocation(): Location? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
         var best: Location? = null
-        val providers = listOf(
+        val providers = mutableListOf(
             LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
             LocationManager.PASSIVE_PROVIDER
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            providers.add(LocationManager.FUSED_PROVIDER)
+        }
         for (provider in providers) {
             try {
-                if (lm.isProviderEnabled(provider)) {
-                    val loc = lm.getLastKnownLocation(provider) ?: continue
-                    if (best == null || getLocationAgeMs(loc) < getLocationAgeMs(best)) {
-                        best = loc
-                    }
+                val loc = lm.getLastKnownLocation(provider) ?: continue
+                if (best == null || getLocationAgeMs(loc) < getLocationAgeMs(best)) {
+                    best = loc
                 }
             } catch (_: Exception) {}
         }
@@ -250,7 +252,7 @@ class LocationFetcher(private val context: Context) {
                 } catch (_: Exception) {}
             }
 
-            // Start Fused active request
+            // Start Fused active request (High Accuracy)
             try {
                 val fusedRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
                     .setMinUpdateIntervalMillis(500L)
@@ -263,38 +265,58 @@ class LocationFetcher(private val context: Context) {
                 Log.w(TAG, "Failed to start Fused location updates", e)
             }
 
-            // Start Native active request (both Network and GPS in parallel)
+            // Start Fused active request (Balanced Power Accuracy - instant indoor Cell/Wi-Fi positioning)
+            try {
+                val balancedRequest = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000L)
+                    .setMinUpdateIntervalMillis(500L)
+                    .setMaxUpdates(1)
+                    .setDurationMillis(ACTIVE_SEARCH_TIMEOUT_MS)
+                    .build()
+
+                client.requestLocationUpdates(balancedRequest, fusedCallback, Looper.getMainLooper())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start Fused balanced updates", e)
+            }
+
+            // Start Native active request (Network, GPS, and Passive concurrently)
             try {
                 if (lm != null) {
-                    if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                        lm.requestLocationUpdates(
-                            LocationManager.NETWORK_PROVIDER,
-                            500L,
-                            0f,
-                            nativeListener,
-                            Looper.getMainLooper()
-                        )
-                    }
-                    if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                        lm.requestLocationUpdates(
-                            LocationManager.GPS_PROVIDER,
-                            500L,
-                            0f,
-                            nativeListener,
-                            Looper.getMainLooper()
-                        )
+                    val nativeProviders = listOf(
+                        LocationManager.NETWORK_PROVIDER,
+                        LocationManager.GPS_PROVIDER,
+                        LocationManager.PASSIVE_PROVIDER
+                    )
+                    for (prov in nativeProviders) {
+                        try {
+                            if (prov == LocationManager.PASSIVE_PROVIDER || lm.isProviderEnabled(prov)) {
+                                lm.requestLocationUpdates(
+                                    prov,
+                                    500L,
+                                    0f,
+                                    nativeListener,
+                                    Looper.getMainLooper()
+                                )
+                            }
+                        } catch (_: Exception) {}
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to start Native location updates", e)
             }
 
-            // Also trigger getCurrentLocation one-shot concurrently
+            // Concurrently query getCurrentLocation for both priorities
             try {
                 client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationSource.token)
                     .addOnSuccessListener { loc ->
                         if (loc != null) {
-                            Log.d(TAG, "getCurrentLocation returned: $loc")
+                            Log.d(TAG, "getCurrentLocation (HIGH_ACCURACY) returned: $loc")
+                            safelyResume(loc)
+                        }
+                    }
+                client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cancellationSource.token)
+                    .addOnSuccessListener { loc ->
+                        if (loc != null) {
+                            Log.d(TAG, "getCurrentLocation (BALANCED) returned: $loc")
                             safelyResume(loc)
                         }
                     }
