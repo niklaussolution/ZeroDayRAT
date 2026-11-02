@@ -443,7 +443,17 @@ export default function CameraStreamView({
 
     return () => {
       isMountedRef.current = false;
-      stopStream(true);
+      if (wsRef.current) {
+        try {
+          const old = wsRef.current;
+          wsRef.current = null;
+          old.onopen = null;
+          old.onerror = null;
+          old.onclose = null;
+          old.onmessage = null;
+          old.close();
+        } catch {}
+      }
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {});
       }

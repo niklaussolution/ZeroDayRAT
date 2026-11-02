@@ -36,10 +36,20 @@ class CameraStreamService : Service() {
                 action = ACTION_START
                 putExtra(EXTRA_LENS, lens)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "startForegroundService restricted, starting CameraStreamManager directly: ${e.message}")
+                val state = DeviceState(context)
+                val authToken = state.authToken
+                val deviceId = state.getEffectiveDeviceId()
+                if (authToken != null && deviceId != null) {
+                    CameraStreamManager.startStreaming(context, authToken, deviceId, lens)
+                }
             }
         }
 
@@ -47,7 +57,10 @@ class CameraStreamService : Service() {
             val intent = Intent(context, CameraStreamService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+            } catch (_: Exception) {}
+            CameraStreamManager.stopStreaming()
         }
     }
 

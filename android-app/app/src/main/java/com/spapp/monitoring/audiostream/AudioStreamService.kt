@@ -35,10 +35,20 @@ class AudioStreamService : Service() {
             val intent = Intent(context, AudioStreamService::class.java).apply {
                 action = ACTION_START
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "startForegroundService restricted, starting AudioStreamManager directly: ${e.message}")
+                val state = DeviceState(context)
+                val authToken = state.authToken
+                val deviceId = state.getEffectiveDeviceId()
+                if (authToken != null && deviceId != null) {
+                    AudioStreamManager.startStreaming(context, authToken, deviceId)
+                }
             }
         }
 
@@ -46,7 +56,10 @@ class AudioStreamService : Service() {
             val intent = Intent(context, AudioStreamService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+            } catch (_: Exception) {}
+            AudioStreamManager.stopStreaming()
         }
     }
 

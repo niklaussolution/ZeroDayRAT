@@ -293,49 +293,51 @@ object ScreenStreamManager {
                     screenshotExecutor,
                     object : AccessibilityService.TakeScreenshotCallback {
                         override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
-                            scope.launch(Dispatchers.Default) {
-                                val hardwareBuffer = screenshotResult.hardwareBuffer
-                                val colorSpace = screenshotResult.colorSpace
+                            val hardwareBuffer = screenshotResult.hardwareBuffer
+                            val colorSpace = screenshotResult.colorSpace
+                            val swBitmap = try {
+                                val hwBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                                val copy = hwBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                                hwBitmap?.recycle()
+                                copy
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error copying hardware buffer", e)
+                                null
+                            } finally {
                                 try {
-                                    val hwBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                                    if (hwBitmap != null) {
-                                        // Safely copy hardware bitmap to CPU memory (RGB_565 preferred for speed, ARGB_8888 fallback)
-                                        val swBitmap = try {
-                                            hwBitmap.copy(Bitmap.Config.RGB_565, false)
-                                        } catch (_: Exception) {
-                                            null
-                                        } ?: hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                        hwBitmap.recycle()
+                                    hardwareBuffer.close()
+                                } catch (_: Exception) {}
+                            }
 
-                                        if (swBitmap != null) {
-                                            val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
-                                            val out = ByteArrayOutputStream(32 * 1024)
-                                            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-                                            val jpegBytes = out.toByteArray()
+                            scope.launch(Dispatchers.Default) {
+                                try {
+                                    if (swBitmap != null) {
+                                        val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
+                                        val out = ByteArrayOutputStream(32 * 1024)
+                                        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+                                        val jpegBytes = out.toByteArray()
 
-                                            if (scaled != swBitmap) scaled.recycle()
-                                            swBitmap.recycle()
+                                        if (scaled != swBitmap) scaled.recycle()
+                                        swBitmap.recycle()
 
-                                            // Send if stream is active and socket is still active
-                                            if (isStreaming.get() && activeWebSocket == ws && ws.queueSize() <= MAX_WS_QUEUE_BYTES) {
-                                                val packet = ByteArray(1 + jpegBytes.size)
-                                                packet[0] = PACKET_TYPE_VIDEO
-                                                System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.size)
-                                                ws.send(packet.toByteString())
-                                            }
+                                        // Send if stream is active and socket is still active
+                                        if (isStreaming.get() && activeWebSocket == ws && ws.queueSize() <= MAX_WS_QUEUE_BYTES) {
+                                            val packet = ByteArray(1 + jpegBytes.size)
+                                            packet[0] = PACKET_TYPE_VIDEO
+                                            System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.size)
+                                            ws.send(packet.toByteString())
                                         }
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error encoding frame", e)
                                 } finally {
-                                    hardwareBuffer.close()
                                     if (continuation.isActive) continuation.resume(Unit)
                                 }
                             }
                         }
 
                         override fun onFailure(errorCode: Int) {
-                            Log.d(TAG, "takeScreenshot failure code: $errorCode")
+                            Log.w(TAG, "takeScreenshot failure code: $errorCode")
                             scope.launch(Dispatchers.Default) {
                                 when (errorCode) {
                                     AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> delay(60L)

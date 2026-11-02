@@ -420,6 +420,19 @@ export default function AudioStreamView({
 
     function connectWebSocket() {
       if (!isMountedRef.current) return;
+
+      if (wsRef.current) {
+        try {
+          const old = wsRef.current;
+          wsRef.current = null;
+          old.onopen = null;
+          old.onerror = null;
+          old.onclose = null;
+          old.onmessage = null;
+          old.close();
+        } catch {}
+      }
+
       setStatus("connecting_ws");
       setStatusMessage("Connecting to low-latency audio relay...");
 
@@ -483,10 +496,11 @@ export default function AudioStreamView({
         }
       };
 
-      ws.onerror = () => {
-        if (!isMountedRef.current) return;
+      ws.onerror = (err) => {
+        console.warn("Audio WebSocket error:", err);
+        if (!isMountedRef.current || wsRef.current !== ws) return;
         setStatus("error");
-        setStatusMessage("Audio WebSocket relay connection error");
+        setStatusMessage("Audio relay connecting / retrying...");
       };
 
       ws.onclose = () => {
@@ -504,11 +518,15 @@ export default function AudioStreamView({
       isMountedRef.current = false;
       commandPollingActive = false;
 
-      // Send stop action to WebSocket
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (wsRef.current) {
         try {
-          wsRef.current.send(JSON.stringify({ action: "stop" }));
-          wsRef.current.close(1000, "Component unmounted");
+          const old = wsRef.current;
+          wsRef.current = null;
+          old.onopen = null;
+          old.onerror = null;
+          old.onclose = null;
+          old.onmessage = null;
+          old.close();
         } catch {}
       }
       wsRef.current = null;
@@ -520,11 +538,6 @@ export default function AudioStreamView({
         } catch {}
         audioCtxRef.current = null;
       }
-
-      // Also tell device to stop via command in background
-      devicesApi
-        .createCommand(deviceId, "audio_stream", { action: "stop" })
-        .catch(() => {});
     };
   }, [deviceId]);
 

