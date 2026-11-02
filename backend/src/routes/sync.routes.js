@@ -690,7 +690,7 @@ router.post(
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl && !e.mediaType) continue;
-          let chatName = String(e.chatName || req.body.activeChat || "").trim();
+          let chatName = String(e.chatName || req.body.activeChat || "").replace(/\s+/g, " ").trim();
           if (!chatName) continue;
           let sender = e.sender ? String(e.sender).trim() : null;
 
@@ -999,7 +999,7 @@ router.post(
         let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;
-          const chatName = String(e.chatName || req.body.activeChat || "").trim();
+          const chatName = String(e.chatName || req.body.activeChat || "").replace(/\s+/g, " ").trim();
           if (!chatName) continue;
           const rawText = String(e.messageText || "").trim();
           const sender = e.sender ? String(e.sender).trim() : null;

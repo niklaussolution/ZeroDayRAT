@@ -450,13 +450,13 @@ class BlockAccessibilityService : AccessibilityService() {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentWhatsAppText(textToSend)
                                 val dedupeKey = "wa|$chatTitle|$textToSend|true|text"
-                                if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
+                                if (shouldCaptureMessage(dedupeKey, 3000L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
+                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 5_000L)
                                             val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 600_000L
+                                                chatTitle, textToSend, true, now - 3_000L
                                             )
                                             if (existingId == null) {
                                                 db.whatsAppMessageDao().insertAll(
@@ -524,13 +524,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             val now = System.currentTimeMillis()
                             recordRecentSentWhatsAppText(sentText)
                             val dedupeKey = "wa|$chatTitle|$sentText|true|text"
-                            if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
+                            if (shouldCaptureMessage(dedupeKey, 3000L)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
-                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
+                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 5_000L)
                                         val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 600_000L
+                                            chatTitle, sentText, true, now - 3_000L
                                         )
                                         if (existingId == null) {
                                             db.whatsAppMessageDao().insertAll(
@@ -623,13 +623,13 @@ class BlockAccessibilityService : AccessibilityService() {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentInstagramText(textToSend)
                                 val dedupeKey = "ig|$chatTitle|$textToSend|true|text"
-                                if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
+                                if (shouldCaptureMessage(dedupeKey, 3000L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
+                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 5_000L)
                                             val existingId = db.instagramMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 600_000L
+                                                chatTitle, textToSend, true, now - 3_000L
                                             )
                                             if (existingId == null) {
                                                 db.instagramMessageDao().insertAll(
@@ -697,13 +697,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             val now = System.currentTimeMillis()
                             recordRecentSentInstagramText(sentText)
                             val dedupeKey = "ig|$chatTitle|$sentText|true|text"
-                            if (capturedWhatsAppMsgHashes.add(dedupeKey)) {
+                            if (shouldCaptureMessage(dedupeKey, 3000L)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
-                                        db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
+                                        db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 5_000L)
                                         val existingId = db.instagramMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 600_000L
+                                            chatTitle, sentText, true, now - 3_000L
                                         )
                                         if (existingId == null) {
                                             db.instagramMessageDao().insertAll(
@@ -744,20 +744,23 @@ class BlockAccessibilityService : AccessibilityService() {
      */
     private var whatsAppPollRunnable: Runnable? = null
     private val whatsAppPollIntervalMs = 2000L
-    private val capturedWhatsAppMsgHashes = java.util.Collections.synchronizedSet(
-        object : java.util.LinkedHashSet<String>() {
-            override fun add(element: String): Boolean {
-                if (size > 2000) {
-                    val it = iterator()
-                    if (it.hasNext()) {
-                        it.next()
-                        it.remove()
-                    }
-                }
-                return super.add(element)
+    private val recentCapturedMsgTimeMap = java.util.Collections.synchronizedMap(
+        object : java.util.LinkedHashMap<String, Long>(300, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 1000
             }
         }
     )
+
+    private fun shouldCaptureMessage(key: String, windowMs: Long = 3000L): Boolean {
+        val now = System.currentTimeMillis()
+        val last = recentCapturedMsgTimeMap[key]
+        if (last == null || (now - last) > windowMs) {
+            recentCapturedMsgTimeMap[key] = now
+            return true
+        }
+        return false
+    }
     private var lastClickedWhatsAppChat: String? = null
     private var lastWhatsAppComposerText: String? = null
     private val recentSentWhatsAppTexts = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -812,15 +815,13 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun hasWhatsAppChatComposer(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
-        if (node == null || depth > 4) return false
+        if (node == null || depth > 15) return false
         val id = (node.viewIdResourceName ?: "").lowercase()
         val text = (node.text?.toString() ?: "").trim()
         val hint = (node.hintText?.toString() ?: "").trim()
         val desc = (node.contentDescription?.toString() ?: "").trim()
 
-        if (id.endsWith(":id/entry") || id.endsWith("/entry")) return true
-        if (id.endsWith(":id/send") || id.endsWith("/send")) return true
-        if (id.endsWith(":id/voice_note_btn") || id.endsWith("/voice_note_btn")) return true
+        if (id.contains("entry") || id.contains("input") || id.contains("send") || id.contains("composer") || id.contains("voice_note")) return true
         if (text.equals("Type a message", ignoreCase = true) || hint.equals("Type a message", ignoreCase = true)) return true
         if (text.equals("Message", ignoreCase = true) || hint.equals("Message", ignoreCase = true)) return true
         if (desc.contains("send", ignoreCase = true) || desc.contains("voice message", ignoreCase = true)) return true
@@ -874,7 +875,6 @@ class BlockAccessibilityService : AccessibilityService() {
             t.equals("Payment", ignoreCase = true) ||
             t.equals("APK", ignoreCase = true) ||
             t.matches("""^\d+(\.\d+)?\s*(?:MB|KB|GB|B|bytes)$""".toRegex(RegexOption.IGNORE_CASE)) ||
-            t.matches("""^[A-Za-z0-9_-]{20,}$""".toRegex()) ||
             t.matches("""^[\w\-\s]+\.(?:apk|pdf|mp3|mp4|zip|rar|docx|xlsx)$""".toRegex(RegexOption.IGNORE_CASE))
         ) return true
         // 7. Time at start with length <= 25 chars
@@ -892,21 +892,32 @@ class BlockAccessibilityService : AccessibilityService() {
             "Disappearing messages"
         )
         try {
-            val fromId = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
-                .firstOrNull()?.text?.toString()?.trim()
-                ?.takeIf { !it.isNullOrBlank() && !reservedTitles.contains(it) && !isWhatsAppUiMetadataOrTimestamp(it) }
-            if (!fromId.isNullOrBlank()) return fromId
+            val candidateIds = listOf(
+                "com.whatsapp:id/conversation_contact_name",
+                "com.whatsapp:id/chat_name",
+                "com.whatsapp:id/chat_title",
+                "com.whatsapp:id/toolbar",
+                "com.whatsapp:id/action_bar_title"
+            )
+            for (id in candidateIds) {
+                val node = root.findAccessibilityNodeInfosByViewId(id)?.firstOrNull()
+                val text = (node?.text ?: node?.contentDescription)?.toString()?.trim()
+                if (!text.isNullOrBlank() && !reservedTitles.contains(text) && !isWhatsAppUiMetadataOrTimestamp(text)) {
+                    val clean = text.replace("\\s+".toRegex(), " ").trim()
+                    if (clean.length in 2..60) return clean
+                }
+            }
 
             val headerNodes = mutableListOf<AccessibilityNodeInfo>()
-            fun findHeader(node: AccessibilityNodeInfo?) {
-                if (node == null) return
+            fun findHeader(node: AccessibilityNodeInfo?, depth: Int = 0) {
+                if (node == null || depth > 12) return
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
-                if (rect.top < 380 && rect.bottom > 20 && node.text != null && node.text.isNotBlank()) {
+                if (rect.top < 400 && rect.bottom > 20 && node.text != null && node.text.isNotBlank()) {
                     headerNodes.add(node)
                 }
                 for (i in 0 until node.childCount) {
-                    findHeader(node.getChild(i))
+                    findHeader(node.getChild(i), depth + 1)
                 }
             }
             findHeader(root)
@@ -921,14 +932,17 @@ class BlockAccessibilityService : AccessibilityService() {
                 s.length in 2..60
             }?.text?.toString()?.trim()
 
-            if (!candidate.isNullOrBlank()) return candidate
+            if (!candidate.isNullOrBlank()) {
+                val clean = candidate.replace("\\s+".toRegex(), " ").trim()
+                return clean
+            }
         } catch (_: Exception) {}
 
-        return lastClickedWhatsAppChat
+        return lastClickedWhatsAppChat?.replace("\\s+".toRegex(), " ")?.trim()
     }
 
     fun hasDirectChatComposer(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
-        if (node == null || depth > 4) return false
+        if (node == null || depth > 15) return false
         val id = (node.viewIdResourceName ?: "").lowercase()
         val text = (node.text?.toString() ?: "").trim()
         val hint = (node.hintText?.toString() ?: "").trim()
@@ -951,7 +965,7 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun getInstagramCurrentChatTitle(root: AccessibilityNodeInfo?): String? {
-        if (root == null) return lastClickedInstagramChat
+        if (root == null) return lastClickedInstagramChat?.replace("\\s+".toRegex(), " ")?.trim()
         val reservedTitles = setOf(
             "Instagram", "Direct", "Messages", "Reels", "Explore", "Search",
             "Notifications", "Post", "Posts", "Audio", "Tagged", "Comments", "Likes", "Activity",
@@ -962,19 +976,21 @@ class BlockAccessibilityService : AccessibilityService() {
                 "com.instagram.android:id/action_bar_title",
                 "com.instagram.android:id/action_bar_large_title_auto_size",
                 "com.instagram.android:id/row_thread_header_name",
-                "com.instagram.android:id/thread_title"
+                "com.instagram.android:id/thread_title",
+                "com.instagram.android:id/user_name"
             )
             for (id in candidateIds) {
-                val node = root.findAccessibilityNodeInfosByViewId(id).firstOrNull()
+                val node = root.findAccessibilityNodeInfosByViewId(id)?.firstOrNull()
                 val text = (node?.text ?: node?.contentDescription)?.toString()?.trim()
                 if (!text.isNullOrBlank() && !reservedTitles.contains(text) && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(text)) {
-                    return text
+                    val clean = text.replace("\\s+".toRegex(), " ").trim()
+                    if (clean.length in 2..60) return clean
                 }
             }
 
             val headerNodes = mutableListOf<String>()
             fun findHeader(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 8) return
+                if (node == null || depth > 10) return
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 if (rect.top < 450 && rect.bottom > 20) {
@@ -997,10 +1013,13 @@ class BlockAccessibilityService : AccessibilityService() {
                 !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(s) &&
                 s.length in 2..50
             }
-            if (!candidate.isNullOrBlank()) return candidate
+            if (!candidate.isNullOrBlank()) {
+                val clean = candidate.replace("\\s+".toRegex(), " ").trim()
+                return clean
+            }
         } catch (_: Exception) {}
 
-        return lastClickedInstagramChat
+        return lastClickedInstagramChat?.replace("\\s+".toRegex(), " ")?.trim()
     }
 
     private fun recordWhatsAppChatListIfVisible(root: AccessibilityNodeInfo?) {
@@ -1036,7 +1055,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val finalSnippet = snippet ?: "Active chat"
             val key = "wa_list|$chatName|$finalSnippet"
-            if (capturedWhatsAppMsgHashes.add(key)) {
+            if (shouldCaptureMessage(key, 10_000L)) {
                 entries.add(
                     WhatsAppMessageEntry(
                         chatName = chatName,
@@ -1084,7 +1103,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
                         if (chatName.length in 2..60) {
                             val key = "wa_list|$chatName|$snippet"
-                            if (capturedWhatsAppMsgHashes.add(key)) {
+                            if (shouldCaptureMessage(key, 10_000L)) {
                                 entries.add(
                                     WhatsAppMessageEntry(
                                         chatName = chatName,
@@ -1148,7 +1167,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val msg = digest ?: "Active chat"
             val key = "ig_list|$username|$msg"
-            if (capturedWhatsAppMsgHashes.add(key)) {
+            if (shouldCaptureMessage(key, 10_000L)) {
                 entries.add(
                     InstagramMessageEntry(
                         chatName = username,
@@ -1199,7 +1218,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
                         if (username.length in 2..50 && !username.contains(" ")) {
                             val key = "ig_list|$username|$snippet"
-                            if (capturedWhatsAppMsgHashes.add(key)) {
+                            if (shouldCaptureMessage(key, 10_000L)) {
                                 entries.add(
                                     InstagramMessageEntry(
                                         chatName = username,
@@ -1446,7 +1465,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 val key = "wa|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                if (capturedWhatsAppMsgHashes.add(key)) {
+                if (shouldCaptureMessage(key, 3000L)) {
                     entriesToInsert.add(
                         WhatsAppMessageEntry(
                             chatName = chatTitle,
@@ -1471,7 +1490,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 600_000L
+                                entry.messageTimeEpochMs - 4_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
@@ -1479,7 +1498,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 db.whatsAppMessageDao().updateToOutgoing(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 600_000L
+                                    entry.messageTimeEpochMs - 5_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
                             }
@@ -1920,7 +1939,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
 
                     val key = "ig|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                    if (capturedWhatsAppMsgHashes.add(key)) {
+                    if (shouldCaptureMessage(key, 3000L)) {
                         entriesToInsert.add(
                             InstagramMessageEntry(
                                 chatName = chatTitle,

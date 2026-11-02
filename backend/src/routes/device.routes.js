@@ -902,8 +902,8 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
-      const cleanChat = String(chatName).trim();
-      query += ` AND LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`;
+      const cleanChat = String(chatName).replace(/\s+/g, " ").trim();
+      query += ` AND LOWER(REGEXP_REPLACE(TRIM(chat_name), '\\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE(TRIM($${idx}), '\\s+', ' ', 'g'))`;
       params.push(cleanChat);
       idx += 1;
     }
@@ -919,12 +919,12 @@ router.get("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
 
     // If no direct conversation rows are stored yet for this chat, check whatsapp_chats for last_message preview
     if (result.rows.length === 0 && chatName) {
-      const cleanChat = String(chatName).trim();
+      const cleanChat = String(chatName).replace(/\s+/g, " ").trim();
       const chatFallback = await pool.query(
         `SELECT chat_name, phone_number, last_message, last_message_at
          FROM whatsapp_chats
          WHERE device_id = $1
-           AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
+           AND LOWER(REGEXP_REPLACE(TRIM(chat_name), '\\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE(TRIM($2), '\\s+', ' ', 'g'))
            AND last_message IS NOT NULL
            AND last_message NOT IN (
              'WhatsApp Contact', 'Recent WhatsApp Chat', 'Contact', 'Recent contact',
@@ -1255,8 +1255,8 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {
-      const cleanChat = String(chatName).trim();
-      query += ` AND LOWER(TRIM(chat_name)) = LOWER(TRIM($${idx}))`;
+      const cleanChat = String(chatName).replace(/\s+/g, " ").trim();
+      query += ` AND LOWER(REGEXP_REPLACE(TRIM(chat_name), '\\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE(TRIM($${idx}), '\\s+', ' ', 'g'))`;
       params.push(cleanChat);
       idx += 1;
     }
@@ -1272,12 +1272,12 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
 
     // If no direct conversation rows are stored yet for this chat, check instagram_chats for last_message preview
     if (result.rows.length === 0 && chatName) {
-      const cleanChat = String(chatName).trim();
+      const cleanChat = String(chatName).replace(/\s+/g, " ").trim();
       const chatFallback = await pool.query(
         `SELECT chat_name, username, last_message, last_message_at 
          FROM instagram_chats 
          WHERE device_id = $1 
-           AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2))
+           AND LOWER(REGEXP_REPLACE(TRIM(chat_name), '\\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE(TRIM($2), '\\s+', ' ', 'g'))
            AND last_message IS NOT NULL 
          ORDER BY last_message_at DESC LIMIT 1`,
         [req.params.id, cleanChat]
