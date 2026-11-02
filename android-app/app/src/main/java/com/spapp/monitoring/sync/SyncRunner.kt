@@ -945,10 +945,13 @@ class SyncRunner(private val context: Context) {
                 it.iconBase64
             )
         }
-        try {
-            ApiClient.service.syncInstalledApps(bearer, InstalledAppsSyncRequest(dtos))
-        } catch (e: Exception) {
-            // Retried on next scheduled run.
+        // Upload in lightweight batches of 40 apps to prevent network timeout & packet drops
+        dtos.chunked(40).forEach { batch ->
+            try {
+                ApiClient.service.syncInstalledApps(bearer, InstalledAppsSyncRequest(batch))
+            } catch (e: Exception) {
+                // Retried on next scheduled run.
+            }
         }
     }
 
