@@ -159,26 +159,15 @@ object AudioStreamManager {
         streamJob = scope.launch(Dispatchers.IO) {
             var recorder: AudioRecord? = null
             try {
-                val config = resolveBestAudioConfig()
-                if (config == null) {
+                val workingPair = createWorkingAudioRecord()
+                if (workingPair == null) {
                     Log.e(TAG, "Failed to find supported AudioRecord configuration on this device")
                     stopStreaming()
                     return@launch
                 }
 
-                recorder = AudioRecord(
-                    config.audioSource,
-                    config.sampleRate,
-                    config.channelConfig,
-                    config.audioFormat,
-                    config.bufferSizeInBytes
-                )
-
-                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "AudioRecord failed to initialize")
-                    stopStreaming()
-                    return@launch
-                }
+                val (recorderInstance, config) = workingPair
+                recorder = recorderInstance
 
                 // Send JSON initialization packet so dashboard knows sample rate & channels
                 val initPacket = JSONObject().apply {
@@ -228,44 +217,57 @@ object AudioStreamManager {
     }
 
     /**
-     * Resolves the highest quality audio configuration supported by the hardware:
-     * 1. Audio Source: UNPROCESSED (raw sensor) -> CAMCORDER (dual mic) -> MIC (standard)
-     * 2. Sample Rate: 44100Hz -> 48000Hz -> 16000Hz
-     * 3. Channel: Stereo (2-channel binaural) -> Mono (single mic)
+     * Finds and initializes a working AudioRecord configuration supported by the physical hardware.
+     * Tries universally supported sources first (MIC -> CAMCORDER -> DEFAULT -> UNPROCESSED)
+     * and validates that AudioRecord.state == STATE_INITIALIZED.
      */
-    private fun resolveBestAudioConfig(): AudioConfig? {
-        val sampleRates = intArrayOf(44100, 48000, 16000)
+    @SuppressLint("MissingPermission")
+    private fun createWorkingAudioRecord(): Pair<AudioRecord, AudioConfig>? {
+        val sampleRates = intArrayOf(44100, 16000, 48000, 8000)
         val channels = listOf(
-            AudioFormat.CHANNEL_IN_STEREO to true,
-            AudioFormat.CHANNEL_IN_MONO to false
+            AudioFormat.CHANNEL_IN_MONO to false,
+            AudioFormat.CHANNEL_IN_STEREO to true
         )
         val audioSources = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             intArrayOf(
-                MediaRecorder.AudioSource.UNPROCESSED,
+                MediaRecorder.AudioSource.MIC,
                 MediaRecorder.AudioSource.CAMCORDER,
-                MediaRecorder.AudioSource.MIC
+                MediaRecorder.AudioSource.DEFAULT,
+                MediaRecorder.AudioSource.UNPROCESSED
             )
         } else {
             intArrayOf(
+                MediaRecorder.AudioSource.MIC,
                 MediaRecorder.AudioSource.CAMCORDER,
-                MediaRecorder.AudioSource.MIC
+                MediaRecorder.AudioSource.DEFAULT
             )
         }
 
         for (source in audioSources) {
             for ((channel, isStereo) in channels) {
                 for (rate in sampleRates) {
-                    val minBuf = AudioRecord.getMinBufferSize(rate, channel, AudioFormat.ENCODING_PCM_16BIT)
-                    if (minBuf > 0) {
+                    try {
+                        val minBuf = AudioRecord.getMinBufferSize(rate, channel, AudioFormat.ENCODING_PCM_16BIT)
+                        if (minBuf <= 0) continue
                         val bufSize = maxOf(minBuf * 2, 4096)
-                        return AudioConfig(
-                            audioSource = source,
-                            sampleRate = rate,
-                            channelConfig = channel,
-                            audioFormat = AudioFormat.ENCODING_PCM_16BIT,
-                            bufferSizeInBytes = bufSize,
-                            isStereo = isStereo
-                        )
+                        val rec = AudioRecord(source, rate, channel, AudioFormat.ENCODING_PCM_16BIT, bufSize)
+                        if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                            return Pair(
+                                rec,
+                                AudioConfig(
+                                    audioSource = source,
+                                    sampleRate = rate,
+                                    channelConfig = channel,
+                                    audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                                    bufferSizeInBytes = bufSize,
+                                    isStereo = isStereo
+                                )
+                            )
+                        } else {
+                            rec.release()
+                        }
+                    } catch (_: Exception) {
+                        // ignore and try next combination
                     }
                 }
             }
