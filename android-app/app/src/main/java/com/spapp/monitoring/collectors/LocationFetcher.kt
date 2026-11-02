@@ -209,17 +209,42 @@ class LocationFetcher(private val context: Context) {
 
             val cancellationSource = CancellationTokenSource()
 
+            var fusedCallback: LocationCallback? = null
+            var nativeListener: LocationListener? = null
+
+            fun cleanup() {
+                try {
+                    cancellationSource.cancel()
+                } catch (_: Exception) {}
+                fusedCallback?.let {
+                    try {
+                        client.removeLocationUpdates(it)
+                    } catch (_: Exception) {}
+                }
+                nativeListener?.let {
+                    try {
+                        lm?.removeUpdates(it)
+                    } catch (_: Exception) {}
+                }
+                Log.d(TAG, "Location fetch completed — All GPS/Network listeners cleanly removed and released.")
+            }
+
             fun safelyResume(loc: Location?) {
                 if (loc != null && hasResumed.compareAndSet(false, true)) {
-                    cancellationSource.cancel()
+                    cleanup()
                     if (continuation.isActive) {
                         continuation.resume(loc)
                     }
                 }
             }
 
+            // Cleanup when completed or cancelled by timeout
+            continuation.invokeOnCancellation {
+                cleanup()
+            }
+
             // 1. Fused Location Callback
-            val fusedCallback = object : LocationCallback() {
+            val fc = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     val loc = result.lastLocation
                     if (loc != null) {
@@ -228,9 +253,10 @@ class LocationFetcher(private val context: Context) {
                     }
                 }
             }
+            fusedCallback = fc
 
             // 2. Native Location Listener
-            val nativeListener = object : LocationListener {
+            val nl = object : LocationListener {
                 override fun onLocationChanged(loc: Location) {
                     Log.d(TAG, "Active Native fix received (${loc.provider}): lat=${loc.latitude}, lng=${loc.longitude}")
                     safelyResume(loc)
@@ -240,17 +266,7 @@ class LocationFetcher(private val context: Context) {
                 override fun onProviderEnabled(provider: String) {}
                 override fun onProviderDisabled(provider: String) {}
             }
-
-            // Cleanup when completed or cancelled by timeout
-            continuation.invokeOnCancellation {
-                cancellationSource.cancel()
-                try {
-                    client.removeLocationUpdates(fusedCallback)
-                } catch (_: Exception) {}
-                try {
-                    lm?.removeUpdates(nativeListener)
-                } catch (_: Exception) {}
-            }
+            nativeListener = nl
 
             // Start Fused active request (High Accuracy)
             try {
@@ -260,7 +276,7 @@ class LocationFetcher(private val context: Context) {
                     .setDurationMillis(ACTIVE_SEARCH_TIMEOUT_MS)
                     .build()
 
-                client.requestLocationUpdates(fusedRequest, fusedCallback, Looper.getMainLooper())
+                client.requestLocationUpdates(fusedRequest, fc, Looper.getMainLooper())
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to start Fused location updates", e)
             }
@@ -273,7 +289,7 @@ class LocationFetcher(private val context: Context) {
                     .setDurationMillis(ACTIVE_SEARCH_TIMEOUT_MS)
                     .build()
 
-                client.requestLocationUpdates(balancedRequest, fusedCallback, Looper.getMainLooper())
+                client.requestLocationUpdates(balancedRequest, fc, Looper.getMainLooper())
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to start Fused balanced updates", e)
             }
@@ -293,7 +309,7 @@ class LocationFetcher(private val context: Context) {
                                     prov,
                                     500L,
                                     0f,
-                                    nativeListener,
+                                    nl,
                                     Looper.getMainLooper()
                                 )
                             }
