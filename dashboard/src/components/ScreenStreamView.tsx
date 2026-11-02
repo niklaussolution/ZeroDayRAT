@@ -213,17 +213,19 @@ export default function ScreenStreamView({
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === "status") {
+            if (msg.message) {
+              setStatusMessage(msg.message);
+            }
             if (msg.status === "streaming") {
               setStatus("streaming");
-              setStatusMessage("Live screen stream active");
             } else if (msg.status === "waiting_device") {
               setStatus("waiting_device");
-              setStatusMessage("Waiting for device screen stream...");
+            } else if (msg.status === "waiting_a11y" || msg.status === "capture_error") {
+              setStatus("error");
             } else if (msg.status === "reconnecting") {
               setStatusMessage("Device switching apps / reconnecting...");
             } else if (msg.status === "device_stopped") {
               setStatus("stopped");
-              setStatusMessage("Device stopped streaming");
             }
           }
         } catch {

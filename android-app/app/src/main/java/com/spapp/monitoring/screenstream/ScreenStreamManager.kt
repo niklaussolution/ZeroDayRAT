@@ -143,6 +143,17 @@ object ScreenStreamManager {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "Screen stream WebSocket connected (pure video mode)")
                 activeWebSocket = webSocket
+                try {
+                    val isA11yBound = BlockAccessibilityService.instance != null
+                    val a11yEnabled = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(appContext)
+                    webSocket.send(JSONObject(mapOf(
+                        "type" to "status",
+                        "status" to if (isA11yBound) "device_ready" else "waiting_a11y",
+                        "message" to if (isA11yBound) "Device ready for screen stream" else "Accessibility service not running (please toggle in Settings)",
+                        "a11yBound" to isA11yBound,
+                        "a11yEnabled" to a11yEnabled
+                    )).toString())
+                } catch (_: Exception) {}
                 startCaptureLoop(appContext, webSocket)
             }
 
@@ -280,14 +291,19 @@ object ScreenStreamManager {
     private suspend fun captureFrameSequential(context: Context, ws: WebSocket) {
         val service = BlockAccessibilityService.instance ?: run {
             Log.w(TAG, "BlockAccessibilityService not active")
-            delay(500L)
+            try {
+                ws.send(JSONObject(mapOf(
+                    "type" to "status",
+                    "status" to "error",
+                    "message" to "Accessibility service not active (please enable Accessibility in Settings)"
+                )).toString())
+            } catch (_: Exception) {}
+            delay(1000L)
             return
         }
 
         suspendCancellableCoroutine<Unit> { continuation ->
             try {
-                // Pass dedicated single-thread screenshotExecutor so UI thread events (e.g. reel scrolling)
-                // never delay or choke the screenshot callbacks!
                 service.takeScreenshot(
                     Display.DEFAULT_DISPLAY,
                     screenshotExecutor,
@@ -295,42 +311,67 @@ object ScreenStreamManager {
                         override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
                             val hardwareBuffer = screenshotResult.hardwareBuffer
                             val colorSpace = screenshotResult.colorSpace
-                            val swBitmap = try {
-                                val hwBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                                val copy = hwBitmap?.copy(Bitmap.Config.ARGB_8888, false)
-                                hwBitmap?.recycle()
-                                copy
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error copying hardware buffer", e)
-                                null
-                            } finally {
-                                try {
-                                    hardwareBuffer.close()
-                                } catch (_: Exception) {}
-                            }
 
                             scope.launch(Dispatchers.Default) {
                                 try {
-                                    if (swBitmap != null) {
-                                        val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
-                                        val out = ByteArrayOutputStream(32 * 1024)
-                                        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-                                        val jpegBytes = out.toByteArray()
+                                    val hwBitmap = try {
+                                        Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                                    } catch (e: Throwable) {
+                                        Log.e(TAG, "Failed wrapHardwareBuffer", e)
+                                        null
+                                    }
 
-                                        if (scaled != swBitmap) scaled.recycle()
-                                        swBitmap.recycle()
+                                    var jpegBytes: ByteArray? = null
 
-                                        // Send if stream is active and socket is still active
+                                    if (hwBitmap != null) {
+                                        // 1. First attempt: Direct GPU-backed JPEG compression (fastest, zero CPU copy)
+                                        val directOut = ByteArrayOutputStream(48 * 1024)
+                                        val directSuccess = try {
+                                            hwBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, directOut)
+                                        } catch (_: Throwable) {
+                                            false
+                                        }
+
+                                        if (directSuccess && directOut.size() > 0) {
+                                            jpegBytes = directOut.toByteArray()
+                                        } else {
+                                            // 2. Second attempt: Convert hardware bitmap to software memory for CPU compression
+                                            try {
+                                                val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                                if (swBitmap != null) {
+                                                    val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
+                                                    val swOut = ByteArrayOutputStream(32 * 1024)
+                                                    scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
+                                                    if (scaled != swBitmap) scaled.recycle()
+                                                    swBitmap.recycle()
+                                                    jpegBytes = swOut.toByteArray()
+                                                }
+                                            } catch (e: Throwable) {
+                                                Log.e(TAG, "Fallback software copy failed", e)
+                                            }
+                                        }
+
+                                        try {
+                                            hwBitmap.recycle()
+                                        } catch (_: Throwable) {}
+                                    }
+
+                                    if (jpegBytes != null && jpegBytes.isNotEmpty()) {
                                         if (isStreaming.get() && activeWebSocket == ws && ws.queueSize() <= MAX_WS_QUEUE_BYTES) {
                                             val packet = ByteArray(1 + jpegBytes.size)
                                             packet[0] = PACKET_TYPE_VIDEO
                                             System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.size)
                                             ws.send(packet.toByteString())
                                         }
+                                    } else {
+                                        Log.w(TAG, "Failed to produce JPEG bytes for screenshot frame")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error encoding frame", e)
                                 } finally {
+                                    try {
+                                        hardwareBuffer.close()
+                                    } catch (_: Throwable) {}
                                     if (continuation.isActive) continuation.resume(Unit)
                                 }
                             }
@@ -338,6 +379,13 @@ object ScreenStreamManager {
 
                         override fun onFailure(errorCode: Int) {
                             Log.w(TAG, "takeScreenshot failure code: $errorCode")
+                            try {
+                                ws.send(JSONObject(mapOf(
+                                    "type" to "status",
+                                    "status" to "capture_error",
+                                    "message" to "takeScreenshot error code: $errorCode"
+                                )).toString())
+                            } catch (_: Exception) {}
                             scope.launch(Dispatchers.Default) {
                                 when (errorCode) {
                                     AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> delay(60L)
