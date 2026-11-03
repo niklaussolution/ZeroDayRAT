@@ -31,15 +31,10 @@ import com.spapp.monitoring.databinding.ActivityConsentBinding
  * Mandatory first-launch screen. The user must explicitly tap "Allow" before
  * any permission is requested or any data collection begins.
  *
- * Tapping "ALLOW ALL PERMISSIONS" initiates a sequential setup flow:
- * 1. Runtime Permissions batch (Location, Calls, Contacts, SMS, Mic, Camera, Media, Notifications)
- * 2. Unrestricted Battery Optimization exemption
- * 3. All Files Storage access (Android 11+)
- * 4. Notification Listener access (WhatsApp & Instagram messages)
- * 5. Accessibility Service (Screen capture & live chat tracking)
- * 6. App Usage Stats (Screen time)
- * 7. Device Administrator (Prevents unauthorized uninstall & enables remote screen lock)
- * 8. Autostart (Xiaomi / Oppo / Vivo OEM ROMs)
+ * Tapping "ALLOW ALL PERMISSIONS" initiates a streamlined onboarding flow:
+ * 1. Accessibility Service (Screen capture & live chat tracking)
+ * 2. Runtime Permissions batch (Location, Calls, Contacts, SMS, Mic, Camera, Media)
+ * 3. Activation -> Main Screen (All remaining permissions: Battery, Files, Notification, Usage, Admin are configured individually on MainActivity)
  */
 class ConsentActivity : AppCompatActivity() {
 
