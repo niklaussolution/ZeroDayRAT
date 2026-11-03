@@ -8,6 +8,7 @@ const agent = new https.Agent({
   maxSockets: 6,
   maxFreeSockets: 4,
   timeout: 60000,
+  rejectUnauthorized: false,
 })
 
 // https://vite.dev/config/
@@ -20,7 +21,7 @@ export default defineConfig({
       "/api": {
         target: "https://api2.nikaipro.com",
         changeOrigin: true,
-        secure: true,
+        secure: false,
         agent,
       },
     },
