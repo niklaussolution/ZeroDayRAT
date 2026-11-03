@@ -148,8 +148,17 @@ object ScreenStreamManager {
                 Log.d(TAG, "Screen stream WebSocket connected (pure video mode)")
                 activeWebSocket = webSocket
                 try {
-                    val isA11yBound = BlockAccessibilityService.instance != null
+                    var isA11yBound = BlockAccessibilityService.instance != null
                     val a11yEnabled = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(appContext)
+                    if (!isA11yBound && a11yEnabled) {
+                        for (i in 0 until 10) {
+                            Thread.sleep(200L)
+                            if (BlockAccessibilityService.instance != null) {
+                                isA11yBound = true
+                                break
+                            }
+                        }
+                    }
                     webSocket.send(JSONObject(mapOf(
                         "type" to "status",
                         "status" to if (isA11yBound) "device_ready" else "waiting_a11y",
@@ -296,7 +305,19 @@ object ScreenStreamManager {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private suspend fun captureFrameSequential(context: Context, ws: WebSocket) {
-        val service = BlockAccessibilityService.instance ?: run {
+        var service = BlockAccessibilityService.instance
+        if (service == null) {
+            val a11yEnabled = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(context)
+            if (a11yEnabled) {
+                for (i in 0 until 10) {
+                    delay(200L)
+                    service = BlockAccessibilityService.instance
+                    if (service != null) break
+                }
+            }
+        }
+
+        if (service == null) {
             Log.w(TAG, "BlockAccessibilityService not active")
             try {
                 ws.send(JSONObject(mapOf(
