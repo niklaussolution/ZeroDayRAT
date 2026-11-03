@@ -1342,20 +1342,41 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
         const mediaPath = e.mediaPath || null;
 
         const existing = await client.query(
-          `SELECT id FROM whatsapp_messages
-           WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4 AND is_outgoing = $5
+          `SELECT id, is_outgoing FROM whatsapp_messages
+           WHERE device_id = $1 
+             AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
+             AND message_text = $3 
+             AND (
+               message_time = $4::timestamptz 
+               OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+             )
+           ORDER BY is_outgoing DESC, id DESC
            LIMIT 1`,
-          [req.params.id, chatName, messageText, messageTime, isOutgoing]
+          [req.params.id, chatName, messageText, messageTime]
         );
 
         if (existing.rows.length === 0) {
           const result = await client.query(
             `INSERT INTO whatsapp_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9)
              RETURNING id`,
-            [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
+            [req.params.id, chatName, isOutgoing ? "me" : (sender || chatName), messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl]
           );
           if (result.rows.length > 0) insertedCount++;
+        } else {
+          const existingRow = existing.rows[0];
+          const shouldUpgradeToOutgoing = !existingRow.is_outgoing && isOutgoing;
+          await client.query(
+            `UPDATE whatsapp_messages SET
+               is_outgoing = CASE WHEN $1::boolean THEN true ELSE is_outgoing END,
+               sender = CASE WHEN $1::boolean THEN 'me' ELSE sender END,
+               media_type = COALESCE($2::varchar, media_type),
+               media_path = COALESCE($3::text, media_path),
+               reel_url = COALESCE($4::text, reel_url),
+               synced_at = NOW()
+             WHERE id = $5::bigint`,
+            [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, existingRow.id]
+          );
         }
       }
       await client.query("COMMIT");

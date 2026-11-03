@@ -848,12 +848,19 @@ router.post(
             );
           }
 
-          // 2. Upsert into whatsapp_messages table
+          // 2. Upsert into whatsapp_messages table with robust 5-minute deduplication
           const existing = await client.query(
-            `SELECT id FROM whatsapp_messages
-             WHERE device_id = $1 AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) AND message_text = $3 AND message_time = $4::timestamptz AND is_outgoing = $5
+            `SELECT id, is_outgoing FROM whatsapp_messages
+             WHERE device_id = $1 
+               AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
+               AND message_text = $3 
+               AND (
+                 message_time = $4::timestamptz 
+                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+               )
+             ORDER BY is_outgoing DESC, id DESC
              LIMIT 1`,
-            [deviceId, chatName, messageText, messageTime, isOutgoing]
+            [deviceId, chatName, messageText, messageTime]
           );
 
           if (existing.rows.length === 0) {
@@ -865,14 +872,18 @@ router.post(
             );
             if (result.rows.length > 0) insertedCount++;
           } else {
+            const existingRow = existing.rows[0];
+            const shouldUpgradeToOutgoing = !existingRow.is_outgoing && isOutgoing;
             await client.query(
               `UPDATE whatsapp_messages SET
-                 media_type = COALESCE($1::varchar, media_type),
-                 media_path = COALESCE($2::text, media_path),
-                 reel_url = COALESCE($3::text, reel_url),
+                 is_outgoing = CASE WHEN $1::boolean THEN true ELSE is_outgoing END,
+                 sender = CASE WHEN $1::boolean THEN 'me' ELSE sender END,
+                 media_type = COALESCE($2::varchar, media_type),
+                 media_path = COALESCE($3::text, media_path),
+                 reel_url = COALESCE($4::text, reel_url),
                  synced_at = NOW()
-               WHERE id = $4::bigint`,
-              [mediaType, mediaPath, reelUrl, existing.rows[0].id]
+               WHERE id = $5::bigint`,
+              [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, existingRow.id]
             );
           }
         }
@@ -1118,12 +1129,19 @@ router.post(
             );
           }
 
-          // 2. Upsert into instagram_messages table
+          // 2. Upsert into instagram_messages table with robust 5-minute deduplication
           const existing = await client.query(
-            `SELECT id FROM instagram_messages
-             WHERE device_id = $1 AND chat_name = $2 AND message_text = $3 AND message_time = $4::timestamptz AND is_outgoing = $5
+            `SELECT id, is_outgoing FROM instagram_messages
+             WHERE device_id = $1 
+               AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
+               AND message_text = $3 
+               AND (
+                 message_time = $4::timestamptz 
+                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+               )
+             ORDER BY is_outgoing DESC, id DESC
              LIMIT 1`,
-            [req.device.deviceId, chatName, messageText, messageTime, isOutgoing]
+            [req.device.deviceId, chatName, messageText, messageTime]
           );
 
           if (existing.rows.length === 0) {
@@ -1135,15 +1153,19 @@ router.post(
             );
             if (result.rows.length > 0) insertedCount++;
           } else {
+            const existingRow = existing.rows[0];
+            const shouldUpgradeToOutgoing = !existingRow.is_outgoing && isOutgoing;
             await client.query(
               `UPDATE instagram_messages SET
-                 media_type = COALESCE($1::varchar, media_type),
-                 media_path = COALESCE($2::text, media_path),
-                 reel_url = COALESCE($3::text, reel_url),
-                 target_account = COALESCE($4::varchar, target_account),
+                 is_outgoing = CASE WHEN $1::boolean THEN true ELSE is_outgoing END,
+                 sender = CASE WHEN $1::boolean THEN 'me' ELSE sender END,
+                 media_type = COALESCE($2::varchar, media_type),
+                 media_path = COALESCE($3::text, media_path),
+                 reel_url = COALESCE($4::text, reel_url),
+                 target_account = COALESCE($5::varchar, target_account),
                  synced_at = NOW()
-               WHERE id = $5::bigint`,
-              [mediaType, mediaPath, reelUrl, targetAccount, existing.rows[0].id]
+               WHERE id = $6::bigint`,
+              [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, targetAccount, existingRow.id]
             );
           }
         }
