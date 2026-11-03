@@ -7,6 +7,9 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 
 interface ApiService {
+    @GET("api/devices")
+    suspend fun listDevices(@Header("Authorization") bearer: String): Response<List<DeviceListItem>>
+
     @POST("api/devices/activate")
     suspend fun activateDevice(@Body request: ActivateRequest): Response<ActivateResponse>
 

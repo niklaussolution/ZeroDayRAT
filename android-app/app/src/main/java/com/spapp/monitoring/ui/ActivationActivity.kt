@@ -63,6 +63,31 @@ class ActivationActivity : AppCompatActivity() {
         if (!name.isNullOrEmpty()) {
             Toast.makeText(this, "Connecting as: $name", Toast.LENGTH_LONG).show()
         }
+        activate(token)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (binding.inputDeviceCode.text.isNullOrBlank()) {
+            try {
+                val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = clipboard.primaryClip
+                if (clip != null && clip.itemCount > 0) {
+                    val raw = clip.getItemAt(0).coerceToText(this)?.toString()?.trim() ?: ""
+                    val token = if (raw.contains("token=")) {
+                        android.net.Uri.parse(raw).getQueryParameter("token")?.trim()
+                    } else if (raw.matches(Regex("^[A-Za-z0-9_-]{16,64}$"))) {
+                        raw
+                    } else {
+                        null
+                    }
+                    if (!token.isNullOrBlank()) {
+                        binding.inputDeviceCode.setText(token)
+                        activate(token)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     private fun activate(deviceCode: String) {

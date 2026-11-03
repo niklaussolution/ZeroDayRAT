@@ -18,6 +18,13 @@ data class ActivateResponse(
     val device: DeviceSummary
 )
 
+data class DeviceListItem(
+    val id: String,
+    val device_label: String? = null,
+    val device_token: String? = null,
+    val status: String? = null
+)
+
 data class ApiError(
     val error: String
 )

