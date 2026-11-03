@@ -1,5 +1,14 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import https from 'node:https'
+
+// Controlled connection pool prevents TCP handshake storms that trigger Nginx SYN rate-limiting
+const agent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 6,
+  maxFreeSockets: 4,
+  timeout: 60000,
+})
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -12,6 +21,7 @@ export default defineConfig({
         target: "https://api2.nikaipro.com",
         changeOrigin: true,
         secure: true,
+        agent,
       },
     },
   },

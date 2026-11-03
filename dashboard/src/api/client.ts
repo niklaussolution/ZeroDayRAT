@@ -33,14 +33,31 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const config = error.config;
     if (error.response?.status === 401) {
       localStorage.removeItem("spapp_token");
       localStorage.removeItem("spapp_user");
       if (window.location.pathname !== "/login") {
         window.location.href = "/login";
       }
+      return Promise.reject(error);
     }
+
+    // Auto-retry once on transient 502/504 or proxy network errors
+    if (
+      config &&
+      !config.__isRetry &&
+      (error.code === "ECONNABORTED" ||
+        error.message?.includes("Network Error") ||
+        error.response?.status === 502 ||
+        error.response?.status === 504)
+    ) {
+      config.__isRetry = true;
+      await new Promise((r) => setTimeout(r, 600));
+      return apiClient(config);
+    }
+
     return Promise.reject(error);
   }
 );

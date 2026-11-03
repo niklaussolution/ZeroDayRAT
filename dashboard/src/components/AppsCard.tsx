@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { devicesApi } from "../api/devices";
 import { downloadFileViaRelay } from "../api/fileDownload";
-import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, CallLogEntry, InstagramChatSummary, InstagramMessage } from "../api/types";
+import type { WhatsAppChatSummary, WhatsAppMessage, WhatsAppCallEntry, InstagramChatSummary, InstagramMessage } from "../api/types";
 
 // ============================================================================
 // TYPES & DATA MODELS
@@ -346,23 +346,36 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
         }
       }
 
-      const [waData, callsResponse, rawCallLogs, igData, igAccountRes] = await Promise.all([
-        devicesApi.whatsAppChats(deviceId).catch((err) => {
-          console.warn("WhatsApp chats fetch error:", err);
-          return [] as WhatsAppChatSummary[];
-        }),
-        devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
-        devicesApi.callLog(deviceId, { all: true }).catch(() => [] as CallLogEntry[]),
-        devicesApi.instagramChats(deviceId).catch((err) => {
-          console.warn("Instagram chats fetch error:", err);
-          return [] as InstagramChatSummary[];
-        }),
-        devicesApi.instagramAccount(deviceId).catch(() => null),
-      ]);
+      let waData: WhatsAppChatSummary[] = [];
+      let callsResponse: { whatsapp_calls: WhatsAppCallEntry[]; device_calls: WhatsAppCallEntry[] } = { whatsapp_calls: [], device_calls: [] };
+      let igData: InstagramChatSummary[] = [];
+      let igAccountRes: { accountName?: string } | null = null;
+
+      if (selectedApp === "whatsapp") {
+        const [w, c] = await Promise.all([
+          devicesApi.whatsAppChats(deviceId).catch((err) => {
+            console.warn("WhatsApp chats fetch error:", err);
+            return [] as WhatsAppChatSummary[];
+          }),
+          devicesApi.whatsAppCalls(deviceId).catch(() => ({ whatsapp_calls: [], device_calls: [] })),
+        ]);
+        waData = w;
+        callsResponse = c;
+      } else {
+        const [i, a] = await Promise.all([
+          devicesApi.instagramChats(deviceId).catch((err) => {
+            console.warn("Instagram chats fetch error:", err);
+            return [] as InstagramChatSummary[];
+          }),
+          devicesApi.instagramAccount(deviceId).catch(() => null),
+        ]);
+        igData = i;
+        igAccountRes = a;
+      }
 
       if (igAccountRes && igAccountRes.accountName) {
         setInstagramAccount(igAccountRes.accountName);
-      } else {
+      } else if (selectedApp === "instagram") {
         setInstagramAccount("");
       }
 
@@ -478,25 +491,6 @@ export default function AppsCard({ deviceId }: { deviceId: string }) {
           }
         }
       }
-
-      for (const call of (rawCallLogs || [])) {
-        if (isWithinLast5Days(call.called_at)) {
-          const key = `raw-${call.counterparty}-${call.called_at}`;
-          if (!mergedCallsMap.has(key)) {
-            mergedCallsMap.set(key, {
-              id: key,
-              name: call.contact_name || call.counterparty || "WhatsApp Contact",
-              number: call.counterparty || "",
-              timestamp: call.called_at,
-              direction: call.direction === "missed" ? "missed" : call.direction === "outgoing" ? "outgoing" : "incoming",
-              call_type: "voice",
-              duration_sec: call.duration_sec || 0,
-              source: "device",
-            });
-          }
-        }
-      }
-
 
       const sortedCalls = Array.from(mergedCallsMap.values()).sort(
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
