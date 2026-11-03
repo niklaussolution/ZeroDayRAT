@@ -73,6 +73,11 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       res.status(201).json({ inserted: req.body.entries.length });
     } catch (err) {
       next(err);
@@ -103,41 +108,18 @@ router.post(
         await client.query("BEGIN");
         let insertedCount = 0;
         for (const e of req.body.entries) {
-          const existing = await client.query(
-            `SELECT id, body, contact_name FROM sms_logs
-             WHERE device_id = $1 AND direction = $2 AND counterparty = $3 AND message_at = $4
-             LIMIT 1`,
-            [req.device.deviceId, e.direction, e.counterparty, e.messageAt]
+          if (!e.counterparty || !e.direction || !e.messageAt) continue;
+          await client.query(
+            `INSERT INTO sms_logs (device_id, direction, counterparty, message_at, body, contact_name, synced_at)
+             VALUES ($1, $2, $3, $4::timestamptz, $5, $6, NOW())
+             ON CONFLICT (device_id, direction, counterparty, message_at)
+             DO UPDATE SET
+               body = CASE WHEN sms_logs.body IS NULL OR sms_logs.body = '' THEN EXCLUDED.body ELSE sms_logs.body END,
+               contact_name = CASE WHEN sms_logs.contact_name IS NULL OR sms_logs.contact_name = '' THEN EXCLUDED.contact_name ELSE sms_logs.contact_name END,
+               synced_at = NOW()`,
+            [req.device.deviceId, e.direction, e.counterparty, e.messageAt, e.body || null, e.contactName || null]
           );
-
-          if (existing.rows.length === 0) {
-            await client.query(
-              `INSERT INTO sms_logs (device_id, direction, counterparty, message_at, body, contact_name)
-               VALUES ($1, $2, $3, $4, $5, $6)`,
-              [req.device.deviceId, e.direction, e.counterparty, e.messageAt, e.body || null, e.contactName || null]
-            );
-            insertedCount++;
-          } else {
-            const updates = [];
-            const values = [];
-            let pIndex = 1;
-            if (e.body && !existing.rows[0].body) {
-              updates.push(`body = $${pIndex++}`);
-              values.push(e.body);
-            }
-            if (e.contactName && !existing.rows[0].contact_name) {
-              updates.push(`contact_name = $${pIndex++}`);
-              values.push(e.contactName);
-            }
-            if (updates.length > 0) {
-              updates.push(`synced_at = now()`);
-              values.push(existing.rows[0].id);
-              await client.query(
-                `UPDATE sms_logs SET ${updates.join(", ")} WHERE id = $${pIndex}`,
-                values
-              );
-            }
-          }
+          insertedCount++;
         }
         await client.query("COMMIT");
       } catch (err) {
@@ -148,6 +130,21 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "sms_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
+      emitDeviceEvent(req.device.deviceId, {
+        type: "sms_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
 
       // Mirror to Custom Apps live buffer for real-time visualization
       try {
@@ -218,6 +215,11 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
 
       // Mirror to Custom Apps live buffer for real-time visualization
       try {
@@ -276,6 +278,11 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       res.status(201).json({ upserted: req.body.apps.length });
     } catch (err) {
       next(err);
@@ -393,6 +400,11 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       res.status(201).json({ recorded: true });
     } catch (err) {
       next(err);
@@ -473,6 +485,11 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       res.status(201).json({ recorded: true });
     } catch (err) {
       next(err);
@@ -538,6 +555,11 @@ router.get("/block-rules", async (req, res, next) => {
     const flags = await getFlags(req.device.deviceId);
     if (!flags || !flags.app_blocking) {
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       return res.json([]);
     }
 
@@ -583,6 +605,11 @@ router.post(
         ]
       );
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
       res.status(201).json({ recorded: true });
     } catch (err) {
       next(err);
@@ -1172,6 +1199,11 @@ router.post(
 
         await client.query("COMMIT");
         await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
         emitDeviceEvent(req.device.deviceId, {
           type: "instagram_message",
           chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
@@ -1240,6 +1272,11 @@ router.post("/contacts", async (req, res, next) => {
 
       await client.query("COMMIT");
       await touchLastSeen(req.device.deviceId);
+      emitDeviceEvent(req.device.deviceId, {
+        type: "call_log",
+        count: insertedCount,
+        timestamp: new Date().toISOString(),
+      });
 
       emitDeviceEvent(req.device.deviceId, {
         type: "contacts_updated",

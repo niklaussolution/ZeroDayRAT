@@ -253,7 +253,7 @@ object RealtimeLogObserverManager {
                             set(java.util.Calendar.SECOND, 0)
                             set(java.util.Calendar.MILLISECOND, 0)
                         }.timeInMillis
-                        val unsynced = db.smsLogDao().getUnsynced().filter { it.messageAtEpochMs >= startOfTodayMs }
+                        val unsynced = db.smsLogDao().getRecentUnsynced(startOfTodayMs)
                         if (unsynced.isNotEmpty()) {
                             val dtos = unsynced.map {
                                 SmsLogEntryDto(
@@ -298,7 +298,7 @@ object RealtimeLogObserverManager {
                             set(java.util.Calendar.SECOND, 0)
                             set(java.util.Calendar.MILLISECOND, 0)
                         }.timeInMillis
-                        val unsynced = db.callLogDao().getUnsynced().filter { it.calledAtEpochMs >= startOfTodayMs }
+                        val unsynced = db.callLogDao().getRecentUnsynced(startOfTodayMs)
                         if (unsynced.isNotEmpty()) {
                             val dtos = unsynced.map {
                                 CallLogEntryDto(

@@ -140,23 +140,18 @@ export default function SmsChatView({
       devicesApi
         .smsLog(deviceId, { all: true })
         .then((data) => {
-          // Deduplicate
-          const unique = data.reduce<SmsLogEntry[]>((acc, current) => {
-            const currentTime = new Date(current.message_at).getTime();
-            const existing = acc.find(
-              (item) =>
-                item.direction === current.direction &&
-                item.counterparty === current.counterparty &&
-                new Date(item.message_at).getTime() === currentTime
-            );
+          // Fast O(N) deduplication via Map
+          const map = new Map<string, SmsLogEntry>();
+          for (const item of data) {
+            const key = `${item.direction}|${item.counterparty}|${item.message_at}`;
+            const existing = map.get(key);
             if (!existing) {
-              acc.push(current);
-            } else if (!existing.body && current.body) {
-              existing.body = current.body;
+              map.set(key, item);
+            } else if (!existing.body && item.body) {
+              existing.body = item.body;
             }
-            return acc;
-          }, []);
-          setAllSms(unique);
+          }
+          setAllSms(Array.from(map.values()));
         })
         .catch((err) => console.error("Failed to load all SMS logs:", err))
         .finally(() => setLoadingAll(false));

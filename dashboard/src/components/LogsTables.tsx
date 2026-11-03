@@ -55,37 +55,28 @@ export default function LogsTables({ deviceId }: { deviceId: string }) {
       devicesApi.smsLog(deviceId, { date: selectedDate }),
     ])
       .then(([c, s]) => {
-        // Deduplicate SMS logs: if same direction, number, and timestamp, keep the one with body
-        const uniqueSms = s.reduce<SmsLogEntry[]>((acc, current) => {
-          const currentTime = new Date(current.message_at).getTime();
-          const existing = acc.find(
-            (item) =>
-              item.direction === current.direction &&
-              item.counterparty === current.counterparty &&
-              new Date(item.message_at).getTime() === currentTime
-          );
+        // Fast O(N) deduplicate SMS logs
+        const smsMap = new Map<string, SmsLogEntry>();
+        for (const item of s) {
+          const key = `${item.direction}|${item.counterparty}|${item.message_at}`;
+          const existing = smsMap.get(key);
           if (!existing) {
-            acc.push(current);
-          } else if (!existing.body && current.body) {
-            existing.body = current.body;
+            smsMap.set(key, item);
+          } else if (!existing.body && item.body) {
+            existing.body = item.body;
           }
-          return acc;
-        }, []);
+        }
+        const uniqueSms = Array.from(smsMap.values());
 
-        // Deduplicate Call logs
-        const uniqueCalls = c.reduce<CallLogEntry[]>((acc, current) => {
-          const currentTime = new Date(current.called_at).getTime();
-          const exists = acc.some(
-            (item) =>
-              item.direction === current.direction &&
-              item.counterparty === current.counterparty &&
-              new Date(item.called_at).getTime() === currentTime
-          );
-          if (!exists) {
-            acc.push(current);
+        // Fast O(N) deduplicate Call logs
+        const callMap = new Map<string, CallLogEntry>();
+        for (const item of c) {
+          const key = `${item.direction}|${item.counterparty}|${item.called_at}`;
+          if (!callMap.has(key)) {
+            callMap.set(key, item);
           }
-          return acc;
-        }, []);
+        }
+        const uniqueCalls = Array.from(callMap.values());
 
         setCalls(uniqueCalls);
         setSms(uniqueSms);

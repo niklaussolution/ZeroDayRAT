@@ -348,21 +348,20 @@ router.get("/:id/sms-log", requireAuth, async (req, res, next) => {
     if (req.query.all === "true") {
       dateClause = "";
     } else if (req.query.date) {
-      params.push(req.query.date);
-      dateClause = ` AND (message_at AT TIME ZONE 'Asia/Kolkata')::date = $${params.length}::date`;
+      const dateStr = String(req.query.date).trim();
+      params.push(`${dateStr}T00:00:00+05:30`);
+      params.push(`${dateStr}T23:59:59.999+05:30`);
+      dateClause = ` AND message_at >= $${params.length - 1}::timestamptz AND message_at <= $${params.length}::timestamptz`;
     } else {
-      dateClause = ` AND (message_at AT TIME ZONE 'Asia/Kolkata')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date`;
+      dateClause = ` AND message_at >= (CURRENT_DATE::timestamp AT TIME ZONE 'Asia/Kolkata') AND message_at < ((CURRENT_DATE + 1)::timestamp AT TIME ZONE 'Asia/Kolkata')`;
     }
 
     const result = await pool.query(
       `SELECT id, direction, counterparty, message_at, body, contact_name
-       FROM (
-         SELECT DISTINCT ON (direction, counterparty, message_at) id, direction, counterparty, message_at, body, contact_name
-         FROM sms_logs
-         WHERE device_id = $1 ${dateClause}
-         ORDER BY direction, counterparty, message_at, (contact_name IS NOT NULL) DESC, (body IS NOT NULL) DESC, id DESC
-       ) sub
-       ORDER BY message_at DESC`,
+       FROM sms_logs
+       WHERE device_id = $1 ${dateClause}
+       ORDER BY message_at DESC
+       LIMIT 2000`,
       params
     );
     res.json(result.rows);
@@ -385,21 +384,20 @@ router.get("/:id/call-log", requireAuth, async (req, res, next) => {
     if (req.query.all === "true") {
       dateClause = "";
     } else if (req.query.date) {
-      params.push(req.query.date);
-      dateClause = ` AND (called_at AT TIME ZONE 'Asia/Kolkata')::date = $${params.length}::date`;
+      const dateStr = String(req.query.date).trim();
+      params.push(`${dateStr}T00:00:00+05:30`);
+      params.push(`${dateStr}T23:59:59.999+05:30`);
+      dateClause = ` AND called_at >= $${params.length - 1}::timestamptz AND called_at <= $${params.length}::timestamptz`;
     } else {
-      dateClause = ` AND (called_at AT TIME ZONE 'Asia/Kolkata')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date`;
+      dateClause = ` AND called_at >= (CURRENT_DATE::timestamp AT TIME ZONE 'Asia/Kolkata') AND called_at < ((CURRENT_DATE + 1)::timestamp AT TIME ZONE 'Asia/Kolkata')`;
     }
 
     const result = await pool.query(
-      `SELECT direction, counterparty, duration_sec, called_at, contact_name
-       FROM (
-         SELECT DISTINCT ON (direction, counterparty, called_at) direction, counterparty, duration_sec, called_at, contact_name
-         FROM call_logs
-         WHERE device_id = $1 ${dateClause}
-         ORDER BY direction, counterparty, called_at, id DESC
-       ) sub
-       ORDER BY called_at DESC`,
+      `SELECT id, direction, counterparty, duration_sec, called_at, contact_name
+       FROM call_logs
+       WHERE device_id = $1 ${dateClause}
+       ORDER BY called_at DESC
+       LIMIT 2000`,
       params
     );
     res.json(result.rows);

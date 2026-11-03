@@ -113,7 +113,12 @@ class SmsLogCollector(private val context: Context) {
     }
 
     private fun resolveContactName(number: String): String? {
-        if (number.isBlank() || number == "Unknown" || number == "unknown" || number == "-1" || number == "-2") return null
+        val trimmed = number.trim()
+        if (trimmed.isBlank() || trimmed.equals("Unknown", ignoreCase = true) || trimmed == "-1" || trimmed == "-2") return null
+        // Fast-path: Alphanumeric service headers (e.g. AX-HDFCBK, VK-AIRTEL, GOOGLE) are already the sender name
+        if (trimmed.any { it.isLetter() }) {
+            return trimmed
+        }
         try {
             val uri = Uri.withAppendedPath(
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
