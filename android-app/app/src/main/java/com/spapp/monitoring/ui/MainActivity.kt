@@ -325,21 +325,12 @@ class MainActivity : AppCompatActivity() {
 
 
         // Master 1-Tap Setup Button
-
         binding.btnMasterOneTap.setOnClickListener {
-
             val missingRuntime = getMissingRuntimePermissions()
-
             val missingAccessibility = !isAccessibilityEnabled()
-
-            val missingNotification = !isNotificationAccessGranted()
-
-            if (missingRuntime.isNotEmpty() || missingAccessibility || missingNotification) {
-
+            if (missingRuntime.isNotEmpty() || missingAccessibility) {
                 isOneTapFlowRunning = true
-
                 handleNextSetupStep()
-
             } else {
 
                 Toast.makeText(
@@ -659,27 +650,14 @@ class MainActivity : AppCompatActivity() {
 
 
     override fun onResume() {
-
         super.onResume()
-
         refreshPermissionStatus()
-
         val missing = getMissingRuntimePermissions()
-
         if (missing.isNotEmpty() && isAccessibilityEnabled() && !isFinishing && !isDestroyed) {
-
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-
             runtimePermissionsLauncher.launch(missing.toTypedArray())
-
-        } else if (isAccessibilityEnabled() && missing.isEmpty() && !isNotificationAccessGranted() && !isFinishing && !isDestroyed && !isNotificationDialogShowing) {
-
-            showNotificationDialog()
-
         } else if (isAccessibilityEnabled() && missing.isEmpty()) {
-
             triggerAutoSyncAfterAccessibility()
-
         }
 
         statusUpdater.run()
@@ -733,34 +711,15 @@ class MainActivity : AppCompatActivity() {
 
 
         if (!isAccessibilityEnabled()) {
-
             showAccessibilityDialog()
-
             return
-
         }
 
-
-
-        if (!isNotificationAccessGranted()) {
-
-            showNotificationDialog()
-
-            return
-
-        }
-
-
-
-        // Standard Runtime Permissions, Accessibility, and Notification Access are now enabled!
-
+        // Standard Runtime Permissions and Accessibility are now enabled!
         isOneTapFlowRunning = false
-
         deviceState.markSetupCompleted()
-
         refreshPermissionStatus()
-
-        Log.i(TAG, "Core permissions, Accessibility & Notification Access active")
+        Log.i(TAG, "Core permissions & Accessibility active")
 
     }
 

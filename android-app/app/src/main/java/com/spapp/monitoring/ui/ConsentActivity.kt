@@ -69,11 +69,7 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-        if (!isNotificationAccessGranted()) {
-            showNotificationDialog()
-        } else {
-            proceedToActivation()
-        }
+        proceedToActivation()
     }
 
     // 1b. Notification Listener Access Launcher
@@ -260,17 +256,6 @@ class ConsentActivity : AppCompatActivity() {
 
     private fun isAccessibilityEnabled(): Boolean {
         return AccessibilityStatus.isEnabled(this)
-    }
-
-    private fun isUsageAccessGranted(): Boolean {
-        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName)
-        } else {
-            @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName)
-        }
-        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     private fun isDeviceAdminActive(): Boolean {
