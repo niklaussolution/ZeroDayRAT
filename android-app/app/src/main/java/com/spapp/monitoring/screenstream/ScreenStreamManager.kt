@@ -51,10 +51,11 @@ import kotlin.coroutines.resume
 object ScreenStreamManager {
 
     private const val TAG = "ScreenStreamManager"
-    private const val MIN_CAPTURE_INTERVAL_MS = 334L // Android AOSP AccessibilityService takeScreenshot interval
-    private const val TARGET_MAX_DIMENSION = 500     // Fast downscale & compact transmission
-    private const val JPEG_QUALITY = 50              // Fast compression with crisp clarity
-    private const val MAX_WS_QUEUE_BYTES = 128 * 1024L // 128 KB buffer headroom
+    private const val DEFAULT_CAPTURE_INTERVAL_MS = 200L // Fast 5 FPS default target
+    private const val AOSP_FALLBACK_INTERVAL_MS = 334L   // AOSP fallback rate limit (~3 FPS)
+    private const val TARGET_MAX_DIMENSION = 720         // Crisp 720p max dimension (~25KB payload)
+    private const val JPEG_QUALITY = 50                  // Optimal balance of crispness & low byte size
+    private const val MAX_WS_QUEUE_BYTES = 64 * 1024L    // 64 KB low-latency buffer headroom
 
     // Packet type indicator for video JPEG
     private const val PACKET_TYPE_VIDEO: Byte = 0x01
@@ -67,6 +68,9 @@ object ScreenStreamManager {
     private var activeWebSocket: WebSocket? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isStreaming = AtomicBoolean(false)
+    private val isEncoding = AtomicBoolean(false)
+    private var currentCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
+    private var successfulCaptures = 0
 
     private var currentAuthToken: String? = null
     private var currentDeviceId: String? = null
@@ -229,6 +233,9 @@ object ScreenStreamManager {
         }
 
         Log.d(TAG, "Stopping screen stream")
+        isEncoding.set(false)
+        currentCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
+        successfulCaptures = 0
         reconnectJob?.cancel()
         reconnectJob = null
 
@@ -256,20 +263,20 @@ object ScreenStreamManager {
     private fun startCaptureLoop(context: Context, ws: WebSocket) {
         streamJob?.cancel()
         streamJob = scope.launch(Dispatchers.Default) {
-            Log.d(TAG, "High-performance silent capture loop started")
+            Log.d(TAG, "High-performance silent capture loop started (target: ${currentCaptureIntervalMs}ms)")
             var lastCaptureStartTime = 0L
 
             while (isActive && isStreaming.get() && activeWebSocket == ws) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val now = SystemClock.uptimeMillis()
                     val elapsed = now - lastCaptureStartTime
-                    if (elapsed < MIN_CAPTURE_INTERVAL_MS) {
-                        delay(MIN_CAPTURE_INTERVAL_MS - elapsed)
+                    if (elapsed < currentCaptureIntervalMs) {
+                        delay(currentCaptureIntervalMs - elapsed)
                     }
 
-                    // Drop frame only if WebSocket outgoing buffer is heavily congested (> 128 KB)
-                    if (ws.queueSize() > MAX_WS_QUEUE_BYTES) {
-                        delay(50L)
+                    // Drop frame tick if previous frame is still encoding or network buffer is congested
+                    if (isEncoding.get() || ws.queueSize() > MAX_WS_QUEUE_BYTES) {
+                        delay(25L)
                         continue
                     }
 
@@ -312,7 +319,18 @@ object ScreenStreamManager {
                             val hardwareBuffer = screenshotResult.hardwareBuffer
                             val colorSpace = screenshotResult.colorSpace
 
+                            // Track successful captures to periodically test if 200ms is sustainable
+                            successfulCaptures++
+                            if (successfulCaptures > 30 && currentCaptureIntervalMs > DEFAULT_CAPTURE_INTERVAL_MS) {
+                                currentCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
+                                successfulCaptures = 0
+                            }
+
+                            // Resume capture loop immediately so interval pacing runs concurrently with encode & transmission
+                            if (continuation.isActive) continuation.resume(Unit)
+
                             scope.launch(Dispatchers.Default) {
+                                isEncoding.set(true)
                                 try {
                                     val hwBitmap = try {
                                         Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
@@ -324,30 +342,43 @@ object ScreenStreamManager {
                                     var jpegBytes: ByteArray? = null
 
                                     if (hwBitmap != null) {
-                                        // 1. First attempt: Direct GPU-backed JPEG compression (fastest, zero CPU copy)
-                                        val directOut = ByteArrayOutputStream(48 * 1024)
-                                        val directSuccess = try {
-                                            hwBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, directOut)
+                                        val width = hwBitmap.width
+                                        val height = hwBitmap.height
+                                        val maxDim = TARGET_MAX_DIMENSION
+
+                                        val scale = if (maxOf(width, height) > maxDim) {
+                                            maxDim.toFloat() / maxOf(width, height)
+                                        } else {
+                                            1.0f
+                                        }
+                                        val dstWidth = (width * scale).toInt().coerceAtLeast(1)
+                                        val dstHeight = (height * scale).toInt().coerceAtLeast(1)
+
+                                        // Step 1: High-speed scaled software bitmap compression (compact 20-30KB frames)
+                                        val swBitmap = try {
+                                            hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
                                         } catch (_: Throwable) {
-                                            false
+                                            null
                                         }
 
-                                        if (directSuccess && directOut.size() > 0) {
-                                            jpegBytes = directOut.toByteArray()
+                                        if (swBitmap != null) {
+                                            val scaled = if (dstWidth != width || dstHeight != height) {
+                                                val s = Bitmap.createScaledBitmap(swBitmap, dstWidth, dstHeight, true)
+                                                swBitmap.recycle()
+                                                s
+                                            } else {
+                                                swBitmap
+                                            }
+
+                                            val swOut = ByteArrayOutputStream(32 * 1024)
+                                            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
+                                            scaled.recycle()
+                                            jpegBytes = swOut.toByteArray()
                                         } else {
-                                            // 2. Second attempt: Convert hardware bitmap to software memory for CPU compression
-                                            try {
-                                                val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                                if (swBitmap != null) {
-                                                    val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
-                                                    val swOut = ByteArrayOutputStream(32 * 1024)
-                                                    scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
-                                                    if (scaled != swBitmap) scaled.recycle()
-                                                    swBitmap.recycle()
-                                                    jpegBytes = swOut.toByteArray()
-                                                }
-                                            } catch (e: Throwable) {
-                                                Log.e(TAG, "Fallback software copy failed", e)
+                                            // Fallback: direct hardware compression with lower quality if RAM allocation failed
+                                            val directOut = ByteArrayOutputStream(32 * 1024)
+                                            if (hwBitmap.compress(Bitmap.CompressFormat.JPEG, 35, directOut)) {
+                                                jpegBytes = directOut.toByteArray()
                                             }
                                         }
 
@@ -372,26 +403,20 @@ object ScreenStreamManager {
                                     try {
                                         hardwareBuffer.close()
                                     } catch (_: Throwable) {}
-                                    if (continuation.isActive) continuation.resume(Unit)
+                                    isEncoding.set(false)
                                 }
                             }
                         }
 
                         override fun onFailure(errorCode: Int) {
                             Log.w(TAG, "takeScreenshot failure code: $errorCode")
-                            try {
-                                ws.send(JSONObject(mapOf(
-                                    "type" to "status",
-                                    "status" to "capture_error",
-                                    "message" to "takeScreenshot error code: $errorCode"
-                                )).toString())
-                            } catch (_: Exception) {}
+                            if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                                // Adaptive backoff: device enforces AOSP ~334ms rate limit
+                                currentCaptureIntervalMs = AOSP_FALLBACK_INTERVAL_MS
+                                successfulCaptures = 0
+                            }
                             scope.launch(Dispatchers.Default) {
-                                when (errorCode) {
-                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> delay(60L)
-                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> delay(120L)
-                                    else -> delay(100L)
-                                }
+                                delay(if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) 60L else 120L)
                                 if (continuation.isActive) continuation.resume(Unit)
                             }
                         }
@@ -402,15 +427,5 @@ object ScreenStreamManager {
                 if (continuation.isActive) continuation.resume(Unit)
             }
         }
-    }
-
-    private fun downscaleBitmap(src: Bitmap, maxDim: Int): Bitmap {
-        val width = src.width
-        val height = src.height
-        if (width <= maxDim && height <= maxDim) return src
-        val scale = maxDim.toFloat() / maxOf(width, height)
-        val dstWidth = (width * scale).toInt().coerceAtLeast(1)
-        val dstHeight = (height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(src, dstWidth, dstHeight, true)
     }
 }

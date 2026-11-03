@@ -109,11 +109,11 @@ export default function AudioStreamCard({
             </svg>
           </div>
           <h3 className="text-sm font-semibold text-slate-800 mb-1">Live Surrounding / Ambient Sound</h3>
-          <p className="text-xs text-slate-500 max-w-sm leading-relaxed mb-4">
+          {/* <p className="text-xs text-slate-500 max-w-sm leading-relaxed mb-4">
             Listen to the device's real-time surroundings using dual-microphone binaural stereo with raw whisper gain amplification.
-          </p>
+          </p> */}
 
-          <div className="flex flex-wrap items-center justify-center gap-2 mb-5 max-w-sm">
+          {/* <div className="flex flex-wrap items-center justify-center gap-2 mb-5 max-w-sm">
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
               🎙️ Binaural 360° Stereo
             </span>
@@ -126,7 +126,7 @@ export default function AudioStreamCard({
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
               🎵 MP3 Audio Record & Save
             </span>
-          </div>
+          </div> */}
 
           <div className="w-full max-w-xs">
             <button
