@@ -66,6 +66,25 @@ export default function AudioStreamCard({
     }
   };
 
+  const handleStartListening = () => {
+    // Prime Web AudioContext during direct user click to satisfy browser Autoplay Policy
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const win = window as unknown as { __spappAudioCtx?: AudioContext };
+        if (!win.__spappAudioCtx || win.__spappAudioCtx.state === "closed") {
+          win.__spappAudioCtx = new AudioCtx();
+        }
+        if (win.__spappAudioCtx.state === "suspended") {
+          win.__spappAudioCtx.resume().catch(() => {});
+        }
+      }
+    } catch {}
+    setActive(true);
+  };
+
   if (active) {
     return (
       <div
@@ -131,7 +150,7 @@ export default function AudioStreamCard({
           <div className="w-full max-w-xs">
             <button
               id="start-live-audio-btn"
-              onClick={() => setActive(true)}
+              onClick={handleStartListening}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-600 via-orange-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-semibold rounded-lg shadow-sm hover:shadow transition"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

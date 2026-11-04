@@ -47,6 +47,7 @@ object AudioStreamManager {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var activeWebSocket: WebSocket? = null
+    private var activeRecorder: AudioRecord? = null
     private var streamJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isStreaming = AtomicBoolean(false)
@@ -85,8 +86,8 @@ object AudioStreamManager {
             return
         }
 
-        if (isStreaming.get() && activeWebSocket != null) {
-            Log.d(TAG, "Audio stream session already active — skipping redundant start")
+        if (isStreaming.get()) {
+            Log.d(TAG, "Audio stream session already active or connecting — skipping redundant start")
             return
         }
 
@@ -167,6 +168,7 @@ object AudioStreamManager {
                 }
 
                 val (recorderInstance, config) = workingPair
+                activeRecorder = recorderInstance
                 recorder = recorderInstance
 
                 // Send JSON initialization packet so dashboard knows sample rate & channels
@@ -180,6 +182,11 @@ object AudioStreamManager {
                 ws.send(initPacket.toString())
 
                 recorder.startRecording()
+                if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    Log.e(TAG, "AudioRecord failed to enter RECORDSTATE_RECORDING (state: ${recorder.recordingState})")
+                    stopStreaming()
+                    return@launch
+                }
                 Log.d(TAG, "Audio recording active: ${config.sampleRate}Hz, Stereo=${config.isStereo}, Source=${config.audioSource}")
 
                 // Chunk size: ~50ms of audio
@@ -202,8 +209,10 @@ object AudioStreamManager {
                         }
 
                         ws.send(byteBuffer.toByteString(0, byteIdx))
-                    } else if (readShorts < 0) {
-                        Log.w(TAG, "AudioRecord.read returned error code: $readShorts")
+                    } else {
+                        if (readShorts < 0) {
+                            Log.w(TAG, "AudioRecord.read returned error code: $readShorts")
+                        }
                         kotlinx.coroutines.delay(20L)
                     }
                 }
@@ -214,6 +223,9 @@ object AudioStreamManager {
                     recorder?.stop()
                     recorder?.release()
                 } catch (_: Exception) {}
+                if (activeRecorder == recorder) {
+                    activeRecorder = null
+                }
                 Log.d(TAG, "Audio recording stopped")
             }
         }
@@ -228,8 +240,8 @@ object AudioStreamManager {
     private fun createWorkingAudioRecord(): Pair<AudioRecord, AudioConfig>? {
         val sampleRates = intArrayOf(44100, 16000, 48000, 8000)
         val channels = listOf(
-            AudioFormat.CHANNEL_IN_MONO to false,
-            AudioFormat.CHANNEL_IN_STEREO to true
+            AudioFormat.CHANNEL_IN_STEREO to true,
+            AudioFormat.CHANNEL_IN_MONO to false
         )
         val audioSources = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             intArrayOf(
@@ -283,6 +295,15 @@ object AudioStreamManager {
         if (!isStreaming.getAndSet(false)) return
 
         Log.d(TAG, "Stopping audio stream")
+
+        try {
+            activeRecorder?.stop()
+            activeRecorder?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping active AudioRecord", e)
+        }
+        activeRecorder = null
+
         streamJob?.cancel()
         streamJob = null
 

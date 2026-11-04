@@ -37,11 +37,12 @@ export default function AudioStreamView({
   const [volume, setVolume] = useState<number>(85); // 0 - 100
   const [boost, setBoost] = useState<number>(1.0); // 1.0x - 5.0x
   const [pan, setPan] = useState<number>(0); // -1.0 (Left) to +1.0 (Right)
+  const [isAudioSuspended, setIsAudioSuspended] = useState<boolean>(false);
   const [audioMeta, setAudioMeta] = useState<AudioMetadata>({
     sampleRate: 44100,
-    channels: 2,
+    channels: 1,
     format: "pcm16",
-    isStereo: true,
+    isStereo: false,
   });
 
   // Recording Snippet State
@@ -160,20 +161,31 @@ export default function AudioStreamView({
     }
   }, [pan]);
 
-  // Initialize Web Audio Graph
-  const getAudioContext = (sampleRate: number) => {
-    if (!audioCtxRef.current || audioCtxRef.current.sampleRate !== sampleRate) {
-      if (audioCtxRef.current) {
-        try {
-          audioCtxRef.current.close();
-        } catch {}
-      }
+  const resumeAudio = () => {
+    if (audioCtxRef.current) {
+      audioCtxRef.current
+        .resume()
+        .then(() => {
+          setIsAudioSuspended(audioCtxRef.current?.state === "suspended");
+        })
+        .catch(() => {});
+    }
+  };
 
+  // Initialize Web Audio Graph (created ONCE to match native device output rate)
+  const getAudioContext = () => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 
-      const ctx = new AudioCtx({ sampleRate });
+      // Reuse primed context if available from user click
+      const win = window as unknown as { __spappAudioCtx?: AudioContext };
+      const ctx =
+        win.__spappAudioCtx && win.__spappAudioCtx.state !== "closed"
+          ? win.__spappAudioCtx
+          : new AudioCtx();
+      win.__spappAudioCtx = ctx;
 
       const gain = ctx.createGain();
       const effectiveGain = isMuted ? 0 : (volume / 100) * boost;
@@ -187,11 +199,9 @@ export default function AudioStreamView({
       if (typeof ctx.createStereoPanner === "function") {
         panner = ctx.createStereoPanner();
         panner.pan.setValueAtTime(pan, ctx.currentTime);
-        // Chain: Source -> Gain -> Panner -> Analyser -> Destination
         gain.connect(panner);
         panner.connect(analyser);
       } else {
-        // Fallback without spatial panner
         gain.connect(analyser);
       }
 
@@ -205,7 +215,17 @@ export default function AudioStreamView({
     }
 
     if (audioCtxRef.current.state === "suspended") {
-      audioCtxRef.current.resume().catch(() => {});
+      setIsAudioSuspended(true);
+      audioCtxRef.current
+        .resume()
+        .then(() => {
+          if (audioCtxRef.current?.state === "running") {
+            setIsAudioSuspended(false);
+          }
+        })
+        .catch(() => {});
+    } else if (isAudioSuspended) {
+      setIsAudioSuspended(false);
     }
 
     return audioCtxRef.current;
@@ -215,22 +235,29 @@ export default function AudioStreamView({
   const playPcmAudio = (pcmBytes: Uint8Array) => {
     try {
       const meta = audioMetaRef.current;
-      const ctx = getAudioContext(meta.sampleRate);
-      const isStereo = meta.channels >= 2;
+      const ctx = getAudioContext();
+      const isStereo = Boolean(meta.isStereo ?? meta.channels >= 2);
 
-      // 16-bit PCM is 2 bytes per sample
-      const int16 = new Int16Array(
-        pcmBytes.buffer,
-        pcmBytes.byteOffset,
-        pcmBytes.byteLength / 2
-      );
+      // 16-bit PCM is 2 bytes per sample (ensure alignment)
+      let int16: Int16Array;
+      if (pcmBytes.byteOffset % 2 === 0) {
+        int16 = new Int16Array(
+          pcmBytes.buffer,
+          pcmBytes.byteOffset,
+          Math.floor(pcmBytes.byteLength / 2)
+        );
+      } else {
+        const copy = new Uint8Array(pcmBytes.byteLength);
+        copy.set(pcmBytes);
+        int16 = new Int16Array(copy.buffer, 0, Math.floor(copy.byteLength / 2));
+      }
 
       if (int16.length === 0) return;
 
       const numFrames = isStereo ? Math.floor(int16.length / 2) : int16.length;
       if (numFrames === 0) return;
 
-      const buffer = ctx.createBuffer(isStereo ? 2 : 1, numFrames, meta.sampleRate);
+      const buffer = ctx.createBuffer(isStereo ? 2 : 1, numFrames, meta.sampleRate || 44100);
 
       if (isStereo) {
         const left = new Float32Array(numFrames);
@@ -264,8 +291,9 @@ export default function AudioStreamView({
       source.connect(gainNodeRef.current || ctx.destination);
 
       const currentTime = ctx.currentTime;
-      if (nextAudioTimeRef.current < currentTime) {
-        nextAudioTimeRef.current = currentTime + 0.03;
+      // Resynchronize if scheduling drifted beyond 150ms or fell behind
+      if (nextAudioTimeRef.current < currentTime || nextAudioTimeRef.current > currentTime + 0.15) {
+        nextAudioTimeRef.current = currentTime + 0.02;
       }
       source.start(nextAudioTimeRef.current);
       nextAudioTimeRef.current += buffer.duration;
@@ -456,12 +484,14 @@ export default function AudioStreamView({
           try {
             const data = JSON.parse(event.data);
             if (data.type === "init") {
+              const channels = Number(data.channels) || 1;
               const newMeta: AudioMetadata = {
                 sampleRate: data.sampleRate || 44100,
-                channels: data.channels || 2,
+                channels: channels,
                 format: data.format || "pcm16",
-                isStereo: data.isStereo ?? data.channels >= 2,
+                isStereo: data.isStereo ?? (channels >= 2),
               };
+              audioMetaRef.current = newMeta;
               setAudioMeta(newMeta);
               setStatus("streaming");
               setStatusMessage("Live audio streaming active");
@@ -470,7 +500,15 @@ export default function AudioStreamView({
                 setStatus("streaming");
                 setStatusMessage("Live audio streaming active");
                 if (data.audioMeta) {
-                  setAudioMeta(data.audioMeta);
+                  const channels = Number(data.audioMeta.channels) || 1;
+                  const meta: AudioMetadata = {
+                    sampleRate: data.audioMeta.sampleRate || 44100,
+                    channels: channels,
+                    format: data.audioMeta.format || "pcm16",
+                    isStereo: data.audioMeta.isStereo ?? (channels >= 2),
+                  };
+                  audioMetaRef.current = meta;
+                  setAudioMeta(meta);
                 }
               } else if (data.status === "waiting_device") {
                 setStatus("waiting_device");
@@ -531,12 +569,13 @@ export default function AudioStreamView({
       }
       wsRef.current = null;
 
-      // Clean up Web Audio API
+      // Suspend Web Audio API on component unmount rather than abrupt close
       if (audioCtxRef.current) {
         try {
-          audioCtxRef.current.close();
+          if (audioCtxRef.current.state !== "closed") {
+            audioCtxRef.current.suspend().catch(() => {});
+          }
         } catch {}
-        audioCtxRef.current = null;
       }
     };
   }, [deviceId]);
@@ -552,6 +591,16 @@ export default function AudioStreamView({
       .catch(() => {});
     setStatus("stopped");
     setStatusMessage("Audio streaming stopped by admin");
+
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close().catch(() => {});
+      } catch {}
+      audioCtxRef.current = null;
+    }
+    const win = window as unknown as { __spappAudioCtx?: AudioContext | null };
+    win.__spappAudioCtx = null;
+
     if (onClose) onClose();
   };
 
@@ -758,13 +807,38 @@ export default function AudioStreamView({
       {/* Main Visualizer Area */}
       <div className="relative p-5 bg-gradient-to-b from-slate-950 to-slate-900 flex flex-col items-center">
         {/* Visualizer Canvas */}
-        <div className="w-full relative rounded-lg overflow-hidden border border-slate-800 bg-slate-950 shadow-inner">
+        <div
+          onClick={resumeAudio}
+          className="w-full relative rounded-lg overflow-hidden border border-slate-800 bg-slate-950 shadow-inner cursor-pointer"
+        >
           <canvas
             ref={canvasRef}
             width={640}
             height={160}
             className="w-full h-36 block"
           />
+
+          {/* Browser Autoplay Unmute Overlay */}
+          {status === "streaming" && isAudioSuspended && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                resumeAudio();
+              }}
+              className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm z-30 flex flex-col items-center justify-center p-4 cursor-pointer"
+            >
+              <button
+                type="button"
+                onClick={resumeAudio}
+                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-bold text-xs rounded-full shadow-2xl animate-bounce transition"
+              >
+                <span>🔊 Click to Listen / Unmute (Browser Audio Policy)</span>
+              </button>
+              <p className="text-[11px] text-slate-400 mt-2 font-mono">
+                Click anywhere to activate browser sound output
+              </p>
+            </div>
+          )}
 
           {/* Overlay Status when connecting or on error */}
           {status !== "streaming" && (
