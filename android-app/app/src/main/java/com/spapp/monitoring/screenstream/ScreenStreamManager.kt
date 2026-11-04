@@ -3,6 +3,9 @@ package com.spapp.monitoring.screenstream
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -309,7 +312,8 @@ object ScreenStreamManager {
         if (service == null) {
             val a11yEnabled = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(context)
             if (a11yEnabled) {
-                for (i in 0 until 10) {
+                // Gracefully wait up to 3 seconds for service instance to rebind or finish app transition
+                for (i in 0 until 15) {
                     delay(200L)
                     service = BlockAccessibilityService.instance
                     if (service != null) break
@@ -318,14 +322,18 @@ object ScreenStreamManager {
         }
 
         if (service == null) {
-            Log.w(TAG, "BlockAccessibilityService not active")
-            try {
-                ws.send(JSONObject(mapOf(
-                    "type" to "status",
-                    "status" to "error",
-                    "message" to "Accessibility service not active (please enable Accessibility in Settings)"
-                )).toString())
-            } catch (_: Exception) {}
+            val isEnabledInSettings = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(context)
+            Log.w(TAG, "BlockAccessibilityService not active (setting in Settings: $isEnabledInSettings)")
+            // ONLY notify waiting_a11y if user genuinely disabled the setting in Android OS
+            if (!isEnabledInSettings) {
+                try {
+                    ws.send(JSONObject(mapOf(
+                        "type" to "status",
+                        "status" to "waiting_a11y",
+                        "message" to "Accessibility service not active (please enable Accessibility in Settings)"
+                    )).toString())
+                } catch (_: Exception) {}
+            }
             delay(1000L)
             return
         }
@@ -339,16 +347,6 @@ object ScreenStreamManager {
                         override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
                             val hardwareBuffer = screenshotResult.hardwareBuffer
                             val colorSpace = screenshotResult.colorSpace
-
-                            // Track successful captures to periodically test if 200ms is sustainable
-                            successfulCaptures++
-                            if (successfulCaptures > 30 && currentCaptureIntervalMs > DEFAULT_CAPTURE_INTERVAL_MS) {
-                                currentCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
-                                successfulCaptures = 0
-                            }
-
-                            // Resume capture loop immediately so interval pacing runs concurrently with encode & transmission
-                            if (continuation.isActive) continuation.resume(Unit)
 
                             scope.launch(Dispatchers.Default) {
                                 isEncoding.set(true)
@@ -375,37 +373,36 @@ object ScreenStreamManager {
                                         val dstWidth = (width * scale).toInt().coerceAtLeast(1)
                                         val dstHeight = (height * scale).toInt().coerceAtLeast(1)
 
-                                        // Step 1: High-speed scaled software bitmap compression (compact 20-30KB frames)
-                                        val swBitmap = try {
-                                            hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                        // High-performance direct scale: render directly onto a small ~500KB RGB_565 bitmap
+                                        // NEVER copying a 10.4 MB unscaled full-res software bitmap into the Java Heap!
+                                        val scaledBitmap = try {
+                                            val bmp = Bitmap.createBitmap(dstWidth, dstHeight, Bitmap.Config.RGB_565)
+                                            val canvas = Canvas(bmp)
+                                            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+                                            val matrix = Matrix().apply { setScale(scale, scale) }
+                                            canvas.drawBitmap(hwBitmap, matrix, paint)
+                                            bmp
                                         } catch (_: Throwable) {
-                                            null
-                                        }
-
-                                        if (swBitmap != null) {
-                                            val scaled = if (dstWidth != width || dstHeight != height) {
-                                                val s = Bitmap.createScaledBitmap(swBitmap, dstWidth, dstHeight, true)
-                                                swBitmap.recycle()
-                                                s
-                                            } else {
-                                                swBitmap
-                                            }
-
-                                            val swOut = ByteArrayOutputStream(32 * 1024)
-                                            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
-                                            scaled.recycle()
-                                            jpegBytes = swOut.toByteArray()
-                                        } else {
-                                            // Fallback: direct hardware compression with lower quality if RAM allocation failed
-                                            val directOut = ByteArrayOutputStream(32 * 1024)
-                                            if (hwBitmap.compress(Bitmap.CompressFormat.JPEG, 35, directOut)) {
-                                                jpegBytes = directOut.toByteArray()
-                                            }
+                                            try {
+                                                val bmp = Bitmap.createBitmap(dstWidth, dstHeight, Bitmap.Config.ARGB_8888)
+                                                val canvas = Canvas(bmp)
+                                                val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+                                                val matrix = Matrix().apply { setScale(scale, scale) }
+                                                canvas.drawBitmap(hwBitmap, matrix, paint)
+                                                bmp
+                                            } catch (_: Throwable) { null }
                                         }
 
                                         try {
                                             hwBitmap.recycle()
                                         } catch (_: Throwable) {}
+
+                                        if (scaledBitmap != null) {
+                                            val swOut = ByteArrayOutputStream(32 * 1024)
+                                            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
+                                            scaledBitmap.recycle()
+                                            jpegBytes = swOut.toByteArray()
+                                        }
                                     }
 
                                     if (jpegBytes != null && jpegBytes.isNotEmpty()) {
@@ -414,6 +411,11 @@ object ScreenStreamManager {
                                             packet[0] = PACKET_TYPE_VIDEO
                                             System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.size)
                                             ws.send(packet.toByteString())
+                                            successfulCaptures++
+                                            if (successfulCaptures > 30 && currentCaptureIntervalMs > DEFAULT_CAPTURE_INTERVAL_MS) {
+                                                currentCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
+                                                successfulCaptures = 0
+                                            }
                                         }
                                     } else {
                                         Log.w(TAG, "Failed to produce JPEG bytes for screenshot frame")
@@ -425,6 +427,8 @@ object ScreenStreamManager {
                                         hardwareBuffer.close()
                                     } catch (_: Throwable) {}
                                     isEncoding.set(false)
+                                    // Resume capture loop only after hardwareBuffer is safely closed and frame is dispatched!
+                                    if (continuation.isActive) continuation.resume(Unit)
                                 }
                             }
                         }
@@ -437,7 +441,7 @@ object ScreenStreamManager {
                                 successfulCaptures = 0
                             }
                             scope.launch(Dispatchers.Default) {
-                                delay(if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) 60L else 120L)
+                                delay(if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) 80L else 150L)
                                 if (continuation.isActive) continuation.resume(Unit)
                             }
                         }
