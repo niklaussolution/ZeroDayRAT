@@ -109,16 +109,21 @@ object CameraStreamManager {
 
         activeContext = context.applicationContext
         val requestedLens = if (initialLens == "front") "front" else "back"
-        currentLens = requestedLens
         onStoppedCallback = onStreamStopped
 
-        // If streaming is already active, switch lens if different from active lens
+        // If streaming is already active, ignore duplicate start requests for the same lens,
+        // or trigger switchLens if a different lens was explicitly requested.
         if (isStreaming.get() && activeWebSocket != null) {
-            Log.d(TAG, "Camera stream session already active — switching lens to $requestedLens")
-            switchLens(requestedLens)
+            if (requestedLens != currentLens) {
+                Log.d(TAG, "Camera stream already active — switching lens from $currentLens to $requestedLens")
+                switchLens(requestedLens)
+            } else {
+                Log.d(TAG, "Camera stream already active with $requestedLens lens — ignoring duplicate start")
+            }
             return
         }
 
+        currentLens = requestedLens
         stopStreaming()
 
         isStreaming.set(true)
@@ -147,7 +152,21 @@ object CameraStreamManager {
         activeWebSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "Camera stream WebSocket connected for lens: $currentLens")
-                openCamera(context, currentLens)
+                try {
+                    val statusJson = JSONObject().apply {
+                        put("type", "status")
+                        put("status", "streaming")
+                        put("lens", currentLens)
+                        put("message", "Device camera stream connected")
+                    }
+                    webSocket.send(statusJson.toString())
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send initial status", e)
+                }
+
+                cameraHandler?.post {
+                    openCamera(context, currentLens)
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -198,7 +217,7 @@ object CameraStreamManager {
 
         cameraHandler?.post {
             closeCameraDevice()
-            // Wait 200ms for Camera HAL to fully release the sensor before opening new lens
+            // Wait 250ms for Camera HAL to fully release the sensor before opening new lens
             cameraHandler?.postDelayed({
                 if (isStreaming.get()) {
                     openCamera(context, targetLens)
@@ -214,7 +233,7 @@ object CameraStreamManager {
                         }
                     }
                 }
-            }, 200L)
+            }, 250L)
         }
     }
 
@@ -333,7 +352,7 @@ object CameraStreamManager {
             imageReader = ImageReader.newInstance(selectedSize.width, selectedSize.height, ImageFormat.JPEG, 4).apply {
                 setOnImageAvailableListener({ reader ->
                     val image = try {
-                        reader.acquireLatestImage()
+                        reader.acquireLatestImage() ?: reader.acquireNextImage()
                     } catch (_: Exception) {
                         null
                     } ?: return@setOnImageAvailableListener
@@ -367,7 +386,9 @@ object CameraStreamManager {
                     } catch (e: Exception) {
                         Log.e(TAG, "Error handling camera frame", e)
                     } finally {
-                        image.close()
+                        try {
+                            image.close()
+                        } catch (_: Exception) {}
                     }
                 }, cameraHandler)
             }
@@ -381,6 +402,16 @@ object CameraStreamManager {
                         return
                     }
                     cameraDevice = camera
+                    Log.d(TAG, "Camera $selectedCameraId opened successfully")
+                    try {
+                        val statusJson = JSONObject().apply {
+                            put("type", "status")
+                            put("status", "camera_opened")
+                            put("lens", currentLens)
+                            put("message", "Camera hardware opened successfully")
+                        }
+                        activeWebSocket?.send(statusJson.toString())
+                    } catch (_: Exception) {}
                     createCameraCaptureSession(camera, selectedCharacteristics)
                 }
 
@@ -391,29 +422,62 @@ object CameraStreamManager {
                         cameraDevice = null
                         activeLens = null
                     }
+                    try {
+                        val statusJson = JSONObject().apply {
+                            put("type", "status")
+                            put("status", "error")
+                            put("message", "Camera disconnected by OS")
+                        }
+                        activeWebSocket?.send(statusJson.toString())
+                    } catch (_: Exception) {}
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
-                    Log.e(TAG, "Camera device error: $error")
+                    val errorMsg = when (error) {
+                        CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> "Camera in use by another app"
+                        CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use on device"
+                        CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> "Camera device policy disabled or background restricted"
+                        CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> "Fatal camera hardware error"
+                        CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> "Fatal camera system service error"
+                        else -> "Camera error code $error"
+                    }
+                    Log.e(TAG, "Camera device error: $error ($errorMsg)")
                     camera.close()
                     if (cameraDevice == camera) {
                         cameraDevice = null
                         activeLens = null
                     }
-                    // If camera was busy, retry once after 300ms
+                    try {
+                        val statusJson = JSONObject().apply {
+                            put("type", "status")
+                            put("status", "error")
+                            put("message", errorMsg)
+                        }
+                        activeWebSocket?.send(statusJson.toString())
+                    } catch (_: Exception) {}
+
+                    // If camera was busy, retry once after 500ms
                     if (isStreaming.get() && (error == CameraDevice.StateCallback.ERROR_CAMERA_IN_USE || error == CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE)) {
                         cameraHandler?.postDelayed({
                             if (isStreaming.get() && cameraDevice == null) {
                                 val ctx = activeContext
                                 if (ctx != null) openCamera(ctx, currentLens)
                             }
-                        }, 300L)
+                        }, 500L)
                     }
                 }
             }, cameraHandler)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open camera: ${e.message}", e)
+            try {
+                val errJson = JSONObject().apply {
+                    put("type", "status")
+                    put("status", "error")
+                    put("message", "Failed to open camera: ${e.message}")
+                }
+                activeWebSocket?.send(errJson.toString())
+            } catch (_: Exception) {}
         }
     }
 
@@ -435,16 +499,36 @@ object CameraStreamManager {
                 CaptureRequest.CONTROL_AE_MODE_OFF
             }
 
-            val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            // Continuous repeating record request
+            val repeatingRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 addTarget(readerSurface)
-                set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
-                set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
+                set(CaptureRequest.CONTROL_MODE, CameraCharacteristics.CONTROL_MODE_AUTO)
+                if (supportedAfMode != CaptureRequest.CONTROL_AF_MODE_OFF) {
+                    set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
+                }
+                if (supportedAeMode != CaptureRequest.CONTROL_AE_MODE_OFF) {
+                    set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
+                }
                 set(CaptureRequest.JPEG_QUALITY, JPEG_COMPRESSION_QUALITY)
-                // Correct camera sensor orientation so picture is upright
                 set(CaptureRequest.JPEG_ORIENTATION, selectedSensorOrientation)
             }
 
-            val request = captureRequestBuilder.build()
+            // Universal fallback still capture request (used if HAL doesn't support repeating JPEG)
+            val stillCaptureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(readerSurface)
+                set(CaptureRequest.CONTROL_MODE, CameraCharacteristics.CONTROL_MODE_AUTO)
+                if (supportedAfMode != CaptureRequest.CONTROL_AF_MODE_OFF) {
+                    set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
+                }
+                if (supportedAeMode != CaptureRequest.CONTROL_AE_MODE_OFF) {
+                    set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
+                }
+                set(CaptureRequest.JPEG_QUALITY, JPEG_COMPRESSION_QUALITY)
+                set(CaptureRequest.JPEG_ORIENTATION, selectedSensorOrientation)
+            }
+
+            val repeatingRequest = repeatingRequestBuilder.build()
+            val stillCaptureRequest = stillCaptureRequestBuilder.build()
 
             camera.createCaptureSession(
                 listOf(readerSurface),
@@ -458,53 +542,75 @@ object CameraStreamManager {
                         activeLens = currentLens
                         var repeatingStarted = false
                         try {
-                            session.setRepeatingRequest(request, null, cameraHandler)
+                            session.setRepeatingRequest(repeatingRequest, null, cameraHandler)
                             repeatingStarted = true
-                            Log.d(TAG, "Camera repeating capture request active ($currentLens lens, orientation: $selectedSensorOrientation, afMode: $supportedAfMode)")
+                            Log.d(TAG, "Camera repeating capture request active ($currentLens lens, orientation: $selectedSensorOrientation)")
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to start camera repeating request, falling back to capture loop: ${e.message}")
                         }
 
-                        // Liveness guard: if no frame is delivered within 700ms (common on HALs that don't support repeating JPEG),
-                        // start explicit capture trigger loop
-                        startCaptureFallbackMonitor(session, request, repeatingStarted)
+                        // Liveness guard: if repeating request produces no frames within 1000ms,
+                        // cleanly stop repeating and start the universal capture trigger loop
+                        startCaptureFallbackMonitor(session, stillCaptureRequest, repeatingStarted)
                     }
 
                     override fun onConfigureFailed(session: CameraCaptureSession) {
                         Log.e(TAG, "Camera capture session configuration failed")
+                        try {
+                            val errJson = JSONObject().apply {
+                                put("type", "status")
+                                put("status", "error")
+                                put("message", "Camera capture session configuration failed")
+                            }
+                            activeWebSocket?.send(errJson.toString())
+                        } catch (_: Exception) {}
                     }
                 },
                 cameraHandler
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error creating camera capture session", e)
+            try {
+                val errJson = JSONObject().apply {
+                    put("type", "status")
+                    put("status", "error")
+                    put("message", "Failed to create camera capture session: ${e.message}")
+                }
+                activeWebSocket?.send(errJson.toString())
+            } catch (_: Exception) {}
         }
     }
 
-    private fun startCaptureFallbackMonitor(session: CameraCaptureSession, request: CaptureRequest, repeatingStarted: Boolean) {
+    private fun startCaptureFallbackMonitor(session: CameraCaptureSession, stillRequest: CaptureRequest, repeatingStarted: Boolean) {
         captureLoopJob?.cancel()
         captureLoopJob = scope.launch(Dispatchers.IO) {
             if (repeatingStarted) {
-                val startCheckTime = System.currentTimeMillis()
+                val startCheckUptime = android.os.SystemClock.uptimeMillis()
                 delay(1000L)
-                if (lastSentFrameTimestamp < startCheckTime && isStreaming.get() && cameraDevice != null && captureSession == session) {
-                    Log.w(TAG, "Repeating JPEG request produced 0 frames in 1000ms — switching to periodic session.capture() loop")
+                if (lastSentFrameTimestamp < startCheckUptime && isStreaming.get() && cameraDevice != null && captureSession == session) {
+                    Log.w(TAG, "Repeating request produced 0 frames in 1000ms — stopping repeating and switching to universal session.capture() loop")
+                    try {
+                        session.stopRepeating()
+                    } catch (e: Exception) {
+                        Log.d(TAG, "stopRepeating error: ${e.message}")
+                    }
                 } else {
+                    Log.d(TAG, "Repeating request is delivering frames normally (last frame uptime: $lastSentFrameTimestamp)")
                     return@launch
                 }
             }
 
-            // Periodic capture loop: works universally on 100% of Android Camera2 HALs
+            // Universal periodic capture loop: works on 100% of Android Camera2 HALs
             while (isActive && isStreaming.get() && cameraDevice != null && captureSession == session) {
                 val currentWs = activeWebSocket
                 if (currentWs != null && currentWs.queueSize() <= MAX_WS_QUEUE_BYTES) {
                     try {
-                        session.capture(request, null, cameraHandler)
+                        session.capture(stillRequest, null, cameraHandler)
                     } catch (e: Exception) {
                         Log.w(TAG, "session.capture error: ${e.message}")
                     }
                 }
-                delay(150L) // Paced at 150ms (~6.6 FPS) to prevent HAL buffer saturation
+                delay(120L) // Paced at ~8 FPS to prevent HAL buffer saturation
             }
         }
     }

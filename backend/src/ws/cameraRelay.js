@@ -161,6 +161,15 @@ function attachCameraRelay(httpServer) {
                   admin.send(JSON.stringify({ type: "lens_switched", lens: parsed.lens }));
                 }
               }
+            } else if (parsed.type === "status") {
+              if (parsed.lens) {
+                stream.currentLens = parsed.lens;
+              }
+              for (const admin of stream.adminWsSet) {
+                if (admin.readyState === WebSocket.OPEN) {
+                  admin.send(JSON.stringify(parsed));
+                }
+              }
             }
           } catch {
             // ignore non-json

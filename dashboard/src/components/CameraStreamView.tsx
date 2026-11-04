@@ -288,9 +288,14 @@ export default function CameraStreamView({
             } else if (msg.status === "waiting_device") {
               setStatus("waiting_device");
               setStatusMessage("Waiting for device camera stream...");
+            } else if (msg.status === "camera_opened") {
+              setStatusMessage(`Camera sensor active (${msg.lens || targetLens}). Initializing video feed...`);
             } else if (msg.status === "device_stopped") {
               setStatus("stopped");
               setStatusMessage("Device stopped camera stream");
+            } else if (msg.status === "error") {
+              setStatus("error");
+              setStatusMessage(msg.message || "Camera device error occurred");
             }
           } else if (msg.type === "lens_switched") {
             switchingTargetLensRef.current = null;
