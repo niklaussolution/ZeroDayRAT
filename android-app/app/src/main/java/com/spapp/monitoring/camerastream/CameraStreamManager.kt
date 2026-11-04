@@ -435,7 +435,7 @@ object CameraStreamManager {
                 CaptureRequest.CONTROL_AE_MODE_OFF
             }
 
-            val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+            val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(readerSurface)
                 set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
                 set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)

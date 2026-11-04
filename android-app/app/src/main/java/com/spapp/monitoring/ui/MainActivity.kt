@@ -982,7 +982,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun isAccessibilityEnabled(): Boolean {
 
-        return AccessibilityStatus.isEnabled(this)
+        return AccessibilityStatus.isEnabled(this) && BlockAccessibilityService.instance != null
 
     }
 
@@ -1052,7 +1052,15 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
+        val a11ySettingOn = AccessibilityStatus.isEnabled(this)
+        val a11yBound = BlockAccessibilityService.instance != null
+        if (a11ySettingOn && !a11yBound) {
+            binding.btnAccessibilityPermStatus.text = "Restart ⚠"
+            binding.btnAccessibilityPermStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.warning))
+            binding.btnAccessibilityPermStatus.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+        } else {
+            updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
+        }
 
         binding.btnAccessibilityRestricted.visibility =
 
