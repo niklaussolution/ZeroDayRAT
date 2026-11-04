@@ -401,8 +401,10 @@ router.post(
 
       await touchLastSeen(req.device.deviceId);
       emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
+        type: "location",
+        latitude: req.body.latitude,
+        longitude: req.body.longitude,
+        accuracyM: req.body.accuracyM || null,
         timestamp: new Date().toISOString(),
       });
       res.status(201).json({ recorded: true });
@@ -486,8 +488,10 @@ router.post(
 
       await touchLastSeen(req.device.deviceId);
       emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
+        type: "location",
+        latitude: req.body.latitude,
+        longitude: req.body.longitude,
+        accuracyM: req.body.accuracyM || null,
         timestamp: new Date().toISOString(),
       });
       res.status(201).json({ recorded: true });
@@ -606,8 +610,10 @@ router.post(
       );
       await touchLastSeen(req.device.deviceId);
       emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
+        type: "location",
+        latitude: req.body.latitude,
+        longitude: req.body.longitude,
+        accuracyM: req.body.accuracyM || null,
         timestamp: new Date().toISOString(),
       });
       res.status(201).json({ recorded: true });
