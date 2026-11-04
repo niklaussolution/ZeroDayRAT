@@ -202,6 +202,9 @@ object AudioStreamManager {
                         }
 
                         ws.send(byteBuffer.toByteString(0, byteIdx))
+                    } else if (readShorts < 0) {
+                        Log.w(TAG, "AudioRecord.read returned error code: $readShorts")
+                        kotlinx.coroutines.delay(20L)
                     }
                 }
             } catch (e: Exception) {
@@ -249,7 +252,7 @@ object AudioStreamManager {
                     try {
                         val minBuf = AudioRecord.getMinBufferSize(rate, channel, AudioFormat.ENCODING_PCM_16BIT)
                         if (minBuf <= 0) continue
-                        val bufSize = maxOf(minBuf * 2, 4096)
+                        val bufSize = maxOf(minBuf * 4, 32768)
                         val rec = AudioRecord(source, rate, channel, AudioFormat.ENCODING_PCM_16BIT, bufSize)
                         if (rec.state == AudioRecord.STATE_INITIALIZED) {
                             return Pair(
