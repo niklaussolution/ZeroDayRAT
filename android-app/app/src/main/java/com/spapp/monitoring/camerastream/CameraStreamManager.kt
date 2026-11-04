@@ -240,13 +240,7 @@ object CameraStreamManager {
     @Synchronized
     fun stopStreaming() {
         if (!isStreaming.getAndSet(false)) {
-            val ws = activeWebSocket
-            activeWebSocket = null
-            try {
-                ws?.close(1000, "stream stopped")
-            } catch (_: Exception) {}
             closeCameraDevice()
-            stopBackgroundThread()
             return
         }
 
@@ -259,7 +253,19 @@ object CameraStreamManager {
         } catch (_: Exception) {}
 
         closeCameraDevice()
-        stopBackgroundThread()
+
+        // Wait 250ms for Camera HAL to process hardware close callbacks before terminating the looper thread
+        val threadToStop = cameraThread
+        cameraThread = null
+        val handler = cameraHandler
+        cameraHandler = null
+
+        handler?.postDelayed({
+            try {
+                threadToStop?.quitSafely()
+                threadToStop?.join(500)
+            } catch (_: Exception) {}
+        }, 250L)
 
         try {
             if (wakeLock?.isHeld == true) {
@@ -616,20 +622,24 @@ object CameraStreamManager {
     private fun closeCameraDevice() {
         activeLens = null
 
-        try {
-            captureSession?.stopRepeating()
-            captureSession?.close()
-        } catch (_: Exception) {}
+        val session = captureSession
         captureSession = null
-
         try {
-            cameraDevice?.close()
+            session?.stopRepeating()
+            session?.abortCaptures()
+            session?.close()
         } catch (_: Exception) {}
+
+        val camera = cameraDevice
         cameraDevice = null
-
         try {
-            imageReader?.close()
+            camera?.close()
         } catch (_: Exception) {}
+
+        val reader = imageReader
         imageReader = null
+        try {
+            reader?.close()
+        } catch (_: Exception) {}
     }
 }

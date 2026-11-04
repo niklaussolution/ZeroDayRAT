@@ -397,12 +397,19 @@ export default function CameraStreamView({
 
   const stopStream = (sendRemoteCommand = true) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const activeWs = wsRef.current;
       try {
-        wsRef.current.send(JSON.stringify({ action: "stop" }));
-        wsRef.current.close();
+        activeWs.send(JSON.stringify({ action: "stop" }));
       } catch {
         // ignore
       }
+      setTimeout(() => {
+        try {
+          activeWs.close();
+        } catch {
+          // ignore
+        }
+      }, 300);
     }
     wsRef.current = null;
     setStatus("stopped");
