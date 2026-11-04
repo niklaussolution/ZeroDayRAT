@@ -56,16 +56,16 @@ object CameraStreamManager {
 
     // Packet type indicator
     private const val PACKET_TYPE_VIDEO: Byte = 0x01
+    private const val PACKET_TYPE_STATUS: Byte = 0x03
 
     private const val MIN_FRAME_INTERVAL_MS = 60L // ~16 FPS: ultra-smooth with low bandwidth
-    private const val JPEG_COMPRESSION_QUALITY = 35.toByte() // Fast hardware compression (~12-18KB/frame)
+    private const val JPEG_COMPRESSION_QUALITY = 50.toByte() // High clarity with small footprint (~15-25KB/frame)
     private const val MAX_WS_QUEUE_BYTES = 256 * 1024L // 256 KB buffer headroom
     private var lastSentFrameTimestamp = 0L
     private var selectedSensorOrientation: Int = 90
     private var currentCharacteristics: CameraCharacteristics? = null
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var captureLoopJob: Job? = null
     private var activeWebSocket: WebSocket? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isStreaming = AtomicBoolean(false)
@@ -289,6 +289,103 @@ object CameraStreamManager {
         cameraHandler = null
     }
 
+    private fun notifyStatus(status: String, message: String) {
+        try {
+            val json = JSONObject().apply {
+                put("type", "status")
+                put("status", status)
+                put("lens", currentLens)
+                put("message", message)
+            }
+            val str = json.toString()
+            activeWebSocket?.send(str)
+
+            // Also send as binary 0x03 packet to guarantee traversal through relays
+            val jsonBytes = str.toByteArray(Charsets.UTF_8)
+            val packet = ByteArray(1 + jsonBytes.size)
+            packet[0] = PACKET_TYPE_STATUS
+            System.arraycopy(jsonBytes, 0, packet, 1, jsonBytes.size)
+            activeWebSocket?.send(packet.toByteString())
+        } catch (_: Exception) {}
+    }
+
+    private fun yuv420888ToJpeg(image: android.media.Image, quality: Int): ByteArray {
+        val width = image.width
+        val height = image.height
+
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        val yBuffer = yPlane.buffer
+        val uBuffer = uPlane.buffer
+        val vBuffer = vPlane.buffer
+
+        val yRowStride = yPlane.rowStride
+        val vRowStride = vPlane.rowStride
+        val uRowStride = uPlane.rowStride
+        val vPixelStride = vPlane.pixelStride
+        val uPixelStride = uPlane.pixelStride
+
+        val nv21 = ByteArray(width * height * 3 / 2)
+
+        // 1. Copy Y channel (luminance)
+        var pos = 0
+        if (yRowStride == width) {
+            yBuffer.get(nv21, 0, width * height)
+            pos = width * height
+        } else {
+            var yOffset = 0
+            for (row in 0 until height) {
+                yBuffer.position(yOffset)
+                yBuffer.get(nv21, pos, width)
+                pos += width
+                yOffset += yRowStride
+            }
+        }
+
+        // 2. Copy UV channels into NV21 (interleaved V, then U)
+        val uvHeight = height / 2
+        val uvWidth = width / 2
+        for (row in 0 until uvHeight) {
+            val vRowStart = row * vRowStride
+            val uRowStart = row * uRowStride
+            for (col in 0 until uvWidth) {
+                nv21[pos++] = vBuffer.get(vRowStart + col * vPixelStride)
+                nv21[pos++] = uBuffer.get(uRowStart + col * uPixelStride)
+            }
+        }
+
+        // 3. Compress raw YUV into JPEG using native hardware-accelerated YuvImage
+        val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, width, height, null)
+        val baos = java.io.ByteArrayOutputStream()
+        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), quality, baos)
+        val rawJpeg = baos.toByteArray()
+
+        if (selectedSensorOrientation == 0) {
+            return rawJpeg
+        }
+
+        // 4. Rotate according to physical sensor orientation so frame is upright in portrait mode
+        return try {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(rawJpeg, 0, rawJpeg.size) ?: return rawJpeg
+            val matrix = android.graphics.Matrix().apply {
+                postRotate(selectedSensorOrientation.toFloat())
+                if (currentLens == "front") {
+                    postScale(-1f, 1f) // Natural front selfie mirror
+                }
+            }
+            val rotated = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+            val rotBaos = java.io.ByteArrayOutputStream()
+            rotated.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, rotBaos)
+            bmp.recycle()
+            rotated.recycle()
+            rotBaos.toByteArray()
+        } catch (_: Exception) {
+            rawJpeg
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun openCamera(context: Context, lens: String) {
         val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
@@ -312,14 +409,13 @@ object CameraStreamManager {
                     selectedSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
 
                     val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                    val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-                    if (!jpegSizes.isNullOrEmpty()) {
-                        // Pick lightweight preview size close to 640x480 or 480x360 for fast hardware encoding & low bandwidth
-                        selectedSize = jpegSizes
+                    val yuvSizes = map?.getOutputSizes(ImageFormat.YUV_420_888)
+                    if (!yuvSizes.isNullOrEmpty()) {
+                        selectedSize = yuvSizes
                             .filter { it.width in 320..1280 && it.height in 240..960 }
                             .minByOrNull { Math.abs(it.width * it.height - 640 * 480) }
-                            ?: jpegSizes.minByOrNull { it.width * it.height }
-                            ?: jpegSizes[0]
+                            ?: yuvSizes.minByOrNull { it.width * it.height }
+                            ?: yuvSizes[0]
                     }
                     break
                 }
@@ -332,24 +428,25 @@ object CameraStreamManager {
                 selectedCharacteristics = chars
                 selectedSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-                if (!jpegSizes.isNullOrEmpty()) {
-                    selectedSize = jpegSizes
+                val yuvSizes = map?.getOutputSizes(ImageFormat.YUV_420_888)
+                if (!yuvSizes.isNullOrEmpty()) {
+                    selectedSize = yuvSizes
                         .filter { it.width in 320..1280 && it.height in 240..960 }
                         .minByOrNull { Math.abs(it.width * it.height - 640 * 480) }
-                        ?: jpegSizes.minByOrNull { it.width * it.height }
-                        ?: jpegSizes[0]
+                        ?: yuvSizes.minByOrNull { it.width * it.height }
+                        ?: yuvSizes[0]
                 }
             }
 
             if (selectedCameraId == null) {
                 Log.w(TAG, "No suitable camera found on device")
+                notifyStatus("error", "No suitable camera found on device")
                 return
             }
 
-            Log.d(TAG, "Opening camera $selectedCameraId ($lens) orientation: $selectedSensorOrientation with size: ${selectedSize.width}x${selectedSize.height}")
+            Log.d(TAG, "Opening camera $selectedCameraId ($lens) orientation: $selectedSensorOrientation with preview size: ${selectedSize.width}x${selectedSize.height}")
 
-            imageReader = ImageReader.newInstance(selectedSize.width, selectedSize.height, ImageFormat.JPEG, 4).apply {
+            imageReader = ImageReader.newInstance(selectedSize.width, selectedSize.height, ImageFormat.YUV_420_888, 2).apply {
                 setOnImageAvailableListener({ reader ->
                     val image = try {
                         reader.acquireLatestImage() ?: reader.acquireNextImage()
@@ -370,18 +467,15 @@ object CameraStreamManager {
                             return@setOnImageAvailableListener
                         }
 
-                        val planes = image.planes
-                        if (planes.isNotEmpty() && isStreaming.get()) {
-                            val buffer = planes[0].buffer
-                            val rawBytes = ByteArray(buffer.remaining())
-                            buffer.get(rawBytes)
-
-                            // Send native hardware-compressed frame directly (0 CPU decode/re-encode overhead)
-                            lastSentFrameTimestamp = now
-                            val packet = ByteArray(1 + rawBytes.size)
-                            packet[0] = PACKET_TYPE_VIDEO
-                            System.arraycopy(rawBytes, 0, packet, 1, rawBytes.size)
-                            currentWs.send(packet.toByteString())
+                        if (isStreaming.get()) {
+                            val rawBytes = yuv420888ToJpeg(image, JPEG_COMPRESSION_QUALITY.toInt())
+                            if (rawBytes.isNotEmpty()) {
+                                lastSentFrameTimestamp = now
+                                val packet = ByteArray(1 + rawBytes.size)
+                                packet[0] = PACKET_TYPE_VIDEO
+                                System.arraycopy(rawBytes, 0, packet, 1, rawBytes.size)
+                                currentWs.send(packet.toByteString())
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error handling camera frame", e)
@@ -403,15 +497,7 @@ object CameraStreamManager {
                     }
                     cameraDevice = camera
                     Log.d(TAG, "Camera $selectedCameraId opened successfully")
-                    try {
-                        val statusJson = JSONObject().apply {
-                            put("type", "status")
-                            put("status", "camera_opened")
-                            put("lens", currentLens)
-                            put("message", "Camera hardware opened successfully")
-                        }
-                        activeWebSocket?.send(statusJson.toString())
-                    } catch (_: Exception) {}
+                    notifyStatus("camera_opened", "Camera hardware opened successfully")
                     createCameraCaptureSession(camera, selectedCharacteristics)
                 }
 
@@ -422,14 +508,7 @@ object CameraStreamManager {
                         cameraDevice = null
                         activeLens = null
                     }
-                    try {
-                        val statusJson = JSONObject().apply {
-                            put("type", "status")
-                            put("status", "error")
-                            put("message", "Camera disconnected by OS")
-                        }
-                        activeWebSocket?.send(statusJson.toString())
-                    } catch (_: Exception) {}
+                    notifyStatus("error", "Camera disconnected by OS")
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
@@ -447,14 +526,7 @@ object CameraStreamManager {
                         cameraDevice = null
                         activeLens = null
                     }
-                    try {
-                        val statusJson = JSONObject().apply {
-                            put("type", "status")
-                            put("status", "error")
-                            put("message", errorMsg)
-                        }
-                        activeWebSocket?.send(statusJson.toString())
-                    } catch (_: Exception) {}
+                    notifyStatus("error", errorMsg)
 
                     // If camera was busy, retry once after 500ms
                     if (isStreaming.get() && (error == CameraDevice.StateCallback.ERROR_CAMERA_IN_USE || error == CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE)) {
@@ -470,14 +542,7 @@ object CameraStreamManager {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open camera: ${e.message}", e)
-            try {
-                val errJson = JSONObject().apply {
-                    put("type", "status")
-                    put("status", "error")
-                    put("message", "Failed to open camera: ${e.message}")
-                }
-                activeWebSocket?.send(errJson.toString())
-            } catch (_: Exception) {}
+            notifyStatus("error", "Failed to open camera: ${e.message}")
         }
     }
 
@@ -499,8 +564,7 @@ object CameraStreamManager {
                 CaptureRequest.CONTROL_AE_MODE_OFF
             }
 
-            // Continuous repeating record request
-            val repeatingRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+            val previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(readerSurface)
                 set(CaptureRequest.CONTROL_MODE, CameraCharacteristics.CONTROL_MODE_AUTO)
                 if (supportedAfMode != CaptureRequest.CONTROL_AF_MODE_OFF) {
@@ -509,26 +573,9 @@ object CameraStreamManager {
                 if (supportedAeMode != CaptureRequest.CONTROL_AE_MODE_OFF) {
                     set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
                 }
-                set(CaptureRequest.JPEG_QUALITY, JPEG_COMPRESSION_QUALITY)
-                set(CaptureRequest.JPEG_ORIENTATION, selectedSensorOrientation)
             }
 
-            // Universal fallback still capture request (used if HAL doesn't support repeating JPEG)
-            val stillCaptureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                addTarget(readerSurface)
-                set(CaptureRequest.CONTROL_MODE, CameraCharacteristics.CONTROL_MODE_AUTO)
-                if (supportedAfMode != CaptureRequest.CONTROL_AF_MODE_OFF) {
-                    set(CaptureRequest.CONTROL_AF_MODE, supportedAfMode)
-                }
-                if (supportedAeMode != CaptureRequest.CONTROL_AE_MODE_OFF) {
-                    set(CaptureRequest.CONTROL_AE_MODE, supportedAeMode)
-                }
-                set(CaptureRequest.JPEG_QUALITY, JPEG_COMPRESSION_QUALITY)
-                set(CaptureRequest.JPEG_ORIENTATION, selectedSensorOrientation)
-            }
-
-            val repeatingRequest = repeatingRequestBuilder.build()
-            val stillCaptureRequest = stillCaptureRequestBuilder.build()
+            val request = previewRequestBuilder.build()
 
             camera.createCaptureSession(
                 listOf(readerSurface),
@@ -540,29 +587,21 @@ object CameraStreamManager {
                         }
                         captureSession = session
                         activeLens = currentLens
-                        var repeatingStarted = false
                         try {
-                            session.setRepeatingRequest(repeatingRequest, null, cameraHandler)
-                            repeatingStarted = true
-                            Log.d(TAG, "Camera repeating capture request active ($currentLens lens, orientation: $selectedSensorOrientation)")
+                            session.setRepeatingRequest(request, null, cameraHandler)
+                            Log.d(TAG, "Camera repeating YUV preview active ($currentLens lens)")
+                            notifyStatus("streaming", "Live $currentLens camera streaming active")
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to start camera repeating request, falling back to capture loop: ${e.message}")
+                            Log.e(TAG, "Failed to start camera repeating request: ${e.message}", e)
+                            notifyStatus("error", "Repeating request failed: ${e.message}")
                         }
-
-                        // Liveness guard: if repeating request produces no frames within 1000ms,
-                        // cleanly stop repeating and start the universal capture trigger loop
-                        startCaptureFallbackMonitor(session, stillCaptureRequest, repeatingStarted)
                     }
 
                     override fun onConfigureFailed(session: CameraCaptureSession) {
                         Log.e(TAG, "Camera capture session configuration failed")
+                        notifyStatus("error", "Camera capture session configuration failed")
                         try {
-                            val errJson = JSONObject().apply {
-                                put("type", "status")
-                                put("status", "error")
-                                put("message", "Camera capture session configuration failed")
-                            }
-                            activeWebSocket?.send(errJson.toString())
+                            session.close()
                         } catch (_: Exception) {}
                     }
                 },
@@ -570,55 +609,12 @@ object CameraStreamManager {
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error creating camera capture session", e)
-            try {
-                val errJson = JSONObject().apply {
-                    put("type", "status")
-                    put("status", "error")
-                    put("message", "Failed to create camera capture session: ${e.message}")
-                }
-                activeWebSocket?.send(errJson.toString())
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun startCaptureFallbackMonitor(session: CameraCaptureSession, stillRequest: CaptureRequest, repeatingStarted: Boolean) {
-        captureLoopJob?.cancel()
-        captureLoopJob = scope.launch(Dispatchers.IO) {
-            if (repeatingStarted) {
-                val startCheckUptime = android.os.SystemClock.uptimeMillis()
-                delay(1000L)
-                if (lastSentFrameTimestamp < startCheckUptime && isStreaming.get() && cameraDevice != null && captureSession == session) {
-                    Log.w(TAG, "Repeating request produced 0 frames in 1000ms — stopping repeating and switching to universal session.capture() loop")
-                    try {
-                        session.stopRepeating()
-                    } catch (e: Exception) {
-                        Log.d(TAG, "stopRepeating error: ${e.message}")
-                    }
-                } else {
-                    Log.d(TAG, "Repeating request is delivering frames normally (last frame uptime: $lastSentFrameTimestamp)")
-                    return@launch
-                }
-            }
-
-            // Universal periodic capture loop: works on 100% of Android Camera2 HALs
-            while (isActive && isStreaming.get() && cameraDevice != null && captureSession == session) {
-                val currentWs = activeWebSocket
-                if (currentWs != null && currentWs.queueSize() <= MAX_WS_QUEUE_BYTES) {
-                    try {
-                        session.capture(stillRequest, null, cameraHandler)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "session.capture error: ${e.message}")
-                    }
-                }
-                delay(120L) // Paced at ~8 FPS to prevent HAL buffer saturation
-            }
+            notifyStatus("error", "Failed to create camera capture session: ${e.message}")
         }
     }
 
     private fun closeCameraDevice() {
         activeLens = null
-        captureLoopJob?.cancel()
-        captureLoopJob = null
 
         try {
             captureSession?.stopRepeating()

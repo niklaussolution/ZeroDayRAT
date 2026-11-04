@@ -338,6 +338,23 @@ export default function CameraStreamView({
         } else if (bytes[0] === 0x02) {
           setHasAudioStream(true);
           playPcmAudio(bytes.subarray(1));
+        } else if (bytes[0] === 0x03) {
+          try {
+            const statusText = new TextDecoder().decode(bytes.subarray(1));
+            const statusObj = JSON.parse(statusText);
+            console.log("Device status packet:", statusObj);
+            if (statusObj.status === "error") {
+              setStatus("error");
+              setStatusMessage(statusObj.message || "Camera device error occurred");
+            } else if (statusObj.status === "streaming") {
+              setStatus("streaming");
+              setStatusMessage(statusObj.message || `Live ${statusObj.lens || lens} camera active`);
+            } else if (statusObj.status === "camera_opened") {
+              setStatusMessage(`Camera sensor active (${statusObj.lens || lens}). Initializing video feed...`);
+            }
+          } catch {
+            // ignore malformed packet
+          }
         }
       }
     };
