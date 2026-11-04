@@ -48,15 +48,13 @@ class ScreenStreamService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, ScreenStreamService::class.java).apply {
-                action = ACTION_STOP
-            }
+            ScreenStreamManager.stopStreaming()
             try {
+                val intent = Intent(context, ScreenStreamService::class.java).apply {
+                    action = ACTION_STOP
+                }
                 context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to stop ScreenStreamService", e)
-                ScreenStreamManager.stopStreaming()
-            }
+            } catch (_: Exception) {}
         }
     }
 

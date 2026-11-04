@@ -3,9 +3,6 @@ package com.spapp.monitoring.screenstream
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Matrix
-import android.graphics.Paint
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -151,21 +148,13 @@ object ScreenStreamManager {
                 Log.d(TAG, "Screen stream WebSocket connected (pure video mode)")
                 activeWebSocket = webSocket
                 try {
-                    var isA11yBound = BlockAccessibilityService.instance != null
+                    val isA11yBound = BlockAccessibilityService.instance != null
                     val a11yEnabled = com.spapp.monitoring.blocking.AccessibilityStatus.isEnabled(appContext)
-                    if (!isA11yBound && a11yEnabled) {
-                        for (i in 0 until 10) {
-                            Thread.sleep(200L)
-                            if (BlockAccessibilityService.instance != null) {
-                                isA11yBound = true
-                                break
-                            }
-                        }
-                    }
+                    val isReady = isA11yBound || a11yEnabled
                     webSocket.send(JSONObject(mapOf(
                         "type" to "status",
-                        "status" to if (isA11yBound) "device_ready" else "waiting_a11y",
-                        "message" to if (isA11yBound) "Device ready for screen stream" else "Accessibility service not running (please toggle in Settings)",
+                        "status" to if (isReady) "device_ready" else "waiting_a11y",
+                        "message" to if (isReady) "Device ready for screen stream" else "Accessibility service not running (please toggle in Settings)",
                         "a11yBound" to isA11yBound,
                         "a11yEnabled" to a11yEnabled
                     )).toString())
@@ -361,47 +350,56 @@ object ScreenStreamManager {
                                     var jpegBytes: ByteArray? = null
 
                                     if (hwBitmap != null) {
-                                        val width = hwBitmap.width
-                                        val height = hwBitmap.height
-                                        val maxDim = TARGET_MAX_DIMENSION
-
-                                        val scale = if (maxOf(width, height) > maxDim) {
-                                            maxDim.toFloat() / maxOf(width, height)
-                                        } else {
-                                            1.0f
-                                        }
-                                        val dstWidth = (width * scale).toInt().coerceAtLeast(1)
-                                        val dstHeight = (height * scale).toInt().coerceAtLeast(1)
-
-                                        // High-performance direct scale: render directly onto a small ~500KB RGB_565 bitmap
-                                        // NEVER copying a 10.4 MB unscaled full-res software bitmap into the Java Heap!
-                                        val scaledBitmap = try {
-                                            val bmp = Bitmap.createBitmap(dstWidth, dstHeight, Bitmap.Config.RGB_565)
-                                            val canvas = Canvas(bmp)
-                                            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-                                            val matrix = Matrix().apply { setScale(scale, scale) }
-                                            canvas.drawBitmap(hwBitmap, matrix, paint)
-                                            bmp
-                                        } catch (_: Throwable) {
-                                            try {
-                                                val bmp = Bitmap.createBitmap(dstWidth, dstHeight, Bitmap.Config.ARGB_8888)
-                                                val canvas = Canvas(bmp)
-                                                val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-                                                val matrix = Matrix().apply { setScale(scale, scale) }
-                                                canvas.drawBitmap(hwBitmap, matrix, paint)
-                                                bmp
-                                            } catch (_: Throwable) { null }
+                                        // Hardware bitmaps reside in GPU memory and cannot be directly drawn to a software
+                                        // Canvas or compressed. Copy to software ARGB_8888 first, then scale and compress.
+                                        val swBitmap = try {
+                                            hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                        } catch (e: Throwable) {
+                                            Log.e(TAG, "Failed copy from hardware to software bitmap", e)
+                                            null
                                         }
 
                                         try {
                                             hwBitmap.recycle()
                                         } catch (_: Throwable) {}
 
-                                        if (scaledBitmap != null) {
-                                            val swOut = ByteArrayOutputStream(32 * 1024)
-                                            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
-                                            scaledBitmap.recycle()
-                                            jpegBytes = swOut.toByteArray()
+                                        if (swBitmap != null) {
+                                            val width = swBitmap.width
+                                            val height = swBitmap.height
+                                            val maxDim = TARGET_MAX_DIMENSION
+
+                                            val scale = if (maxOf(width, height) > maxDim) {
+                                                maxDim.toFloat() / maxOf(width, height)
+                                            } else {
+                                                1.0f
+                                            }
+                                            val dstWidth = (width * scale).toInt().coerceAtLeast(1)
+                                            val dstHeight = (height * scale).toInt().coerceAtLeast(1)
+
+                                            val finalBitmap = if (scale < 1.0f) {
+                                                try {
+                                                    val scaled = Bitmap.createScaledBitmap(swBitmap, dstWidth, dstHeight, true)
+                                                    if (scaled != swBitmap) {
+                                                        swBitmap.recycle()
+                                                    }
+                                                    scaled
+                                                } catch (e: Throwable) {
+                                                    Log.e(TAG, "Failed createScaledBitmap, using full-size bitmap", e)
+                                                    swBitmap
+                                                }
+                                            } else {
+                                                swBitmap
+                                            }
+
+                                            try {
+                                                val swOut = ByteArrayOutputStream(32 * 1024)
+                                                finalBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, swOut)
+                                                finalBitmap.recycle()
+                                                jpegBytes = swOut.toByteArray()
+                                            } catch (e: Throwable) {
+                                                Log.e(TAG, "Failed compressing bitmap to JPEG", e)
+                                                try { finalBitmap.recycle() } catch (_: Throwable) {}
+                                            }
                                         }
                                     }
 
