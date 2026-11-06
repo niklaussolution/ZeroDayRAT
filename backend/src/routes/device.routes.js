@@ -663,10 +663,6 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
                  false AS is_outgoing
           FROM whatsapp_chats
           WHERE device_id = $1
-            AND (last_message IS NULL OR (
-              last_message !~* '^\\s*\\d{1,2}[:.]\\d{2}'
-              AND last_message !~* '^\\s*(Active|Seen|Delivered|Sent|Yesterday|Today|Checking for new messages)'
-            ))
           UNION ALL
           SELECT chat_name,
                  sender AS username,
@@ -675,20 +671,29 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
                  is_outgoing
           FROM whatsapp_messages
           WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-            AND message_text !~* '^\\s*\\d{1,2}[:.]\\d{2}'
-            AND message_text !~* '^\\s*(Active|Seen|Delivered|Sent|Yesterday|Today|Checking for new messages)'
         ),
         msg_counts AS (
           SELECT LOWER(TRIM(chat_name)) AS canonical_name,
                  COUNT(*)::int AS total_messages
           FROM whatsapp_messages
           WHERE device_id = $1
+            AND message_text !~* '^\\s*(Active|Seen)(\\s+.*)?\\s*$'
           GROUP BY LOWER(TRIM(chat_name))
         )
         SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
                COALESCE(MAX(mc.total_messages), 0) AS total_messages,
                MAX(ac.last_message_at) AS last_message_at,
-               (ARRAY_AGG(ac.last_message ORDER BY ac.last_message_at DESC))[1] AS last_message,
+               (ARRAY_AGG(
+                 ac.last_message 
+                 ORDER BY 
+                   CASE 
+                     WHEN ac.last_message IS NULL OR TRIM(ac.last_message) = '' THEN 3
+                     WHEN ac.last_message ~* '^\\s*(Active|Seen|Delivered|Sent|Yesterday|Today|Checking for new messages)' THEN 2 
+                     WHEN ac.last_message ~* '^\\s*\\d{1,2}[:.]\\d{2}' THEN 1
+                     ELSE 0 
+                   END ASC,
+                   ac.last_message_at DESC
+               ))[1] AS last_message,
                COALESCE((ARRAY_AGG(ac.is_outgoing ORDER BY ac.last_message_at DESC))[1], false) AS last_is_outgoing,
                (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS username,
                (ARRAY_AGG(ac.username ORDER BY ac.last_message_at DESC))[1] AS phone_number
@@ -709,6 +714,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%end-to-end encrypted%'
           AND LOWER(TRIM(ac.chat_name)) != 'whatsapp group'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%picture'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%photo'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
         GROUP BY LOWER(TRIM(ac.chat_name))

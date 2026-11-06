@@ -865,7 +865,7 @@ router.post(
             await client.query(
               `UPDATE whatsapp_chats SET
                  last_message = CASE
-                   WHEN $1::text IS NOT NULL AND $1::text != '' THEN $1::text
+                   WHEN $1::text IS NOT NULL AND $1::text != '' AND $1::text !~* '^\\s*(Active|Seen)\\b' THEN $1::text
                    ELSE last_message
                  END,
                  last_message_at = GREATEST(last_message_at, $2::timestamptz),
@@ -906,17 +906,16 @@ router.post(
             if (result.rows.length > 0) insertedCount++;
           } else {
             const existingRow = existing.rows[0];
-            const shouldUpgradeToOutgoing = !existingRow.is_outgoing && isOutgoing;
             await client.query(
               `UPDATE whatsapp_messages SET
-                 is_outgoing = CASE WHEN $1::boolean THEN true ELSE is_outgoing END,
-                 sender = CASE WHEN $1::boolean THEN 'me' ELSE sender END,
-                 media_type = COALESCE($2::varchar, media_type),
-                 media_path = COALESCE($3::text, media_path),
-                 reel_url = COALESCE($4::text, reel_url),
+                 is_outgoing = $1::boolean,
+                 sender = CASE WHEN $1::boolean THEN 'me' ELSE COALESCE($2::varchar, sender) END,
+                 media_type = COALESCE($3::varchar, media_type),
+                 media_path = COALESCE($4::text, media_path),
+                 reel_url = COALESCE($5::text, reel_url),
                  synced_at = NOW()
-               WHERE id = $5::bigint`,
-              [shouldUpgradeToOutgoing, mediaType, mediaPath, reelUrl, existingRow.id]
+               WHERE id = $6::bigint`,
+              [isOutgoing, sender || chatName, mediaType, mediaPath, reelUrl, existingRow.id]
             );
           }
         }

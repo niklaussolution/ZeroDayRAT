@@ -39,6 +39,15 @@ interface WhatsAppMessageDao {
     """)
     suspend fun updateToOutgoing(chatName: String, messageText: String, sinceMs: Long)
 
+    @Query("""
+        UPDATE whatsapp_message_entries 
+        SET isOutgoing = :isOutgoing, sender = :sender, synced = 0 
+        WHERE LOWER(TRIM(chatName)) = LOWER(TRIM(:chatName)) 
+          AND LOWER(TRIM(messageText)) = LOWER(TRIM(:messageText)) 
+          AND messageTimeEpochMs >= :sinceMs
+    """)
+    suspend fun updateMessageDirection(chatName: String, messageText: String, isOutgoing: Boolean, sender: String?, sinceMs: Long)
+
     @Query("SELECT * FROM whatsapp_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
     suspend fun getUnsynced(limit: Int = 200): List<WhatsAppMessageEntry>
 
