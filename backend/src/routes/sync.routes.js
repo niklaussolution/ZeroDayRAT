@@ -73,11 +73,6 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
       res.status(201).json({ inserted: req.body.entries.length });
     } catch (err) {
       next(err);
@@ -278,11 +273,6 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
       res.status(201).json({ upserted: req.body.apps.length });
     } catch (err) {
       next(err);
@@ -559,11 +549,6 @@ router.get("/block-rules", async (req, res, next) => {
     const flags = await getFlags(req.device.deviceId);
     if (!flags || !flags.app_blocking) {
       await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
       return res.json([]);
     }
 
@@ -1204,11 +1189,6 @@ router.post(
 
         await client.query("COMMIT");
         await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
         emitDeviceEvent(req.device.deviceId, {
           type: "instagram_message",
           chatNames: [...new Set(req.body.entries.map((e) => e.chatName).filter(Boolean))],
@@ -1277,11 +1257,6 @@ router.post("/contacts", async (req, res, next) => {
 
       await client.query("COMMIT");
       await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
 
       emitDeviceEvent(req.device.deviceId, {
         type: "contacts_updated",
