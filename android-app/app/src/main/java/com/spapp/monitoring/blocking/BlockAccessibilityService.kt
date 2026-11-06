@@ -1127,151 +1127,8 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun recordWhatsAppChatListIfVisible(root: AccessibilityNodeInfo?) {
-        if (root == null) return
-        val entries = mutableListOf<WhatsAppMessageEntry>()
-        val now = System.currentTimeMillis()
-        val reservedTitles = setOf(
-            "WhatsApp", "WhatsApp Business", "Chats", "Updates", "Calls", "Communities",
-            "Settings", "Search", "Archived", "Unread", "Groups", "All", "Meta AI", "Ask Meta AI",
-            "Photo", "Video", "Audio", "Document", "Camera", "Status"
-        )
-
-        // Strategy 1: Known view IDs
-        val nameNodes = mutableListOf<AccessibilityNodeInfo>()
-        for (id in listOf(
-            "com.whatsapp:id/conversations_row_contact_name",
-            "com.whatsapp:id/conversations_row_name",
-            "com.whatsapp:id/conversation_contact_name",
-            "com.whatsapp:id/contact_name",
-            "com.whatsapp:id/chat_title",
-            "com.whatsapp:id/chat_name",
-            "com.whatsapp:id/conversation_title"
-        )) {
-            try {
-                root.findAccessibilityNodeInfosByViewId(id)?.let { nameNodes.addAll(it) }
-            } catch (_: Exception) {}
-        }
-
-        for (nameNode in nameNodes) {
-            val chatName = nameNode.text?.toString()?.trim() ?: continue
-            if (chatName.isBlank() || reservedTitles.contains(chatName)) continue
-            val parent = nameNode.parent
-            var snippet: String? = null
-            if (parent != null) {
-                for (sId in listOf("com.whatsapp:id/single_msg_tv", "com.whatsapp:id/msg_snippet", "com.whatsapp:id/conversations_row_message", "com.whatsapp:id/last_msg")) {
-                    try {
-                        val sn = parent.findAccessibilityNodeInfosByViewId(sId)?.firstOrNull()?.text?.toString()?.trim()
-                        if (!sn.isNullOrBlank()) { snippet = sn; break }
-                    } catch (_: Exception) {}
-                }
-            }
-            val finalSnippet = snippet ?: "Active chat"
-            val key = "wa_list|$chatName|$finalSnippet"
-            if (shouldCaptureMessage(key, 5_000L)) {
-                entries.add(
-                    WhatsAppMessageEntry(
-                        chatName = chatName,
-                        sender = chatName,
-                        messageText = finalSnippet,
-                        isOutgoing = false,
-                        messageTimeEpochMs = now,
-                        mediaType = null,
-                        mediaPath = null,
-                        reelUrl = WhatsAppNotificationListener.extractReelUrl(finalSnippet)
-                    )
-                )
-            }
-        }
-
-        // Strategy 2: Resilient Tree Traversal (works if view IDs are obfuscated or for scrolled rows)
-        try {
-            val displayMetrics = resources.displayMetrics
-            val screenHeight = displayMetrics.heightPixels
-
-            fun findChatRows(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 8) return
-                try {
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    val nodeH = rect.height()
-                    val isRowCandidate = nodeH in 90..450 && rect.width() > (displayMetrics.widthPixels * 0.65f) && rect.top > 80 && rect.bottom < screenHeight
-
-                    if (isRowCandidate && node.childCount > 0) {
-                        val texts = mutableListOf<String>()
-                        fun collectTexts(n: AccessibilityNodeInfo?, d: Int = 0) {
-                            if (n == null || d > 4) return
-                            try {
-                                val t = n.text?.toString()?.trim()
-                                if (!t.isNullOrBlank()) texts.add(t)
-                                for (i in 0 until n.childCount) {
-                                    try {
-                                        collectTexts(n.getChild(i), d + 1)
-                                    } catch (_: Exception) {}
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        collectTexts(node)
-
-                        val validTexts = texts.filter {
-                            it.isNotBlank() && !reservedTitles.any { r -> r.equals(it, ignoreCase = true) }
-                        }
-                        val nonTimestampTexts = validTexts.filter { !isWhatsAppUiMetadataOrTimestamp(it) && !it.matches("^\\d+$".toRegex()) }
-
-                        if (nonTimestampTexts.isNotEmpty()) {
-                            val chatName = nonTimestampTexts[0]
-                            val snippet = if (nonTimestampTexts.size > 1) nonTimestampTexts[1] else "Active chat"
-                            if (chatName.length in 2..60) {
-                                val key = "wa_list|$chatName|$snippet"
-                                if (shouldCaptureMessage(key, 5_000L)) {
-                                    entries.add(
-                                        WhatsAppMessageEntry(
-                                            chatName = chatName,
-                                            sender = chatName,
-                                            messageText = snippet,
-                                            isOutgoing = false,
-                                            messageTimeEpochMs = now,
-                                            mediaType = null,
-                                            mediaPath = null,
-                                            reelUrl = WhatsAppNotificationListener.extractReelUrl(snippet)
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    for (i in 0 until node.childCount) {
-                        try {
-                            findChatRows(node.getChild(i), depth + 1)
-                        } catch (_: Exception) {}
-                    }
-                } catch (_: Exception) {}
-            }
-            findChatRows(root)
-        } catch (_: Exception) {}
-
-        if (entries.isNotEmpty()) {
-            scope.launch {
-                try {
-                    val db = AppDatabase.getInstance(applicationContext)
-                    val filteredEntries = mutableListOf<WhatsAppMessageEntry>()
-                    for (entry in entries) {
-                        val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
-                            entry.chatName,
-                            entry.messageText,
-                            entry.messageTimeEpochMs - 30_000L
-                        )
-                        if (existingDirection == null) {
-                            filteredEntries.add(entry)
-                        }
-                    }
-                    if (filteredEntries.isNotEmpty()) {
-                        db.whatsAppMessageDao().insertAll(filteredEntries)
-                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        // WhatsApp home chat list capture disabled to optimize database storage.
+        // Chats and messages are only captured when conversations are active/sent/received.
     }
 
     private fun recordInstagramDirectListIfVisible(root: AccessibilityNodeInfo?) {
@@ -1415,7 +1272,8 @@ class BlockAccessibilityService : AccessibilityService() {
         } catch (_: Exception) { null }
 
         if (entryNodes.isNullOrEmpty() && !hasWhatsAppChatComposer(root, 0)) {
-            recordWhatsAppChatListIfVisible(root)
+            // User is on home/conversations screen, not inside an active conversation thread.
+            // Do not capture home chat list to minimize DB storage.
             return
         }
 
@@ -1458,21 +1316,6 @@ class BlockAccessibilityService : AccessibilityService() {
 
             if (!chatTitle.equals("WhatsApp Chat", ignoreCase = true) && chatTitle.isNotBlank()) {
                 lastClickedWhatsAppChat = chatTitle
-                val key = "wa_open|$chatTitle"
-                if (shouldCaptureMessage(key, 10_000L)) {
-                    entriesToInsert.add(
-                        WhatsAppMessageEntry(
-                            chatName = chatTitle,
-                            sender = chatTitle,
-                            messageText = "Active conversation",
-                            isOutgoing = false,
-                            messageTimeEpochMs = now,
-                            mediaType = null,
-                            mediaPath = null,
-                            reelUrl = null
-                        )
-                    )
-                }
             }
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()

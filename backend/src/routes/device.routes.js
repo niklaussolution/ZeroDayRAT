@@ -638,6 +638,10 @@ async function ensureWhatsAppTables() {
       -- Remove multi-chat summary notification artifacts
       DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
       DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
+
+      -- Remove home list placeholder dumps and active conversation dummy rows to optimize DB storage
+      DELETE FROM whatsapp_messages WHERE message_text IN ('Active chat', 'Active conversation');
+      DELETE FROM whatsapp_chats WHERE last_message IN ('Active chat', 'Active conversation');
     `);
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);
@@ -718,6 +722,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
         GROUP BY LOWER(TRIM(ac.chat_name))
+        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1096,6 +1101,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'uninstall%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
+        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;

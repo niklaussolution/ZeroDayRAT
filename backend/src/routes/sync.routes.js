@@ -785,6 +785,16 @@ router.post(
             continue;
           }
 
+          // Drop dummy placeholders to optimize database storage
+          if (
+            !messageText ||
+            messageText === "Active conversation" ||
+            messageText === "Active chat" ||
+            messageText.toLowerCase() === "conversation active"
+          ) {
+            continue;
+          }
+
           // Classify media type
           const lowerText = messageText.toLowerCase();
           if (
