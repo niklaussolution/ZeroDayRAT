@@ -840,41 +840,26 @@ router.post(
           }
 
           // 1. Maintain complete WhatsApp chat inventory in whatsapp_chats table
-          const existingChat = await client.query(
-            `SELECT id FROM whatsapp_chats WHERE device_id = $1 AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) LIMIT 1`,
-            [deviceId, chatName.slice(0, 255)]
+          await client.query(
+            `INSERT INTO whatsapp_chats (device_id, chat_name, username, last_message, last_message_at, synced_at)
+             VALUES ($1, $2, $3, $4, $5::timestamptz, NOW())
+             ON CONFLICT (device_id, chat_name)
+             DO UPDATE SET
+               last_message = CASE
+                 WHEN EXCLUDED.last_message IS NOT NULL AND EXCLUDED.last_message != '' AND EXCLUDED.last_message !~* '^\\s*(Active|Seen)\\b' THEN EXCLUDED.last_message
+                 ELSE whatsapp_chats.last_message
+               END,
+               last_message_at = GREATEST(whatsapp_chats.last_message_at, EXCLUDED.last_message_at),
+               username = COALESCE(EXCLUDED.username, whatsapp_chats.username),
+               synced_at = NOW()`,
+            [
+              deviceId,
+              chatName.slice(0, 255),
+              sender ? sender.slice(0, 255) : null,
+              messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+              messageTime
+            ]
           );
-          if (existingChat.rows.length === 0) {
-            await client.query(
-              `INSERT INTO whatsapp_chats (device_id, chat_name, username, last_message, last_message_at, synced_at)
-               VALUES ($1, $2, $3, $4, $5::timestamptz, NOW())`,
-              [
-                deviceId,
-                chatName.slice(0, 255),
-                sender ? sender.slice(0, 255) : null,
-                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
-                messageTime
-              ]
-            );
-          } else {
-            await client.query(
-              `UPDATE whatsapp_chats SET
-                 last_message = CASE
-                   WHEN $1::text IS NOT NULL AND $1::text != '' AND $1::text !~* '^\\s*(Active|Seen)\\b' THEN $1::text
-                   ELSE last_message
-                 END,
-                 last_message_at = GREATEST(last_message_at, $2::timestamptz),
-                 username = COALESCE($3::varchar, username),
-                 synced_at = NOW()
-               WHERE id = $4::bigint`,
-              [
-                messageText || (reelUrl ? "Shared a Reel" : "Media message"),
-                messageTime,
-                sender ? sender.slice(0, 255) : null,
-                existingChat.rows[0].id
-              ]
-            );
-          }
 
           // 2. Upsert into whatsapp_messages table with robust 5-minute deduplication
           const existing = await client.query(
