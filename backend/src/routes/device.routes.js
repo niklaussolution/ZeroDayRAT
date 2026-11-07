@@ -642,6 +642,10 @@ async function ensureWhatsAppTables() {
       -- Remove home list placeholder dumps and active conversation dummy rows to optimize DB storage
       DELETE FROM whatsapp_messages WHERE message_text IN ('Active chat', 'Active conversation');
       DELETE FROM whatsapp_chats WHERE last_message IN ('Active chat', 'Active conversation');
+
+      -- Remove non-chat UI header artifacts (Status tab, Add status, generic placeholders)
+      DELETE FROM whatsapp_messages WHERE LOWER(TRIM(chat_name)) IN ('add status', 'my status', 'whatsapp chat', 'status');
+      DELETE FROM whatsapp_chats WHERE LOWER(TRIM(chat_name)) IN ('add status', 'my status', 'whatsapp chat', 'status');
     `);
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);

@@ -734,6 +734,13 @@ router.post(
             lowerChat === "whatsapp web" ||
             lowerChat === "whatsapp group" ||
             lowerChat === "whatsapp status" ||
+            lowerChat === "whatsapp chat" ||
+            lowerChat === "add status" ||
+            lowerChat === "my status" ||
+            lowerChat === "status" ||
+            lowerChat === "select contact" ||
+            lowerChat === "new chat" ||
+            lowerChat === "new group" ||
             lowerChat === "send" ||
             lowerChat === "type a message" ||
             lowerChat === "message" ||
