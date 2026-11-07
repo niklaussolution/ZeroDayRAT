@@ -730,7 +730,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
+        HAVING COUNT(ac.chat_name) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1109,7 +1109,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'uninstall%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
+        HAVING COUNT(ac.chat_name) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
