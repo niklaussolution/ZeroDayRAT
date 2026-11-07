@@ -552,44 +552,36 @@ class BlockAccessibilityService : AccessibilityService() {
                             lastActiveChatForSignatures = null
                             currentChatSeenSignatures.clear()
                         } else {
-                            val texts = mutableListOf<String>()
-                            fun walkClick(n: AccessibilityNodeInfo?, d: Int = 0) {
-                                if (n == null || d > 12) return
-                                try {
-                                    val t = n.text?.toString()?.trim()
-                                    if (!t.isNullOrBlank()) texts.add(t)
-                                    for (i in 0 until n.childCount) {
-                                        try {
-                                            walkClick(n.getChild(i), d + 1)
-                                        } catch (_: Exception) {}
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                            var rowContainer = clickedNode
-                            var upCount = 0
-                            while (rowContainer?.parent != null && rowContainer.childCount < 2 && upCount < 5) {
-                                rowContainer = rowContainer.parent
-                                upCount++
-                            }
-                            walkClick(rowContainer ?: clickedNode)
-                            val titleCand = texts.firstOrNull { 
-                                it.length in 2..60 && !it.contains(":") && !isWhatsAppUiMetadataOrTimestamp(it) &&
-                                !it.equals("send", ignoreCase = true) && !it.equals("type a message", ignoreCase = true) &&
-                                !it.equals("search", ignoreCase = true) && !it.equals("whatsapp group", ignoreCase = true) &&
-                                !it.equals("profile photo", ignoreCase = true) && !it.equals("profile picture", ignoreCase = true) &&
-                                !it.equals("add status", ignoreCase = true) && !it.equals("my status", ignoreCase = true)
-                            }
                             val root = getWhatsAppWindowRoot()
-                            val hasComposerOnScreen = root != null && hasWhatsAppChatComposer(root)
-                            if (!hasComposerOnScreen && !titleCand.isNullOrBlank()) {
-                                lastClickedWhatsAppChat = titleCand
-                                currentChatSeenSignatures.clear()
-                                pollHandler.postDelayed({
-                                    recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
-                                }, 400L)
-                                pollHandler.postDelayed({
-                                    recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
-                                }, 1200L)
+                            val isHome = isWhatsAppHomeScreen(root)
+                            val hasComposer = hasWhatsAppChatComposer(root)
+
+                            // Only process chat list row clicks when user is NOT inside an active conversation composer
+                            if (isHome || !hasComposer) {
+                                var rowContainer = clickedNode
+                                var upCount = 0
+                                while (rowContainer?.parent != null && rowContainer.childCount < 2 && upCount < 5) {
+                                    rowContainer = rowContainer.parent
+                                    upCount++
+                                }
+                                val titleCand = extractWhatsAppNameFromNodeOrDesc(rowContainer ?: clickedNode)
+                                if (!titleCand.isNullOrBlank()) {
+                                    lastClickedWhatsAppChat = titleCand
+                                    lastActiveChatForSignatures = titleCand
+                                    currentChatSeenSignatures.clear()
+                                    pollHandler.postDelayed({
+                                        recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
+                                    }, 300L)
+                                    pollHandler.postDelayed({
+                                        recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
+                                    }, 700L)
+                                    pollHandler.postDelayed({
+                                        recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
+                                    }, 1200L)
+                                    pollHandler.postDelayed({
+                                        recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
+                                    }, 2000L)
+                                }
                             }
                         }
                     }
@@ -605,17 +597,17 @@ class BlockAccessibilityService : AccessibilityService() {
                     if (newText.isNullOrBlank() && !lastWhatsAppComposerText.isNullOrBlank()) {
                         val sentText = lastWhatsAppComposerText!!
                         val chatTitle = getWhatsAppCurrentChatTitle(root)
-                        if (!chatTitle.isNullOrBlank()) {
+                        if (!chatTitle.isNullOrBlank() && !isWhatsAppReservedTitle(chatTitle)) {
                             val now = System.currentTimeMillis()
                             recordRecentSentWhatsAppText(sentText)
                             val dedupeKey = "wa|$chatTitle|$sentText|true|text"
-                            if (shouldCaptureMessage(dedupeKey, 60_000L)) {
+                            if (shouldCaptureMessage(dedupeKey, 1500L)) {
                                 scope.launch {
                                     try {
                                         val db = AppDatabase.getInstance(applicationContext)
-                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
+                                        db.whatsAppMessageDao().updateToOutgoing(chatTitle, sentText, now - 60_000L)
                                         val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 600_000L
+                                            chatTitle, sentText, true, now - 2_000L
                                         )
                                         if (existingId == null) {
                                             db.whatsAppMessageDao().insertAll(
@@ -961,29 +953,174 @@ class BlockAccessibilityService : AccessibilityService() {
         whatsAppPollRunnable = null
     }
 
-    fun hasWhatsAppChatComposer(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
-        if (node == null || depth > 30) return false
-        val id = (node.viewIdResourceName ?: "").lowercase()
-        val text = (node.text?.toString() ?: "").trim()
-        val hint = (node.hintText?.toString() ?: "").trim()
-        val desc = (node.contentDescription?.toString() ?: "").trim()
-
-        if (id.contains("entry") || id.contains("input") || id.contains("send") || id.contains("composer") ||
-            id.contains("voice_note") || id.contains("voice") || id.contains("camera") || id.contains("attach")) return true
-        if (text.equals("Type a message", ignoreCase = true) || hint.equals("Type a message", ignoreCase = true)) return true
-        if (text.equals("Message", ignoreCase = true) || hint.equals("Message", ignoreCase = true)) return true
-        if (desc.contains("send", ignoreCase = true) || desc.contains("voice message", ignoreCase = true) || desc.contains("attach", ignoreCase = true)) return true
-        if (node.isEditable && (node.className?.toString()?.contains("EditText", ignoreCase = true) == true)) {
-            if (!id.contains("search") && !desc.contains("search", ignoreCase = true)) {
-                return true
+    fun isWhatsAppHomeScreen(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        // 1. WhatsApp main navigation tabs (Chats, Updates, Communities, Calls, Status)
+        val tabNames = setOf("chats", "updates", "communities", "calls", "status")
+        var tabMatches = 0
+        fun scanTabs(n: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (n == null || depth > 15 || tabMatches >= 2) return
+            val t = (n.text?.toString() ?: "").trim().lowercase()
+            val cd = (n.contentDescription?.toString() ?: "").trim().lowercase()
+            if (tabNames.contains(t) || tabNames.contains(cd)) {
+                tabMatches++
+            }
+            for (i in 0 until n.childCount) {
+                scanTabs(n.getChild(i), depth + 1)
             }
         }
-        for (i in 0 until node.childCount) {
-            try {
-                if (hasWhatsAppChatComposer(node.getChild(i), depth + 1)) return true
-            } catch (_: Exception) {}
+        scanTabs(root)
+        if (tabMatches >= 2) return true
+
+        // 2. WhatsApp Home screen filter chips ("All", "Unread", "Favourites", "Groups")
+        val filterChips = setOf("all filter", "unread filter", "favourites filter", "groups filter")
+        var chipMatches = 0
+        fun scanChips(n: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (n == null || depth > 15 || chipMatches >= 2) return
+            val t = (n.text?.toString() ?: "").trim().lowercase()
+            val cd = (n.contentDescription?.toString() ?: "").trim().lowercase()
+            if (filterChips.any { t.contains(it) || cd.contains(it) }) {
+                chipMatches++
+            }
+            for (i in 0 until n.childCount) {
+                scanChips(n.getChild(i), depth + 1)
+            }
         }
+        scanChips(root)
+        if (chipMatches >= 2) return true
+
         return false
+    }
+
+    fun hasWhatsAppChatComposer(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
+
+        // Fast check: com.whatsapp:id/entry in bottom half
+        try {
+            val entryNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
+            if (!entryNodes.isNullOrEmpty()) {
+                for (node in entryNodes) {
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    if (rect.bottom > screenHeight * 0.5f) return true
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback scan: EditText or "Type a message" / Send button in bottom half of screen (rect.bottom > 55%)
+        var found = false
+        fun scanComposer(n: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (n == null || depth > 25 || found) return
+            val rect = Rect()
+            n.getBoundsInScreen(rect)
+            if (rect.bottom > screenHeight * 0.55f) {
+                val id = (n.viewIdResourceName ?: "").lowercase()
+                val text = (n.text?.toString() ?: "").trim()
+                val hint = (n.hintText?.toString() ?: "").trim()
+                val desc = (n.contentDescription?.toString() ?: "").trim()
+
+                val isEdit = n.isEditable || n.className?.toString()?.contains("EditText", true) == true
+                if (isEdit && !id.contains("search") && !desc.contains("search", true)) {
+                    found = true
+                    return
+                }
+                if ((text.equals("Type a message", true) || hint.equals("Type a message", true) ||
+                     text.equals("Message", true) || hint.equals("Message", true)) && !id.contains("search")) {
+                    found = true
+                    return
+                }
+                if (id.endsWith(":id/send") || id.contains("voice_note") ||
+                    desc.equals("Send", true) || desc.equals("Voice message", true)) {
+                    found = true
+                    return
+                }
+            }
+            for (i in 0 until n.childCount) {
+                scanComposer(n.getChild(i), depth + 1)
+            }
+        }
+        scanComposer(root)
+        return found
+    }
+
+    fun isWhatsAppReservedTitle(t: String?): Boolean {
+        if (t.isNullOrBlank()) return true
+        val reserved = setOf(
+            "WhatsApp", "WhatsApp Business", "Chats", "Updates", "Calls", "Communities",
+            "Settings", "Search", "Archived", "Unread", "Groups", "All",
+            "Online", "Typing...", "Typing", "Audio call", "Video call", "Call",
+            "More options", "Back", "Navigate up", "Camera", "Attach", "Send",
+            "Disappearing messages", "Profile photo", "Profile picture", "View contact",
+            "Group info", "Custom", "Status", "Emoji", "Sticker", "GIF", "Gallery",
+            "Audio", "Location", "Contact", "Poll", "Document",
+            "Add status", "My status", "New chat", "New group", "New community",
+            "New broadcast", "Linked devices", "Starred messages", "Payments", "Select contact",
+            "WhatsApp Web", "WhatsApp Group", "WhatsApp Status", "Ask Meta AI or Search",
+            "Meta AI", "Ask Meta AI", "Message yourself"
+        )
+        return reserved.any { it.equals(t.trim(), ignoreCase = true) }
+    }
+
+    fun extractWhatsAppNameFromDesc(desc: String?): String? {
+        if (desc.isNullOrBlank()) return null
+        val d = desc.trim()
+        val prefixes = listOf("Profile photo of ", "Profile picture of ", "View photo of ", "Photo of ")
+        for (p in prefixes) {
+            if (d.startsWith(p, ignoreCase = true)) {
+                val name = d.substring(p.length).trim()
+                if (name.length in 2..60 && !isWhatsAppReservedTitle(name)) {
+                    return name
+                }
+            }
+        }
+        val suffixes = listOf(
+            ", tap for contact info", ", tap for group info", ", tap for info",
+            ", tap to view profile", ", online", ", audio call button", ", video call button"
+        )
+        for (s in suffixes) {
+            if (d.contains(s, ignoreCase = true)) {
+                val name = d.substring(0, d.indexOf(s, ignoreCase = true)).trim()
+                if (name.length in 2..60 && !isWhatsAppReservedTitle(name)) {
+                    return name
+                }
+            }
+        }
+        return null
+    }
+
+    private fun extractWhatsAppNameFromNodeOrDesc(node: AccessibilityNodeInfo?): String? {
+        if (node == null) return null
+        var nameFromAvatar: String? = null
+        fun scanAvatar(n: AccessibilityNodeInfo?, d: Int = 0) {
+            if (n == null || d > 8 || nameFromAvatar != null) return
+            val cd = n.contentDescription?.toString()
+            val parsed = extractWhatsAppNameFromDesc(cd)
+            if (!parsed.isNullOrBlank()) {
+                nameFromAvatar = parsed
+                return
+            }
+            for (i in 0 until n.childCount) {
+                scanAvatar(n.getChild(i), d + 1)
+            }
+        }
+        scanAvatar(node)
+        if (!nameFromAvatar.isNullOrBlank()) return nameFromAvatar
+
+        val texts = mutableListOf<String>()
+        fun walkText(n: AccessibilityNodeInfo?, d: Int = 0) {
+            if (n == null || d > 8) return
+            val t = n.text?.toString()?.trim()
+            if (!t.isNullOrBlank()) texts.add(t)
+            for (i in 0 until n.childCount) {
+                walkText(n.getChild(i), d + 1)
+            }
+        }
+        walkText(node)
+        return texts.firstOrNull {
+            it.length in 2..60 && !it.contains(":") && !isWhatsAppUiMetadataOrTimestamp(it) &&
+            !isWhatsAppReservedTitle(it)
+        }
     }
 
     private fun isWhatsAppUiMetadataOrTimestamp(text: String?): Boolean {
@@ -1039,41 +1176,14 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun getWhatsAppCurrentChatTitle(root: AccessibilityNodeInfo?): String? {
         if (root == null) return lastClickedWhatsAppChat?.replace("\\s+".toRegex(), " ")?.trim()
-        val reservedTitles = setOf(
-            "WhatsApp", "WhatsApp Business", "Chats", "Updates", "Calls", "Communities",
-            "Settings", "Search", "Archived", "Unread", "Groups", "All",
-            "Online", "Typing...", "Typing", "Audio call", "Video call", "Call",
-            "More options", "Back", "Navigate up", "Camera", "Attach", "Send",
-            "Disappearing messages", "Profile photo", "Profile picture", "View contact",
-            "Group info", "Custom", "Status", "Emoji", "Sticker", "GIF", "Gallery",
-            "Audio", "Location", "Contact", "Poll", "Document",
-            "Add status", "My status", "New chat", "New group", "New community",
-            "New broadcast", "Linked devices", "Starred messages", "Payments", "Select contact"
-        )
 
-        fun extractNameFromDesc(desc: String?): String? {
-            if (desc.isNullOrBlank()) return null
-            val d = desc.trim()
-            val prefixes = listOf("Profile photo of ", "Profile picture of ", "View photo of ", "Photo of ")
-            for (p in prefixes) {
-                if (d.startsWith(p, ignoreCase = true)) {
-                    val name = d.substring(p.length).trim()
-                    if (name.length in 2..60 && !reservedTitles.any { it.equals(name, true) }) {
-                        return name
-                    }
-                }
-            }
-            val suffixes = listOf(", tap for contact info", ", tap for group info", ", tap for info", ", online", ", audio call button")
-            for (s in suffixes) {
-                if (d.contains(s, ignoreCase = true)) {
-                    val name = d.substring(0, d.indexOf(s, ignoreCase = true)).trim()
-                    if (name.length in 2..60 && !reservedTitles.any { it.equals(name, true) }) {
-                        return name
-                    }
-                }
-            }
+        // If on Home Screen, title is NEVER an active conversation!
+        if (isWhatsAppHomeScreen(root)) {
             return null
         }
+
+        val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
+        val maxHeaderY = screenHeight * 0.20f // Top 20% of screen strictly
 
         try {
             val candidateIds = listOf(
@@ -1082,12 +1192,12 @@ class BlockAccessibilityService : AccessibilityService() {
                 "com.whatsapp:id/contact_name",
                 "com.whatsapp:id/chat_name",
                 "com.whatsapp:id/chat_title",
-                "com.whatsapp:id/name",
                 "com.whatsapp:id/user_name",
                 "com.whatsapp:id/conversation_header",
                 "com.whatsapp:id/header_title",
                 "com.whatsapp:id/toolbar_title",
                 "com.whatsapp:id/action_bar_title",
+                "com.whatsapp:id/name",
                 "com.whatsapp:id/title"
             )
             for (id in candidateIds) {
@@ -1095,25 +1205,30 @@ class BlockAccessibilityService : AccessibilityService() {
                     val nodes = root.findAccessibilityNodeInfosByViewId(id)
                     if (!nodes.isNullOrEmpty()) {
                         for (node in nodes) {
+                            val rect = Rect()
+                            node.getBoundsInScreen(rect)
+                            // MUST BE IN TOP ACTION BAR!
+                            if (rect.top >= maxHeaderY || rect.bottom <= 20) continue
+
+                            val cdName = extractWhatsAppNameFromDesc(node.contentDescription?.toString())
+                            if (!cdName.isNullOrBlank()) {
+                                lastClickedWhatsAppChat = cdName
+                                return cdName
+                            }
+
                             val t = (node.text?.toString() ?: "").trim()
-                            if (t.isNotBlank() && !reservedTitles.any { res -> res.equals(t, ignoreCase = true) } && !isWhatsAppUiMetadataOrTimestamp(t)) {
+                            if (t.isNotBlank() && !isWhatsAppReservedTitle(t) && !isWhatsAppUiMetadataOrTimestamp(t)) {
                                 val clean = t.replace("\\s+".toRegex(), " ").trim()
                                 if (clean.length in 2..60) {
                                     lastClickedWhatsAppChat = clean
                                     return clean
                                 }
                             }
-                            val cdName = extractNameFromDesc(node.contentDescription?.toString())
-                            if (!cdName.isNullOrBlank()) {
-                                lastClickedWhatsAppChat = cdName
-                                return cdName
-                            }
                         }
                     }
                 } catch (_: Exception) {}
             }
 
-            val maxHeaderY = try { resources.displayMetrics.heightPixels * 0.28f } catch (_: Exception) { 600f }
             val headerTitles = mutableListOf<String>()
             fun findHeader(node: AccessibilityNodeInfo?, depth: Int = 0) {
                 if (node == null || depth > 30) return
@@ -1121,13 +1236,13 @@ class BlockAccessibilityService : AccessibilityService() {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
                     if (rect.top < maxHeaderY && rect.bottom > 20) {
-                        val cdName = extractNameFromDesc(node.contentDescription?.toString())
+                        val cdName = extractWhatsAppNameFromDesc(node.contentDescription?.toString())
                         if (!cdName.isNullOrBlank()) {
                             headerTitles.add(0, cdName)
                         }
 
                         val t = (node.text?.toString() ?: "").trim()
-                        if (t.isNotBlank() && !reservedTitles.any { res -> res.equals(t, ignoreCase = true) } &&
+                        if (t.isNotBlank() && !isWhatsAppReservedTitle(t) &&
                             !t.startsWith("last seen", ignoreCase = true) &&
                             !t.startsWith("online", ignoreCase = true) &&
                             !t.startsWith("typing", ignoreCase = true) &&
@@ -1381,19 +1496,30 @@ class BlockAccessibilityService : AccessibilityService() {
         val pkg = actualRoot.packageName?.toString() ?: ""
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
-        // 1. Strict verification: ONLY record messages if user is inside an actual active WhatsApp conversation with composer!
-        // Fast O(1) check: WhatsApp conversation always contains the input entry node.
-        val entryNodes = try {
-            actualRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
-        } catch (_: Exception) { null }
+        // 1. Strict verification: Never record if user is on WhatsApp home/chats/tabs screen!
+        if (isWhatsAppHomeScreen(actualRoot)) {
+            return
+        }
 
-        if (entryNodes.isNullOrEmpty() && !hasWhatsAppChatComposer(actualRoot, 0)) {
-            // User is on home/conversations screen, not inside an active conversation thread.
-            // Do not capture home chat list to minimize DB storage.
+        // 2. Strict verification: ONLY record messages if user is inside an actual active WhatsApp conversation with bottom composer!
+        if (!hasWhatsAppChatComposer(actualRoot)) {
             return
         }
 
         try {
+            // Find WhatsApp contact/group name in top action bar
+            val chatTitle = getWhatsAppCurrentChatTitle(actualRoot)
+            if (chatTitle.isNullOrBlank() || chatTitle.equals("WhatsApp Chat", ignoreCase = true) || isWhatsAppReservedTitle(chatTitle)) {
+                return
+            }
+
+            lastClickedWhatsAppChat = chatTitle
+
+            if (!chatTitle.equals(lastActiveChatForSignatures, ignoreCase = true)) {
+                lastActiveChatForSignatures = chatTitle
+                currentChatSeenSignatures.clear()
+            }
+
             val entriesToInsert = mutableListOf<WhatsAppMessageEntry>()
             val now = System.currentTimeMillis()
             val displayMetrics = resources.displayMetrics
@@ -1425,18 +1551,6 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
                 return null
-            }
-
-            // Find WhatsApp contact/group name in top action bar
-            val chatTitle = getWhatsAppCurrentChatTitle(actualRoot) ?: "WhatsApp Chat"
-
-            if (!chatTitle.equals("WhatsApp Chat", ignoreCase = true) && chatTitle.isNotBlank()) {
-                lastClickedWhatsAppChat = chatTitle
-            }
-
-            if (!chatTitle.equals(lastActiveChatForSignatures, ignoreCase = true)) {
-                lastActiveChatForSignatures = chatTitle
-                currentChatSeenSignatures.clear()
             }
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()

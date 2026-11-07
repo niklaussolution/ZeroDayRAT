@@ -646,6 +646,10 @@ async function ensureWhatsAppTables() {
       -- Remove non-chat UI header artifacts (Status tab, Add status, generic placeholders)
       DELETE FROM whatsapp_messages WHERE LOWER(TRIM(chat_name)) IN ('add status', 'my status', 'whatsapp chat', 'status');
       DELETE FROM whatsapp_chats WHERE LOWER(TRIM(chat_name)) IN ('add status', 'my status', 'whatsapp chat', 'status');
+
+      -- Remove falsely captured home screen chat list dump
+      DELETE FROM whatsapp_messages WHERE LOWER(TRIM(chat_name)) = 'krishnaveni ksr' AND (message_text IN ('Ask Meta AI or Search', 'Swipe down to reveal additional actions', 'Inbox filters, Radio Group', 'All filter, , selected', 'Unread filter, 1, unselected', 'Favourites filter, , unselected', 'Groups filter, 1, unselected', 'Communities filter, 1, unselected', 'Add new list', 'You:', 'Industrial Training 9', 'Industrial Training 9, Community') OR message_text ~* '^\d+\s+unread$');
+      DELETE FROM whatsapp_chats WHERE LOWER(TRIM(chat_name)) = 'krishnaveni ksr';
     `);
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);
