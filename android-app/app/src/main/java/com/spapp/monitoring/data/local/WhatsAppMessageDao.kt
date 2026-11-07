@@ -110,6 +110,9 @@ interface WhatsAppMessageDao {
     @Query("DELETE FROM whatsapp_message_entries WHERE messageTimeEpochMs < :cutoffMs")
     suspend fun pruneOldMessages(cutoffMs: Long)
 
+    @Query("DELETE FROM whatsapp_message_entries WHERE synced = 1 AND messageTimeEpochMs < :cutoffMs")
+    suspend fun pruneSyncedMessages(cutoffMs: Long)
+
     @Query("SELECT COUNT(*) FROM whatsapp_message_entries")
     suspend fun count(): Int
 

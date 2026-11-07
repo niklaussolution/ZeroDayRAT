@@ -451,9 +451,9 @@ class BlockAccessibilityService : AccessibilityService() {
         // when scrolling through chats/conversation, or when window state changes
         val isWhatsAppActive = packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b" ||
                 ((currentForegroundApp == "com.whatsapp" || currentForegroundApp == "com.whatsapp.w4b") &&
-                 (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard")))
+                 (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard") || packageName.contains("swiftkey")))
         if (isWhatsAppActive) {
-            if ((packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b") && whatsAppPollRunnable == null) {
+            if (whatsAppPollRunnable == null) {
                 startWhatsAppPolling()
             }
             // Track composer text from entry node or event source
@@ -503,17 +503,23 @@ class BlockAccessibilityService : AccessibilityService() {
 
                             val chatTitle = getWhatsAppCurrentChatTitle(waRoot)
                             val textToSend = sentText
+                            // Clear composer memory IMMEDIATELY so next message doesn't collide
+                            lastWhatsAppComposerText = null
+
                             if (!textToSend.isNullOrBlank() && !chatTitle.isNullOrBlank()) {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentWhatsAppText(textToSend)
                                 val dedupeKey = "wa|$chatTitle|$textToSend|true|text"
-                                if (shouldCaptureMessage(dedupeKey, 60_000L)) {
+                                currentChatSeenSignatures.remove(dedupeKey)
+
+                                // 1.5s window to prevent button bounce/double-tap, allowing consecutive messages immediately
+                                if (shouldCaptureMessage(dedupeKey, 1500L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
+                                            db.whatsAppMessageDao().updateToOutgoing(chatTitle, textToSend, now - 60_000L)
                                             val existingId = db.whatsAppMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 600_000L
+                                                chatTitle, textToSend, true, now - 2_000L
                                             )
                                             if (existingId == null) {
                                                 db.whatsAppMessageDao().insertAll(
@@ -533,13 +539,12 @@ class BlockAccessibilityService : AccessibilityService() {
                                         } catch (_: Exception) {}
                                     }
                                 }
-                                lastWhatsAppComposerText = null
                             }
                             pollHandler.postDelayed({
-                                recordWhatsAppChatIfForeground(rootInActiveWindow)
+                                recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
                             }, 300L)
                             pollHandler.postDelayed({
-                                recordWhatsAppChatIfForeground(rootInActiveWindow)
+                                recordWhatsAppChatIfForeground(getWhatsAppWindowRoot())
                             }, 1000L)
                         } else if (cDesc.contains("back", ignoreCase = true) || cDesc.contains("navigate up", ignoreCase = true) || cId.endsWith(":id/back")) {
                             lastClickedWhatsAppChat = null
@@ -849,6 +854,8 @@ class BlockAccessibilityService : AccessibilityService() {
     private var lastClickedWhatsAppChat: String? = null
     private var lastWhatsAppComposerText: String? = null
     private val recentSentWhatsAppTexts = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    val currentChatSeenSignatures = java.util.Collections.synchronizedSet(java.util.HashSet<String>())
+    var lastActiveChatForSignatures: String? = null
 
     private var lastClickedInstagramChat: String? = null
     private var lastInstagramComposerText: String? = null
@@ -925,8 +932,14 @@ class BlockAccessibilityService : AccessibilityService() {
         val runnable = object : Runnable {
             override fun run() {
                 val root = getWhatsAppWindowRoot()
-                recordWhatsAppChatIfForeground(root)
-                pollHandler.postDelayed(this, whatsAppPollIntervalMs)
+                val pkg = root?.packageName?.toString() ?: ""
+                if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
+                    recordWhatsAppChatIfForeground(root)
+                    pollHandler.postDelayed(this, whatsAppPollIntervalMs)
+                } else {
+                    // WhatsApp no longer active window
+                    whatsAppPollRunnable = null
+                }
             }
         }
         whatsAppPollRunnable = runnable
@@ -934,6 +947,12 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun stopWhatsAppPolling() {
+        val root = getWhatsAppWindowRoot()
+        val pkg = root?.packageName?.toString() ?: ""
+        if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
+            // WhatsApp is still active in foreground/behind keyboard, do not stop polling!
+            return
+        }
         whatsAppPollRunnable?.let { pollHandler.removeCallbacks(it) }
         whatsAppPollRunnable = null
     }
@@ -1361,6 +1380,11 @@ class BlockAccessibilityService : AccessibilityService() {
                 lastClickedWhatsAppChat = chatTitle
             }
 
+            if (!chatTitle.equals(lastActiveChatForSignatures, ignoreCase = true)) {
+                lastActiveChatForSignatures = chatTitle
+                currentChatSeenSignatures.clear()
+            }
+
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
             fun collectMessageNodes(node: AccessibilityNodeInfo?) {
                 if (node == null) return
@@ -1532,20 +1556,26 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 val key = "wa|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                if (shouldCaptureMessage(key, 3_000L)) {
-                    entriesToInsert.add(
-                        WhatsAppMessageEntry(
-                            chatName = chatTitle,
-                            sender = if (isOutgoing) "me" else chatTitle,
-                            messageText = finalText,
-                            isOutgoing = isOutgoing,
-                            messageTimeEpochMs = now,
-                            mediaType = itemMediaType,
-                            mediaPath = mediaPath,
-                            reelUrl = reelUrl
-                        )
-                    )
+                if (currentChatSeenSignatures.contains(key)) {
+                    continue
                 }
+                currentChatSeenSignatures.add(key)
+                if (currentChatSeenSignatures.size > 500) {
+                    currentChatSeenSignatures.clear()
+                }
+
+                entriesToInsert.add(
+                    WhatsAppMessageEntry(
+                        chatName = chatTitle,
+                        sender = if (isOutgoing) "me" else chatTitle,
+                        messageText = finalText,
+                        isOutgoing = isOutgoing,
+                        messageTimeEpochMs = now,
+                        mediaType = itemMediaType,
+                        mediaPath = mediaPath,
+                        reelUrl = reelUrl
+                    )
+                )
             }
 
             if (entriesToInsert.isNotEmpty()) {
@@ -1557,7 +1587,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.whatsAppMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 30_000L
+                                entry.messageTimeEpochMs - 2_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)

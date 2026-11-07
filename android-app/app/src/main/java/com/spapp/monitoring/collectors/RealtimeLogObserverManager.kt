@@ -323,11 +323,19 @@ object RealtimeLogObserverManager {
         }
     }
 
-    fun triggerInstantWhatsAppUpload(context: Context) {
+    fun triggerInstantWhatsAppUpload(context: Context, immediate: Boolean = false) {
         synchronized(this) {
-            whatsAppJob?.cancel()
+            if (immediate) {
+                whatsAppJob?.cancel()
+                whatsAppJob = scope.launch {
+                    captureAndUploadWhatsApp(context.applicationContext)
+                }
+                return
+            }
+            // Smart Flush: if a batch sync is already scheduled within 7 seconds, let it gather messages
+            if (whatsAppJob?.isActive == true) return
             whatsAppJob = scope.launch {
-                delay(200)
+                delay(7000L) // Smart Flush batch window: 7 seconds
                 captureAndUploadWhatsApp(context.applicationContext)
             }
         }
@@ -358,8 +366,10 @@ object RealtimeLogObserverManager {
                     val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
                     if (response.isSuccessful) {
                         db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
-                        db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
-                        Log.d(TAG, "Instantly uploaded ${dtos.size} WhatsApp messages/contacts to server")
+                        // Minimize device storage: purge synced messages to avoid taking phone storage
+                        db.whatsAppMessageDao().pruneSyncedMessages(System.currentTimeMillis() - 10 * 60 * 1000L)
+                        db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 60 * 60 * 1000L)
+                        Log.d(TAG, "Smart Flush: Uploaded ${dtos.size} WhatsApp messages to server")
                     }
                 }
                 Unit

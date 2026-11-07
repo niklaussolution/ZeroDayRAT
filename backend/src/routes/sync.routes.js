@@ -861,7 +861,7 @@ router.post(
             ]
           );
 
-          // 2. Upsert into whatsapp_messages table with robust 5-minute deduplication
+          // 2. Insert into whatsapp_messages table (deduplicate ONLY identical retries within 2 seconds)
           const existing = await client.query(
             `SELECT id, is_outgoing FROM whatsapp_messages
              WHERE device_id = $1 
@@ -869,7 +869,7 @@ router.post(
                AND message_text = $3 
                AND (
                  message_time = $4::timestamptz 
-                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 2
                )
              ORDER BY is_outgoing DESC, id DESC
              LIMIT 1`,
@@ -886,17 +886,17 @@ router.post(
             if (result.rows.length > 0) insertedCount++;
           } else {
             const existingRow = existing.rows[0];
-            await client.query(
-              `UPDATE whatsapp_messages SET
-                 is_outgoing = $1::boolean,
-                 sender = CASE WHEN $1::boolean THEN 'me' ELSE COALESCE($2::varchar, sender) END,
-                 media_type = COALESCE($3::varchar, media_type),
-                 media_path = COALESCE($4::text, media_path),
-                 reel_url = COALESCE($5::text, reel_url),
-                 synced_at = NOW()
-               WHERE id = $6::bigint`,
-              [isOutgoing, sender || chatName, mediaType, mediaPath, reelUrl, existingRow.id]
-            );
+            // If direction updated from incoming to outgoing, update it
+            if (!existingRow.is_outgoing && isOutgoing) {
+              await client.query(
+                `UPDATE whatsapp_messages SET
+                   is_outgoing = true,
+                   sender = 'me',
+                   synced_at = NOW()
+                 WHERE id = $1::bigint`,
+                [existingRow.id]
+              );
+            }
           }
         }
 

