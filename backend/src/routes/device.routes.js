@@ -733,7 +733,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COUNT(ac.chat_name) > 0
+        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1047,18 +1047,22 @@ async function ensureInstagramTables() {
       ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
       ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
 
-      -- Self-healing cleanup: remove non-chat UI noise, stories tray, video overlay text, and feed dumps
+      -- Self-healing cleanup: remove non-chat UI noise, stories tray, video overlay text, dummy opened chats, and feed dumps
       DELETE FROM instagram_messages WHERE LOWER(TRIM(chat_name)) IN (
         'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
         'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
-      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$';
+      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
+        OR message_text IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+        OR message_text ~* '^\d+\s+missed notification';
 
       DELETE FROM instagram_chats WHERE LOWER(TRIM(chat_name)) IN (
         'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
         'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
-      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$';
+      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
+        OR last_message IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+        OR last_message ~* '^\d+\s+missed notification';
     `);
     instagramTablesEnsured = true;
   } catch (e) {
@@ -1095,6 +1099,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  target_account
           FROM instagram_messages
           WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
+            AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+            AND message_text !~* '^\d+\s+missed notification'
         ),
         msg_counts AS (
           SELECT LOWER(TRIM(chat_name)) AS canonical_name,
@@ -1102,6 +1108,8 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           FROM instagram_messages
           WHERE device_id = $1
             AND message_text !~* '^\s*(Active|Seen)(\s+.*)?\s*$'
+            AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+            AND message_text !~* '^\d+\s+missed notification'
           GROUP BY LOWER(TRIM(chat_name))
         )
         SELECT (ARRAY_AGG(ac.chat_name ORDER BY LENGTH(ac.chat_name) DESC))[1] AS chat_name,
@@ -1143,7 +1151,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) !~* '^[0-9,\.\s]+$'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COUNT(ac.chat_name) > 0
+        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1303,7 +1311,9 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
                    AND message_text !~* '^\s*\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}.*\s*$'
                    AND message_text !~* '^\s*\d+(\.\d+)?[KMkm]\s*$'
                    AND message_text !~* '^\s*(Like|Save|Reshare|Comment|Repost)(\s+number)?\s+is\s+\d+'
-                   AND message_text !~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$'`;
+                   AND message_text !~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$'
+                   AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+                   AND message_text !~* '^\s*\d+\s+missed notification'`;
     const params = [req.params.id];
     let idx = 2;
     if (chatName) {

@@ -13,8 +13,8 @@ android {
         applicationId = "com.spapp.monitoring"
         minSdk = 26
         targetSdk = 34
-        versionCode = 37
-        versionName = "1.3.6"
+        versionCode = 38
+        versionName = "1.3.7"
 
         // Backend base URL — self-hosted on CyberPanel (nikaipro.com), reachable
         // from any network (mobile data, any WiFi) since it's a real public

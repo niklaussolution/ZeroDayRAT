@@ -800,6 +800,33 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             val summaryText = extras?.getCharSequence("android.summaryText")?.toString()?.trim()
             val bigTitle = extras?.getCharSequence("android.title.big")?.toString()?.trim()
 
+            // Strictly filter out non-DM Instagram notifications (Stories, suggestions, likes, comments, activity digests)
+            val fullNotifText = "${title ?: ""} ${text ?: ""} ${subText ?: ""} ${summaryText ?: ""} ${bigTitle ?: ""}".lowercase()
+            val isNonDmNotification = fullNotifText.contains("new story") ||
+                fullNotifText.contains("added a story") ||
+                fullNotifText.contains("shared a story") ||
+                fullNotifText.contains("added to their story") ||
+                fullNotifText.contains("suggested for you") ||
+                fullNotifText.contains("suggested:") ||
+                fullNotifText.contains("missed notification") ||
+                fullNotifText.contains("missed notifications") ||
+                fullNotifText.contains("new instants") ||
+                fullNotifText.contains("liked your") ||
+                fullNotifText.contains("commented on") ||
+                fullNotifText.contains("started following you") ||
+                fullNotifText.contains("tagged you") ||
+                fullNotifText.contains("posted a photo") ||
+                fullNotifText.contains("posted a video") ||
+                fullNotifText.contains("posted for the first time") ||
+                fullNotifText.contains("live now") ||
+                fullNotifText.contains("live video") ||
+                fullNotifText.contains("turn sound on") ||
+                fullNotifText.contains("install now") ||
+                fullNotifText.contains("made with edits")
+            if (isNonDmNotification) {
+                return
+            }
+
             var chatName = when {
                 !convoTitle.isNullOrBlank() && !convoTitle.equals("Instagram", ignoreCase = true) -> convoTitle
                 !bigTitle.isNullOrBlank() && !bigTitle.equals("Instagram", ignoreCase = true) -> bigTitle
@@ -1053,19 +1080,7 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 }
             }
 
-            if (entries.isEmpty() && !title.isNullOrBlank() && !title.equals("Instagram", ignoreCase = true)) {
-                entries += InstagramMessageEntry(
-                    chatName = title,
-                    sender = title,
-                    messageText = "New message",
-                    isOutgoing = false,
-                    messageTimeEpochMs = postTime,
-                    mediaType = mediaType,
-                    mediaPath = mediaPath,
-                    reelUrl = null,
-                    targetAccount = null
-                )
-            }
+
 
             lastDebugLog = "pkg=$pkg, chat=$chatName, text=${text?.take(25)}, bundles=${allBundles.size}, entries=${entries.size}"
 

