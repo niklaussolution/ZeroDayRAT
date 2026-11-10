@@ -607,7 +607,9 @@ router.post(
     }
   }
 );
+let whatsAppTablesEnsured = false;
 async function ensureWhatsAppTables() {
+  if (whatsAppTablesEnsured) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_messages (
@@ -651,6 +653,7 @@ async function ensureWhatsAppTables() {
       DELETE FROM whatsapp_messages WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
       DELETE FROM whatsapp_chats WHERE chat_name ~* '^\\s*\\d+\\s+messages?\\s+from\\s+\\d+\\s+chats?';
     `);
+    whatsAppTablesEnsured = true;
   } catch (e) {
     console.warn("ensureWhatsAppTables notice:", e.message);
   }
