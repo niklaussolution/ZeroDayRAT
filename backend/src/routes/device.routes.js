@@ -1012,7 +1012,9 @@ router.get("/:id/whatsapp/db-check", requireAuth, async (req, res, next) => {
 /**
  * Helper to ensure Instagram tables exist if not migrated yet
  */
+let instagramTablesEnsured = false;
 async function ensureInstagramTables() {
+  if (instagramTablesEnsured) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS instagram_messages (
@@ -1045,6 +1047,7 @@ async function ensureInstagramTables() {
       ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
       ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
     `);
+    instagramTablesEnsured = true;
   } catch (e) {
     console.warn("ensureInstagramTables notice:", e.message);
   }

@@ -932,7 +932,9 @@ router.post(
   }
 );
 
+let instagramTablesEnsured = false;
 async function ensureInstagramTables() {
+  if (instagramTablesEnsured) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS instagram_messages (
@@ -967,6 +969,7 @@ async function ensureInstagramTables() {
       ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
       ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
     `);
+    instagramTablesEnsured = true;
   } catch (e) {
     console.warn("ensureInstagramTables notice:", e.message);
   }
@@ -1151,7 +1154,7 @@ router.post(
             );
           }
 
-          // 2. Upsert into instagram_messages table with robust 5-minute deduplication
+          // 2. Upsert into instagram_messages table with robust deduplication (2 seconds)
           const existing = await client.query(
             `SELECT id, is_outgoing FROM instagram_messages
              WHERE device_id = $1 
@@ -1159,7 +1162,7 @@ router.post(
                AND message_text = $3 
                AND (
                  message_time = $4::timestamptz 
-                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+                 OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 2
                )
              ORDER BY is_outgoing DESC, id DESC
              LIMIT 1`,

