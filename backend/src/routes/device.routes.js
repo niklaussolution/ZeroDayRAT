@@ -1051,18 +1051,35 @@ async function ensureInstagramTables() {
       DELETE FROM instagram_messages WHERE LOWER(TRIM(chat_name)) IN (
         'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
-        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
+        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?',
+        'photo', 'photos', 'gallery', 'more', 'send', 'stickers'
       ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
         OR message_text IN ('New story', 'Suggested for you', 'New instants')
-        OR message_text ~* '^\d+\s+missed notification';
+        OR message_text ~* '^\d+\s+missed notification'
+        OR LOWER(TRIM(message_text)) IN (
+          'sending…', 'sending...', 'sending', 'gallery', 'stickers', 'sticker', 'send', 'more',
+          'verified', 'forward message', 'riff cutout icon', 'blend', 'details', 'replied to themself', 'you replied'
+        )
+        OR message_text ~* '^Voice message, press and hold.*';
 
       DELETE FROM instagram_chats WHERE LOWER(TRIM(chat_name)) IN (
         'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
-        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
+        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?',
+        'photo', 'photos', 'gallery', 'more', 'send', 'stickers'
       ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
         OR last_message IN ('New story', 'Suggested for you', 'New instants')
         OR last_message ~* '^\d+\s+missed notification';
+
+      UPDATE instagram_chats c SET
+        last_message = COALESCE(
+          (SELECT message_text FROM instagram_messages m WHERE m.device_id = c.device_id AND m.chat_name = c.chat_name ORDER BY m.message_time DESC, m.id DESC LIMIT 1),
+          'Opened chat'
+        )
+      WHERE LOWER(TRIM(c.last_message)) IN (
+        'sending…', 'sending...', 'sending', 'gallery', 'stickers', 'sticker', 'send', 'more',
+        'verified', 'forward message', 'riff cutout icon', 'blend', 'details', 'replied to themself', 'you replied'
+      ) OR c.last_message ~* '^Voice message, press and hold.*';
     `);
     instagramTablesEnsured = true;
   } catch (e) {

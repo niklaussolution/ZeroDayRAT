@@ -1024,10 +1024,10 @@ router.post(
           if (/^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)(?:,?\s*\d{4})?(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
           // 4. Standard numeric dates: "17/10/2026", "2026-10-17"
           if (/^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$/i.test(t)) return true;
-          // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending...", "Typing..."
-          if (/^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+\w+)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?)$/i.test(t)) return true;
-          // 6. UI placeholders and system button text
-          if (/^(?:Message\.\.\.|Type\s+a\s+message\.\.\.|Search|Replies|Tap\s+and\s+hold\s+to\s+react|Double\s+tap\s+to\s+like|Liked\s+a\s+message|Follow|Requested)$/i.test(t)) return true;
+          // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending...", "Sending…", "Typing...", "Typing…"
+          if (/^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+.*)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:[\.…\s].*)?|Typing(?:[\.…\s].*)?)$/i.test(t)) return true;
+          // 6. UI placeholders, actions, buttons, and reply headers
+          if (/^(?:Message(?:[\.…\s].*)?|Type\s+a\s+message(?:[\.…\s].*)?|Search|Replies|Tap\s+and\s+hold.*|Double\s+tap.*|Tap\s+to\s+reply.*|Liked\s+a\s+message|Follow|Requested|Voice\s+message.*|Gallery|Stickers?|Send|More|Verified|Forward\s+message|Riff\s+cutout.*|Blend|Camera|Audio\s+call|Video\s+call|Details|Direct|Back|View\s+profile|Replied\s+to\s+.*|You\s+replied.*)$/i.test(t)) return true;
           // 7. Reel view metrics & interactions: "221K", "3.6M", "Like number is 1853", "Save number is 108", "Reshare number is 26", "Comment number is 24", "Reposted 11 times", "View likes", "View comments"
           if (/^\d+(?:\.\d+)?[KMkm]$/.test(t)) return true;
           if (/^(?:Like|Save|Reshare|Comment|Repost)(?:\s+number)?\s+is\s+\d+/i.test(t)) return true;
@@ -1072,13 +1072,30 @@ router.post(
             }
           }
 
-          // 2. Filter out UI metadata & timestamps (e.g. '3:25 PM', 'Seen just now', 'Active now')
-          if (isInstagramUiMetadataOrTimestamp(messageText) && !mediaPath && !reelUrl && mediaType !== "reel" && mediaType !== "image") {
+          // 2. Drop composer buttons, junk delivery receipts, and action items
+          const lowerText = messageText.toLowerCase().trim();
+          const junkTexts = new Set([
+            "sending…", "sending...", "sending", "more", "gallery", "stickers", "sticker", "send", "verified",
+            "forward message", "riff cutout icon", "blend", "details", "camera", "audio call", "video call",
+            "double tap to like", "tap and hold to react", "tap to reply", "view profile"
+          ]);
+          if (
+            junkTexts.has(lowerText) ||
+            lowerText.startsWith("voice message") ||
+            lowerText.startsWith("tap and hold") ||
+            lowerText.startsWith("double tap") ||
+            lowerText.startsWith("replied to ") ||
+            lowerText.startsWith("you replied")
+          ) {
+            continue;
+          }
+
+          // Filter out UI metadata & timestamps (e.g. '3:25 PM', 'Seen just now', 'Active now')
+          if (isInstagramUiMetadataOrTimestamp(messageText) && !mediaPath && !reelUrl) {
             continue;
           }
 
           // 3. Classify exact media type (reel, image, video, audio, or text)
-          const lowerText = messageText.toLowerCase();
           if (
             reelUrl ||
             mediaType === "reel" ||

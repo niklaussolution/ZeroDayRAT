@@ -740,10 +740,10 @@ class WhatsAppNotificationListener : NotificationListenerService() {
             if ("""^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)(?:,?\s*\d{4})?(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
             // 4. Standard numeric dates: "17/10/2026", "2026-10-17"
             if ("""^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
-            // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending...", "Typing..."
-            if ("""^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+\w+)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:\.\.\.)?|Typing(?:\.\.\.)?)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
-            // 6. UI placeholders and system button text
-            if ("""^(?:Message\.\.\.|Type\s+a\s+message\.\.\.|Search|Replies|Tap\s+and\s+hold\s+to\s+react|Double\s+tap\s+to\s+like|Liked\s+a\s+message|Follow|Requested)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 5. Activity status / delivery receipts: "Active now", "Active 5m ago", "Seen just now", "Seen", "Delivered", "Sent", "Sending…", "Typing…"
+            if ("""^(?:Active(?:\s+now|\s+today|\s+\d+\w*\s+ago|\s+yesterday)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday|\s+by\s+.*)?|Delivered(?:\s+\d+\w*\s+ago)?|Sent(?:\s+\d+\w*\s+ago)?|Sending(?:[\.…\s].*)?|Typing(?:[\.…\s].*)?)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+            // 6. UI placeholders, actions, buttons, and reply headers
+            if ("""^(?:Message(?:[\.…\s].*)?|Type\s+a\s+message(?:[\.…\s].*)?|Search|Replies|Tap\s+and\s+hold.*|Double\s+tap.*|Tap\s+to\s+reply.*|Liked\s+a\s+message|Follow|Requested|Voice\s+message.*|Gallery|Stickers?|Send|More|Verified|Forward\s+message|Riff\s+cutout.*|Blend|Camera|Audio\s+call|Video\s+call|Details|Direct|Back|View\s+profile|Replied\s+to\s+.*|You\s+replied.*)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
             // 7. Reel view metrics & interactions: "221K", "3.6M", "Like number is 1853", "Save number is 108", "Reshare number is 26", "Comment number is 24", "Reposted 11 times", "View likes", "View comments"
             if ("""^\d+(?:\.\d+)?[KMkm]$""".toRegex().matches(t)) return true
             if ("""^(?:Like|Save|Reshare|Comment|Repost)(?:\s+number)?\s+is\s+\d+.*$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
