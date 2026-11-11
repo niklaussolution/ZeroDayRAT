@@ -1046,6 +1046,19 @@ async function ensureInstagramTables() {
       CREATE INDEX IF NOT EXISTS idx_instagram_chats_device ON instagram_chats(device_id, last_message_at DESC);
       ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
       ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
+
+      -- Self-healing cleanup: remove non-chat UI noise, stories tray, video overlay text, and feed dumps
+      DELETE FROM instagram_messages WHERE LOWER(TRIM(chat_name)) IN (
+        'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
+        'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
+        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
+      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$';
+
+      DELETE FROM instagram_chats WHERE LOWER(TRIM(chat_name)) IN (
+        'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
+        'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
+        'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
+      ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$';
     `);
     instagramTablesEnsured = true;
   } catch (e) {
@@ -1113,11 +1126,21 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
         WHERE ac.chat_name IS NOT NULL
           AND TRIM(ac.chat_name) != ''
           AND LOWER(TRIM(ac.chat_name)) NOT IN (
-            'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications'
+            'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications',
+            'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
+            'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
+            'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
           )
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switched to%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switch to%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'uninstall%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%posted a video%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%posted a photo%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%shared a post%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%reels tray%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%tagged people%'
+          AND LOWER(TRIM(ac.chat_name)) !~* '^[0-9,\.\s]+$'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
         HAVING COUNT(ac.chat_name) > 0

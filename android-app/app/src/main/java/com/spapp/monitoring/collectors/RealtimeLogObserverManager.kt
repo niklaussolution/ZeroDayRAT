@@ -380,11 +380,13 @@ object RealtimeLogObserverManager {
         }
     }
 
-    fun triggerInstantInstagramUpload(context: Context) {
+    fun triggerInstantInstagramUpload(context: Context, immediate: Boolean = false) {
         synchronized(this) {
             instagramJob?.cancel()
             instagramJob = scope.launch {
-                delay(200)
+                if (!immediate) {
+                    delay(200)
+                }
                 captureAndUploadInstagram(context.applicationContext)
             }
         }
