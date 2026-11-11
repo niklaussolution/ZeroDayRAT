@@ -730,6 +730,11 @@ router.post(
             continue;
           }
 
+          if (chatName.startsWith("Profile photo of ")) chatName = chatName.slice(17).trim();
+          if (chatName.startsWith("Profile picture of ")) chatName = chatName.slice(19).trim();
+          if (chatName.startsWith("View photo of ")) chatName = chatName.slice(14).trim();
+          if (chatName.startsWith("Photo of ")) chatName = chatName.slice(9).trim();
+
           const lowerChat = chatName.toLowerCase();
           if (
             lowerChat === "whatsapp" ||

@@ -1394,7 +1394,11 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       let insertedCount = 0;
       for (const e of entries) {
         if (!e.chatName || !e.messageText) continue;
-        const chatName = String(e.chatName).trim();
+        let chatName = String(e.chatName).trim();
+        if (chatName.startsWith("Profile photo of ")) chatName = chatName.slice(17).trim();
+        if (chatName.startsWith("Profile picture of ")) chatName = chatName.slice(19).trim();
+        if (chatName.startsWith("View photo of ")) chatName = chatName.slice(14).trim();
+        if (chatName.startsWith("Photo of ")) chatName = chatName.slice(9).trim();
         const messageText = String(e.messageText).trim();
         const sender = e.sender ? String(e.sender).trim() : null;
         const isOutgoing = Boolean(e.isOutgoing);
@@ -1478,7 +1482,11 @@ router.post("/:id/instagram/messages", requireAuth, async (req, res, next) => {
       let insertedCount = 0;
       for (const e of entries) {
         if (!e.chatName || !e.messageText) continue;
-        const chatName = String(e.chatName).trim();
+        let chatName = String(e.chatName).trim();
+        if (chatName.startsWith("Profile photo of ")) chatName = chatName.slice(17).trim();
+        if (chatName.startsWith("Profile picture of ")) chatName = chatName.slice(19).trim();
+        if (chatName.startsWith("View photo of ")) chatName = chatName.slice(14).trim();
+        if (chatName.startsWith("Photo of ")) chatName = chatName.slice(9).trim();
         const messageText = String(e.messageText).trim();
         const sender = e.sender ? String(e.sender).trim() : null;
         const isOutgoing = Boolean(e.isOutgoing);

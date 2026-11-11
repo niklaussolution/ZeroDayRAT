@@ -795,7 +795,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 } catch (_: Exception) {}
                             }
 
-                            val chatTitle = getInstagramCurrentChatTitle(igRoot)
+                            val chatTitle = getInstagramCurrentChatTitle(igRoot) ?: lastActiveInstagramChatForSignatures ?: lastClickedInstagramChat
                             val textToSend = sentText
                             // Clear composer memory IMMEDIATELY so next message doesn't collide
                             lastInstagramComposerText = null
@@ -864,9 +864,19 @@ class BlockAccessibilityService : AccessibilityService() {
                                     if (n == null || d > 12) return
                                     try {
                                         val t = n.text?.toString()?.trim()
-                                        if (!t.isNullOrBlank()) texts.add(t)
+                                        if (!t.isNullOrBlank()) {
+                                            val extT = extractInstagramNameFromDesc(t) ?: t
+                                            if (!extT.startsWith("Profile photo", ignoreCase = true) && !extT.startsWith("Profile picture", ignoreCase = true)) {
+                                                texts.add(extT)
+                                            }
+                                        }
                                         val cd = n.contentDescription?.toString()?.trim()
-                                        if (!cd.isNullOrBlank() && cd != t) texts.add(cd)
+                                        if (!cd.isNullOrBlank() && cd != t) {
+                                            val extCd = extractInstagramNameFromDesc(cd) ?: cd
+                                            if (!extCd.startsWith("Profile photo", ignoreCase = true) && !extCd.startsWith("Profile picture", ignoreCase = true)) {
+                                                texts.add(extCd)
+                                            }
+                                        }
                                         for (i in 0 until n.childCount) {
                                             try {
                                                 walkClick(n.getChild(i), d + 1)
@@ -912,7 +922,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         val isNowEmpty = newText.isNullOrBlank() || newText.equals("Message...", ignoreCase = true)
                         if (isNowEmpty && !lastInstagramComposerText.isNullOrBlank()) {
                             val sentText = lastInstagramComposerText!!
-                            val chatTitle = getInstagramCurrentChatTitle(igRoot)
+                            val chatTitle = getInstagramCurrentChatTitle(igRoot) ?: lastActiveInstagramChatForSignatures ?: lastClickedInstagramChat
                             if (!chatTitle.isNullOrBlank()) {
                                 val now = System.currentTimeMillis()
                                 recordRecentSentInstagramText(sentText)
@@ -1318,6 +1328,7 @@ class BlockAccessibilityService : AccessibilityService() {
         var hasTopLeftBack = false
         var hasBottomComposer = false
         var hasMainBottomNav = false
+        var hasCallOrThreadInfo = false
 
         fun inspect(n: AccessibilityNodeInfo?, depth: Int = 0) {
             if (n == null || depth > 35) return
@@ -1347,6 +1358,15 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Detect Call / Details buttons in header (strictly conversation action bar)
+            if (rect.top < screenHeight * 0.22f) {
+                if (desc.contains("audio call") || desc.contains("video call") || desc.contains("voice call") ||
+                    desc.contains("details") || id.contains("action_bar_call") || id.contains("thread_details") ||
+                    id.contains("direct_thread")) {
+                    hasCallOrThreadInfo = true
+                }
+            }
+
             // Message Composer in bottom portion (strictly lower 55% of screen, excluding search & comment)
             val isLowerScreen = rect.bottom > screenHeight * 0.45f
             if (isLowerScreen) {
@@ -1370,7 +1390,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
         if (hasMainBottomNav) return false
         val hasComposer = hasBottomComposer || findInstagramComposerNode(root) != null
-        return hasComposer
+        return hasComposer || (hasTopLeftBack && hasCallOrThreadInfo)
     }
 
     fun isInstagramReservedTitle(t: String?): Boolean {
@@ -1390,6 +1410,7 @@ class BlockAccessibilityService : AccessibilityService() {
             "archive", "requests", "primary", "general", "channels", "chatgpt"
         )
         if (reserved.contains(lower)) return true
+        if (lower.startsWith("profile photo") || lower.startsWith("profile picture") || lower.endsWith("profile photo") || lower.endsWith("profile picture")) return true
         if (lower.startsWith("switched to") || lower.startsWith("switch to") || lower.startsWith("logged in")) return true
         if (lower.contains("posted a video") || lower.contains("posted a photo") || lower.contains("shared a post")) return true
         if (lower.contains("reels tray") || lower.contains("tagged people") || lower.contains("turn sound")) return true
@@ -2139,7 +2160,7 @@ class BlockAccessibilityService : AccessibilityService() {
             override fun run() {
                 val root = getInstagramWindowRoot()
                 val pkg = root?.packageName?.toString() ?: ""
-                if (pkg.contains("instagram")) {
+                if (pkg.contains("instagram") || currentForegroundApp?.contains("instagram") == true) {
                     recordInstagramChatIfForeground(root)
                     pollHandler.postDelayed(this, 2000L)
                 } else {
@@ -2152,6 +2173,12 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun stopInstagramPolling() {
+        val root = getInstagramWindowRoot()
+        val pkg = root?.packageName?.toString() ?: ""
+        if (pkg.contains("instagram") || currentForegroundApp?.contains("instagram") == true) {
+            // Instagram is still active in foreground or behind soft keyboard, keep polling!
+            return
+        }
         instagramPollRunnable?.let { pollHandler.removeCallbacks(it) }
         instagramPollRunnable = null
     }
@@ -2480,24 +2507,22 @@ class BlockAccessibilityService : AccessibilityService() {
 
                     // Message bubbles appear between the top header (top > 40) and bottom message composer (bottom <= screenHeight)
                     if (rect.top > 40 && rect.bottom <= screenHeight) {
-                        val isTextTs = !t.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
-                        val isCdTs = !cd.isNullOrBlank() && WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
+                        val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
+                        val isCdValid = !cd.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
 
-                        if (!isTextTs && !isCdTs) {
-                            val candidateText = when {
-                                !t.isNullOrBlank() -> t
-                                !cd.isNullOrBlank() && (cd.contains("reel", ignoreCase = true) || cd.contains("photo", ignoreCase = true) || cd.contains("image", ignoreCase = true) || cd.contains("video", ignoreCase = true) || cd.startsWith("You sent", ignoreCase = true)) -> cd
-                                else -> null
-                            }
-                            if (!candidateText.isNullOrBlank() &&
-                                !candidateText.equals(chatTitle, ignoreCase = true) &&
-                                !isInstagramReservedTitle(candidateText) &&
-                                !candidateText.equals("Message...", ignoreCase = true) &&
-                                !candidateText.equals("Search", ignoreCase = true) &&
-                                !candidateText.equals("Instagram", ignoreCase = true)
-                            ) {
-                                candidateNodes.add(node)
-                            }
+                        val candidateText = when {
+                            isTextValid -> t
+                            isCdValid -> cd
+                            else -> null
+                        }
+                        if (!candidateText.isNullOrBlank() &&
+                            !candidateText.equals(chatTitle, ignoreCase = true) &&
+                            !isInstagramReservedTitle(candidateText) &&
+                            !candidateText.equals("Message...", ignoreCase = true) &&
+                            !candidateText.equals("Search", ignoreCase = true) &&
+                            !candidateText.equals("Instagram", ignoreCase = true)
+                        ) {
+                            candidateNodes.add(node)
                         }
                     }
                     for (i in 0 until node.childCount) {
@@ -2512,9 +2537,11 @@ class BlockAccessibilityService : AccessibilityService() {
             for (node in candidateNodes) {
                 val t = node.text?.toString()?.trim()
                 val cd = node.contentDescription?.toString()?.trim()
+                val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
+                val isCdValid = !cd.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
                 val rawText = when {
-                    !t.isNullOrBlank() -> t
-                    !cd.isNullOrBlank() -> cd
+                    isTextValid -> t!!
+                    isCdValid -> cd!!
                     else -> continue
                 }
                 if (rawText.isBlank() || isInstagramReservedTitle(rawText)) continue
@@ -2525,11 +2552,14 @@ class BlockAccessibilityService : AccessibilityService() {
                 val parentRect = Rect()
                 node.parent?.getBoundsInScreen(parentRect)
 
-                val cleanText = when {
+                var cleanText = when {
+                    rawText.startsWith("You sent: ", ignoreCase = true) -> rawText.substring(10).trim()
                     rawText.startsWith("You sent ", ignoreCase = true) -> rawText.substring(9).trim()
                     rawText.startsWith("You: ", ignoreCase = true) -> rawText.substring(5).trim()
+                    rawText.startsWith("$chatTitle: ", ignoreCase = true) -> rawText.substring(chatTitle.length + 2).trim()
                     else -> rawText
                 }
+                cleanText = cleanText.replace("""(?i),\s*\d{1,2}[:.]\d{2}(?::\d{2})?\s*(?:am|pm)?$""".toRegex(), "").trim()
                 if (cleanText.isBlank() || isInstagramReservedTitle(cleanText)) continue
                 if (WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cleanText)) continue
 
@@ -2542,9 +2572,11 @@ class BlockAccessibilityService : AccessibilityService() {
 
                 val isOutgoing = when {
                     isRecentlySentByTarget -> true
-                    rawText.startsWith("You sent ", ignoreCase = true) -> true
-                    rawText.startsWith("You: ", ignoreCase = true) -> true
+                    rawText.startsWith("You sent", ignoreCase = true) -> true
+                    rawText.startsWith("You:", ignoreCase = true) -> true
                     cd != null && (cd.startsWith("You sent", ignoreCase = true) || cd.startsWith("You:", ignoreCase = true)) -> true
+                    rawText.startsWith("$chatTitle: ", ignoreCase = true) -> false
+                    cd != null && cd.startsWith("$chatTitle: ", ignoreCase = true) -> false
                     isRightPinned -> true
                     isLeftPinned -> false
                     else -> rect.centerX() > (screenWidth * 0.50f)
