@@ -733,7 +733,7 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
+        HAVING COUNT(ac.chat_name) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1047,13 +1047,13 @@ async function ensureInstagramTables() {
       ALTER TABLE instagram_messages ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
       ALTER TABLE instagram_chats ADD COLUMN IF NOT EXISTS target_account VARCHAR(255);
 
-      -- Self-healing cleanup: remove non-chat UI noise, stories tray, video overlay text, dummy opened chats, and feed dumps
+      -- Self-healing cleanup: remove non-chat UI noise, stories tray, video overlay text, and feed dumps
       DELETE FROM instagram_messages WHERE LOWER(TRIM(chat_name)) IN (
         'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
         'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
       ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
-        OR message_text IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+        OR message_text IN ('New story', 'Suggested for you', 'New instants')
         OR message_text ~* '^\d+\s+missed notification';
 
       DELETE FROM instagram_chats WHERE LOWER(TRIM(chat_name)) IN (
@@ -1061,7 +1061,7 @@ async function ensureInstagramTables() {
         'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
         'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
       ) OR chat_name ~* 'posted a (video|photo)' OR chat_name ~* '^[0-9,\.\s]+$'
-        OR last_message IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+        OR last_message IN ('New story', 'Suggested for you', 'New instants')
         OR last_message ~* '^\d+\s+missed notification';
     `);
     instagramTablesEnsured = true;
@@ -1099,7 +1099,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
                  target_account
           FROM instagram_messages
           WHERE device_id = $1 AND chat_name IS NOT NULL AND TRIM(chat_name) != ''
-            AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+            AND message_text NOT IN ('New story', 'Suggested for you', 'New instants')
             AND message_text !~* '^\d+\s+missed notification'
         ),
         msg_counts AS (
@@ -1108,7 +1108,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           FROM instagram_messages
           WHERE device_id = $1
             AND message_text !~* '^\s*(Active|Seen)(\s+.*)?\s*$'
-            AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+            AND message_text NOT IN ('New story', 'Suggested for you', 'New instants')
             AND message_text !~* '^\d+\s+missed notification'
           GROUP BY LOWER(TRIM(chat_name))
         )
@@ -1151,7 +1151,7 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) !~* '^[0-9,\.\s]+$'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
         GROUP BY LOWER(TRIM(ac.chat_name))
-        HAVING COALESCE(MAX(mc.total_messages), 0) > 0
+        HAVING COUNT(ac.chat_name) > 0
         ORDER BY MAX(ac.last_message_at) DESC
         LIMIT 1000;
       `;
@@ -1312,7 +1312,7 @@ router.get("/:id/instagram/messages", requireAuth, async (req, res, next) => {
                    AND message_text !~* '^\s*\d+(\.\d+)?[KMkm]\s*$'
                    AND message_text !~* '^\s*(Like|Save|Reshare|Comment|Repost)(\s+number)?\s+is\s+\d+'
                    AND message_text !~* '^\s*(Reposted\s+\d+\s+times|View\s+(likes|comments)|Like|Comment|Share|Save|Follow)\s*$'
-                   AND message_text NOT IN ('Opened chat', 'New story', 'Suggested for you', 'New instants')
+                   AND message_text NOT IN ('New story', 'Suggested for you', 'New instants')
                    AND message_text !~* '^\s*\d+\s+missed notification'`;
     const params = [req.params.id];
     let idx = 2;
@@ -1445,6 +1445,132 @@ router.post("/:id/whatsapp/messages", requireAuth, async (req, res, next) => {
       if (insertedCount > 0) {
         emitDeviceEvent(req.params.id, {
           type: "whatsapp_message",
+          chatNames: [...new Set(entries.map((e) => e.chatName).filter(Boolean))],
+          count: insertedCount,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      res.status(201).json({ inserted: insertedCount });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/devices/:id/instagram/messages
+ * (Admin, authenticated) Allows syncing, correcting, or restoring Instagram messages for this device.
+ */
+router.post("/:id/instagram/messages", requireAuth, async (req, res, next) => {
+  try {
+    const device = await checkDeviceAccess(req.params.id, req.auth);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+
+    const entries = Array.isArray(req.body.entries) ? req.body.entries : [req.body];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      let insertedCount = 0;
+      for (const e of entries) {
+        if (!e.chatName || !e.messageText) continue;
+        const chatName = String(e.chatName).trim();
+        const messageText = String(e.messageText).trim();
+        const sender = e.sender ? String(e.sender).trim() : null;
+        const isOutgoing = Boolean(e.isOutgoing);
+        const messageTime = e.messageTime || new Date().toISOString();
+        const reelUrl = e.reelUrl || null;
+        const mediaType = e.mediaType || (reelUrl ? "reel" : null);
+        const mediaPath = e.mediaPath || null;
+        const targetAccount = e.targetAccount || null;
+
+        // Upsert into instagram_chats
+        const existingChat = await client.query(
+          `SELECT id FROM instagram_chats WHERE device_id = $1 AND chat_name = $2 LIMIT 1`,
+          [req.params.id, chatName.slice(0, 255)]
+        );
+        if (existingChat.rows.length === 0) {
+          await client.query(
+            `INSERT INTO instagram_chats (device_id, chat_name, username, last_message, last_message_at, synced_at, target_account)
+             VALUES ($1, $2, $3, $4, $5::timestamptz, NOW(), $6)`,
+            [
+              req.params.id,
+              chatName.slice(0, 255),
+              sender ? sender.slice(0, 255) : null,
+              messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+              messageTime,
+              targetAccount
+            ]
+          );
+        } else {
+          await client.query(
+            `UPDATE instagram_chats SET
+               last_message = CASE
+                 WHEN $1::text IS NOT NULL AND $1::text != '' THEN $1::text
+                 ELSE last_message
+               END,
+               last_message_at = GREATEST(last_message_at, $2::timestamptz),
+               username = COALESCE($3::varchar, username),
+               target_account = COALESCE($4::varchar, target_account),
+               synced_at = NOW()
+             WHERE id = $5::bigint`,
+            [
+              messageText || (reelUrl ? "Shared a Reel" : "Media message"),
+              messageTime,
+              sender ? sender.slice(0, 255) : null,
+              targetAccount,
+              existingChat.rows[0].id
+            ]
+          );
+        }
+
+        const existing = await client.query(
+          `SELECT id, is_outgoing FROM instagram_messages
+           WHERE device_id = $1 
+             AND LOWER(TRIM(chat_name)) = LOWER(TRIM($2)) 
+             AND message_text = $3 
+             AND (
+               message_time = $4::timestamptz 
+               OR ABS(EXTRACT(EPOCH FROM (message_time - $4::timestamptz))) <= 300
+             )
+           ORDER BY is_outgoing DESC, id DESC
+           LIMIT 1`,
+          [req.params.id, chatName, messageText, messageTime]
+        );
+
+        if (existing.rows.length === 0) {
+          const result = await client.query(
+            `INSERT INTO instagram_messages (device_id, chat_name, sender, message_text, is_outgoing, message_time, media_type, media_path, reel_url, target_account)
+             VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8, $9, $10)
+             RETURNING id`,
+            [req.params.id, chatName, sender, messageText, isOutgoing, messageTime, mediaType, mediaPath, reelUrl, targetAccount]
+          );
+          if (result.rows.length > 0) insertedCount++;
+        } else {
+          const existingRow = existing.rows[0];
+          const shouldUpgradeToOutgoing = isOutgoing;
+          await client.query(
+            `UPDATE instagram_messages SET
+               is_outgoing = CASE WHEN $1::boolean THEN true ELSE is_outgoing END,
+               sender = CASE WHEN $1::boolean THEN COALESCE($2::varchar, 'me') ELSE sender END,
+               media_type = COALESCE($3::varchar, media_type),
+               media_path = COALESCE($4::text, media_path),
+               reel_url = COALESCE($5::text, reel_url),
+               target_account = COALESCE($6::varchar, target_account),
+               synced_at = NOW()
+             WHERE id = $7::bigint`,
+            [shouldUpgradeToOutgoing, sender, mediaType, mediaPath, reelUrl, targetAccount, existingRow.id]
+          );
+        }
+      }
+      await client.query("COMMIT");
+      if (insertedCount > 0) {
+        emitDeviceEvent(req.params.id, {
+          type: "instagram_message",
           chatNames: [...new Set(entries.map((e) => e.chatName).filter(Boolean))],
           count: insertedCount,
           timestamp: new Date().toISOString(),

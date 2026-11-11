@@ -1038,7 +1038,7 @@ router.post(
           const chatName = String(e.chatName || req.body.activeChat || "").replace(/\s+/g, " ").trim();
           if (!chatName) continue;
           const rawText = String(e.messageText || "").trim();
-          if (rawText === "Opened chat" || rawText === "New story" || rawText === "Suggested for you" || rawText === "New instants" || /^\d+\s+missed notification/i.test(rawText)) continue;
+          if (rawText === "New story" || rawText === "Suggested for you" || rawText === "New instants" || /^\d+\s+missed notification/i.test(rawText)) continue;
           const sender = e.sender ? String(e.sender).trim() : null;
           const isSenderMe = sender && (
             sender.toLowerCase() === "me" ||

