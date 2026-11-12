@@ -741,6 +741,11 @@ class BlockAccessibilityService : AccessibilityService() {
                     if (!sText.isNullOrBlank() && !sText.equals("Message...", ignoreCase = true)) {
                         lastInstagramComposerText = sText
                     }
+                } else if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && currentForegroundApp?.contains("instagram") == true) {
+                    val evText = event.text?.joinToString("")?.trim()
+                    if (!evText.isNullOrBlank() && !evText.equals("Message...", ignoreCase = true)) {
+                        lastInstagramComposerText = evText
+                    }
                 }
             } catch (_: Exception) {}
 
@@ -769,7 +774,20 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
 
-                        val sendClickHint = childSendMatch ||
+                        var rightComposerIconHint = false
+                        if (!lastInstagramComposerText.isNullOrBlank()) {
+                            val dm = resources.displayMetrics
+                            val clickRect = Rect()
+                            clickedNode.getBoundsInScreen(clickRect)
+                            if (clickRect.left >= (dm.widthPixels * 0.72f).toInt() &&
+                                clickRect.bottom > (dm.heightPixels * 0.40f).toInt() &&
+                                clickRect.height() in 20..260
+                            ) {
+                                rightComposerIconHint = true
+                            }
+                        }
+
+                        val sendClickHint = childSendMatch || rightComposerIconHint ||
                             cDesc.contains("send", ignoreCase = true) ||
                             cText.equals("send", ignoreCase = true) ||
                             cId.contains("send") ||
@@ -2057,10 +2075,21 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
-                    if (depth < 40) {
-                        for (i in 0 until node.childCount) {
-                            val child = node.getChild(i) ?: continue
-                            waQueue.add(child to (depth + 1))
+                    if (depth < 40 && (waVisited + waQueue.size) < 1200) {
+                        val count = node.childCount
+                        val reverseOrder = node.isScrollable
+                        if (reverseOrder) {
+                            for (i in (count - 1) downTo 0) {
+                                if ((waVisited + waQueue.size) >= 1200) break
+                                val child = node.getChild(i) ?: continue
+                                waQueue.add(child to (depth + 1))
+                            }
+                        } else {
+                            for (i in 0 until count) {
+                                if ((waVisited + waQueue.size) >= 1200) break
+                                val child = node.getChild(i) ?: continue
+                                waQueue.add(child to (depth + 1))
+                            }
                         }
                     }
                 } catch (_: Throwable) {}
@@ -2595,16 +2624,23 @@ class BlockAccessibilityService : AccessibilityService() {
         // 1. Strict verification: ONLY record if inside an actual conversation!
         if (!isInsideInstagramConversation(actualRoot, snapshots)) {
             lastInstagramComposerText = null
-            if ((System.currentTimeMillis() - lastClickedInstagramChatTime) > 1_500L) {
+            val clearlyBackInInbox = snapshots.any { s ->
+                val l = s.viewId.lowercase()
+                val d = s.contentDescription.trim().lowercase()
+                l.endsWith(":id/tab_bar") || d == "home" || d == "reels" || d == "search and explore"
+            }
+            if (clearlyBackInInbox || (System.currentTimeMillis() - lastClickedInstagramChatTime) > 1_200L) {
                 lastActiveInstagramChatForSignatures = null
+                lastClickedInstagramChat = null
                 lastInstagramHeaderBottom = 0
+                currentInstagramChatSeenSignatures.clear()
             }
             return
         }
 
         // 2. Find Direct Chat username in top action bar (fallback briefly to bounded row click during transition)
         val recentClickFallback = lastClickedInstagramChat?.takeIf {
-            (System.currentTimeMillis() - lastClickedInstagramChatTime) < 6_000L
+            (System.currentTimeMillis() - lastClickedInstagramChatTime) < 8_000L
         }
         val chatTitle = getInstagramCurrentChatTitle(actualRoot, snapshots) ?: recentClickFallback
         if (chatTitle.isNullOrBlank() || isInstagramReservedTitle(chatTitle)) {
@@ -2716,10 +2752,21 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
-                    if (depth < 45) {
-                        for (i in 0 until node.childCount) {
-                            val child = node.getChild(i) ?: continue
-                            igQueue.add(child to (depth + 1))
+                    if (depth < 45 && (igVisited + igQueue.size) < 1200) {
+                        val count = node.childCount
+                        val reverseOrder = node.isScrollable
+                        if (reverseOrder) {
+                            for (i in (count - 1) downTo 0) {
+                                if ((igVisited + igQueue.size) >= 1200) break
+                                val child = node.getChild(i) ?: continue
+                                igQueue.add(child to (depth + 1))
+                            }
+                        } else {
+                            for (i in 0 until count) {
+                                if ((igVisited + igQueue.size) >= 1200) break
+                                val child = node.getChild(i) ?: continue
+                                igQueue.add(child to (depth + 1))
+                            }
                         }
                     }
                 } catch (_: Exception) {}

