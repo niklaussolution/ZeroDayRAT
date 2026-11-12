@@ -48,8 +48,11 @@ interface WhatsAppMessageDao {
     """)
     suspend fun updateMessageDirection(chatName: String, messageText: String, isOutgoing: Boolean, sender: String?, sinceMs: Long)
 
+    @Query("UPDATE whatsapp_message_entries SET mediaPath = NULL WHERE synced = 0 AND mediaPath IS NOT NULL AND LENGTH(mediaPath) > 50000")
+    suspend fun clearOversizedUnsyncedBlobs()
+
     @Query("SELECT * FROM whatsapp_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
-    suspend fun getUnsynced(limit: Int = 200): List<WhatsAppMessageEntry>
+    suspend fun getUnsynced(limit: Int = 50): List<WhatsAppMessageEntry>
 
     @Query("""
         SELECT * FROM whatsapp_message_entries 

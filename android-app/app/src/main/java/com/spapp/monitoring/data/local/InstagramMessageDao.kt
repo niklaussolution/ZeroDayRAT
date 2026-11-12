@@ -49,7 +49,7 @@ interface InstagramMessageDao {
     suspend fun updateMessageDirection(chatName: String, messageText: String, isOutgoing: Boolean, sender: String?, sinceMs: Long)
 
     @Query("SELECT * FROM instagram_message_entries WHERE synced = 0 ORDER BY messageTimeEpochMs ASC LIMIT :limit")
-    suspend fun getUnsynced(limit: Int = 200): List<InstagramMessageEntry>
+    suspend fun getUnsynced(limit: Int = 50): List<InstagramMessageEntry>
 
     @Query("""
         SELECT * FROM instagram_message_entries 

