@@ -488,6 +488,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 } else {
                     stopInstagramPolling()
                     lastActiveInstagramChatForSignatures = null
+                    lastInstagramHeaderBottom = 0
                     currentInstagramChatSeenSignatures.clear()
                     lastClickedInstagramChat = null
                     lastInstagramComposerText = null
@@ -836,56 +837,35 @@ class BlockAccessibilityService : AccessibilityService() {
                             lastClickedInstagramChat = null
                             lastInstagramComposerText = null
                             lastActiveInstagramChatForSignatures = null
+                            lastInstagramHeaderBottom = 0
                             currentInstagramChatSeenSignatures.clear()
                         } else if (!inConv) {
-                            var rowContainer = clickedNode
-                            var upCount = 0
                             val displayMetrics = resources.displayMetrics
                             val screenW = displayMetrics.widthPixels
-                            while (rowContainer?.parent != null && upCount < 6) {
-                                val r = Rect()
-                                rowContainer.getBoundsInScreen(r)
-                                if (r.height() in 110..550 && r.width() > screenW * 0.65f) {
+                            val screenH = displayMetrics.heightPixels
+
+                            // Walk up strictly within a single DM row; NEVER climb into RecyclerView/scrollable container!
+                            var matchedRow: AccessibilityNodeInfo? = null
+                            var cursor: AccessibilityNodeInfo? = clickedNode
+                            var upCount = 0
+                            while (cursor != null && upCount < 8) {
+                                val snap = snapshotNode(cursor, upCount)
+                                if (ChatAccessibilityHeuristics.isScrollableListContainer(snap, screenH)) {
                                     break
                                 }
-                                rowContainer = rowContainer.parent
+                                if (snap.height in 70..(screenH * 0.34f).toInt() && snap.width > screenW * 0.45f) {
+                                    matchedRow = cursor
+                                }
+                                cursor = cursor.parent
                                 upCount++
                             }
 
-                            val texts = mutableListOf<String>()
-                            val profileNames = mutableListOf<String>()
-                            fun walkClick(n: AccessibilityNodeInfo?, d: Int = 0) {
-                                if (n == null || d > 12) return
-                                try {
-                                    val t = n.text?.toString()?.trim()
-                                    if (!t.isNullOrBlank()) {
-                                        val extT = extractInstagramNameFromDesc(t)
-                                        if (extT != null && !isInstagramReservedTitle(extT)) {
-                                            profileNames.add(extT)
-                                        } else if (!isInstagramReservedTitle(t)) {
-                                            texts.add(t)
-                                        }
-                                    }
-                                    val cd = n.contentDescription?.toString()?.trim()
-                                    if (!cd.isNullOrBlank() && cd != t) {
-                                        val extCd = extractInstagramNameFromDesc(cd)
-                                        if (extCd != null && !isInstagramReservedTitle(extCd)) {
-                                            profileNames.add(extCd)
-                                        } else if (!isInstagramReservedTitle(cd)) {
-                                            texts.add(cd)
-                                        }
-                                    }
-                                    for (i in 0 until n.childCount) {
-                                        try {
-                                            walkClick(n.getChild(i), d + 1)
-                                        } catch (_: Exception) {}
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                            walkClick(rowContainer ?: clickedNode)
-                            val titleCand = profileNames.firstOrNull() ?: texts.firstOrNull { 
-                                it.length in 2..50 && !it.contains(":") && !isInstagramReservedTitle(it)
-                            }
+                            val rowSnapshots = collectVisibleSnapshots(matchedRow ?: clickedNode, maxDepth = 16, maxNodes = 80)
+                            val titleCand = ChatAccessibilityHeuristics.pickClickedInboxTitle(
+                                rowNodes = rowSnapshots,
+                                isReserved = ::isInstagramReservedTitle,
+                                extractFromDesc = ::extractInstagramNameFromDesc
+                            )
                             if (!titleCand.isNullOrBlank()) {
                                 lastClickedInstagramChat = titleCand
                                 lastClickedInstagramChatTime = System.currentTimeMillis()
@@ -1006,9 +986,59 @@ class BlockAccessibilityService : AccessibilityService() {
     private var lastClickedInstagramChat: String? = null
     private var lastClickedInstagramChatTime: Long = 0L
     private var lastInstagramComposerText: String? = null
+    private var lastInstagramHeaderBottom: Int = 0
     private val recentSentInstagramTexts = java.util.concurrent.ConcurrentHashMap<String, Long>()
     val currentInstagramChatSeenSignatures = java.util.Collections.synchronizedSet(java.util.HashSet<String>())
     var lastActiveInstagramChatForSignatures: String? = null
+
+    private fun snapshotNode(n: AccessibilityNodeInfo, depth: Int = 0): A11yNodeSnapshot {
+        val rect = Rect()
+        try {
+            n.getBoundsInScreen(rect)
+        } catch (_: Throwable) {}
+        return A11yNodeSnapshot(
+            left = rect.left,
+            top = rect.top,
+            right = rect.right,
+            bottom = rect.bottom,
+            isVisibleToUser = try { n.isVisibleToUser } catch (_: Throwable) { true },
+            isClickable = try { n.isClickable } catch (_: Throwable) { false },
+            isScrollable = try { n.isScrollable } catch (_: Throwable) { false },
+            isEditable = try { n.isEditable } catch (_: Throwable) { false },
+            className = n.className?.toString() ?: "",
+            viewId = n.viewIdResourceName ?: "",
+            text = n.text?.toString() ?: "",
+            contentDescription = n.contentDescription?.toString() ?: "",
+            hintText = try { n.hintText?.toString() ?: "" } catch (_: Throwable) { "" },
+            depth = depth
+        )
+    }
+
+    private fun collectVisibleSnapshots(
+        root: AccessibilityNodeInfo?,
+        maxDepth: Int = 60,
+        maxNodes: Int = 750
+    ): List<A11yNodeSnapshot> {
+        if (root == null) return emptyList()
+        val result = ArrayList<A11yNodeSnapshot>(64)
+        fun traverse(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > maxDepth || result.size >= maxNodes) return
+            try {
+                val snap = snapshotNode(node, depth)
+                // Always traverse container nodes even if they lack their own text,
+                // skipping completely invisible subtrees that carry no visible content.
+                if (!snap.isVisibleToUser && depth > 0) return
+                result.add(snap)
+                val count = node.childCount
+                for (i in 0 until count) {
+                    if (result.size >= maxNodes) break
+                    traverse(node.getChild(i), depth + 1)
+                }
+            } catch (_: Throwable) {}
+        }
+        traverse(root, 0)
+        return result
+    }
 
     private fun recordRecentSentWhatsAppText(text: String?) {
         if (text.isNullOrBlank()) return
@@ -1152,25 +1182,38 @@ class BlockAccessibilityService : AccessibilityService() {
 
     fun findInstagramComposerNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (root == null) return null
-        try {
-            val byId = root.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")
-            if (!byId.isNullOrEmpty()) return byId[0]
-        } catch (_: Exception) {}
-
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
+        val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
+
+        for (viewId in listOf(
+            "com.instagram.android:id/row_thread_composer_edittext",
+            "com.instagram.lite:id/row_thread_composer_edittext"
+        )) {
+            try {
+                val byId = root.findAccessibilityNodeInfosByViewId(viewId)
+                val visible = byId?.firstOrNull { node ->
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    node.isVisibleToUser && rect.right > 0 && rect.left < screenWidth
+                }
+                if (visible != null) return visible
+            } catch (_: Exception) {}
+        }
+
         var found: AccessibilityNodeInfo? = null
 
         fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (node == null || depth > 35 || found != null) return
+            if (node == null || depth > 60 || found != null) return
             try {
+                if (!node.isVisibleToUser && depth > 0) return
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
                     val id = (node.viewIdResourceName ?: "").lowercase()
                     val hint = (node.hintText?.toString() ?: "").lowercase()
                     val desc = (node.contentDescription?.toString() ?: "").lowercase()
-                    if (!id.contains("search") && !desc.contains("search") && !hint.contains("search")) {
-                        if (rect.bottom > screenHeight * 0.35f) {
+                    if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("comment")) {
+                        if (rect.bottom > screenHeight * 0.35f && rect.right > 0 && rect.left < screenWidth) {
                             found = node
                             return
                         }
@@ -1194,8 +1237,9 @@ class BlockAccessibilityService : AccessibilityService() {
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         fun checkNode(n: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (n == null || depth > 20) return
+            if (n == null || depth > 25) return
             try {
+                if (!n.isVisibleToUser && depth > 0) return
                 val rect = Rect()
                 n.getBoundsInScreen(rect)
                 val t = (n.text?.toString() ?: "").trim().lowercase()
@@ -1204,13 +1248,16 @@ class BlockAccessibilityService : AccessibilityService() {
 
                 if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
                     if (id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
-                        desc.contains("navigate up") || desc.contains("back") || desc == "back") {
+                        desc.contains("navigate up") || desc == "back") {
                         hasTopLeftBack = true
                     }
                 }
                 val inTabBarZone = rect.top > screenHeight * 0.78f || rect.bottom < screenHeight * 0.25f
-                if (inTabBarZone && (t == "chats" || desc == "chats" || desc.contains("chats tab") || desc.contains("tab, 1 of") ||
-                    t == "updates" || desc == "updates" || t == "communities" || desc == "communities" || t == "calls" || desc == "calls")) {
+                if (inTabBarZone && (t == "chats" || desc == "chats" || desc.startsWith("chats") || desc.contains("chats tab") || desc.contains("tab, 1 of") ||
+                    t == "updates" || desc == "updates" || desc.startsWith("updates") ||
+                    t == "communities" || desc == "communities" || desc.startsWith("communities") ||
+                    t == "calls" || desc == "calls" || desc.startsWith("calls") ||
+                    t == "status" || t == "channels")) {
                     hasMainTab = true
                 }
                 if (hasMainTab && hasTopLeftBack) return
@@ -1241,14 +1288,14 @@ class BlockAccessibilityService : AccessibilityService() {
         if (isWhatsAppMainScreen(root)) return false
 
         // 2. Structural verification:
-        // A conversation screen ALWAYS has a Back / Navigate Up button in the top-left action bar
-        // or an active message composer in the lower portion of the screen.
+        // Require either a visible composer OR an explicit Back button (never a random clickable avatar/status icon).
         var hasTopLeftBack = false
         var hasBottomComposer = false
 
         fun inspect(n: AccessibilityNodeInfo?, depth: Int = 0) {
             if (n == null || depth > 35) return
             try {
+                if (!n.isVisibleToUser && depth > 0) return
                 val rect = Rect()
                 n.getBoundsInScreen(rect)
 
@@ -1257,12 +1304,11 @@ class BlockAccessibilityService : AccessibilityService() {
                 val text = (n.text?.toString() ?: "").trim().lowercase()
                 val hint = (n.hintText?.toString() ?: "").trim().lowercase()
 
-                // Back button in top-left (top 25%, left 35%)
+                // Explicit Back button in top-left (top 25%, left 35%)
                 if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
                     val isBackDesc = id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
-                                     desc.contains("navigate up") || desc.contains("back") || desc == "back"
-                    val isTopLeftClickable = n.isClickable && rect.width() < screenWidth * 0.30f && !id.contains("camera") && !desc.contains("camera")
-                    if (isBackDesc || isTopLeftClickable) {
+                                     desc.contains("navigate up") || desc == "back"
+                    if (isBackDesc) {
                         hasTopLeftBack = true
                     }
                 }
@@ -1300,15 +1346,17 @@ class BlockAccessibilityService : AccessibilityService() {
 
     fun isWhatsAppReservedTitle(t: String?): Boolean {
         if (t.isNullOrBlank()) return true
+        val trimmed = t.trim()
+        if (ChatAccessibilityHeuristics.isWhatsAppStatusOrOverflowText(trimmed)) return true
         val reserved = setOf(
             "WhatsApp", "WhatsApp Business", "Chats", "Updates", "Calls", "Communities",
             "Settings", "Search", "Archived", "Unread", "Groups", "All",
             "Online", "Typing...", "Typing", "Audio call", "Video call", "Voice call", "Call",
             "More options", "Back", "Navigate up", "Camera", "Attach", "Send",
             "Disappearing messages", "Profile photo", "Profile picture", "View contact",
-            "Group info", "Custom", "Status", "Emoji", "Sticker", "Stickers", "GIF", "Gallery",
+            "Group info", "Custom", "Status", "Channels", "Emoji", "Sticker", "Stickers", "GIF", "Gallery",
             "Audio", "Location", "Contact", "Poll", "Document", "Voice message", "Voice note",
-            "Scroll to bottom", "Unread messages",
+            "Scroll to bottom", "Unread messages", "Unread status",
             "Add status", "My status", "New chat", "New group", "New community",
             "New broadcast", "Linked devices", "Starred messages", "Payments", "Select contact",
             "WhatsApp Web", "WhatsApp Group", "WhatsApp Status", "Ask Meta AI or Search",
@@ -1316,7 +1364,6 @@ class BlockAccessibilityService : AccessibilityService() {
             "Add to contacts", "Block", "Report", "Business account", "Official business account",
             "Security code changed", "Downloading document", "Downloading", "Download complete", "Downloading..."
         )
-        val trimmed = t.trim()
         if (reserved.any { it.equals(trimmed, ignoreCase = true) }) return true
         if (trimmed.equals("Meta AI", ignoreCase = true)) return true
         if (trimmed.equals("Ask Meta AI", ignoreCase = true)) return true
@@ -1331,109 +1378,52 @@ class BlockAccessibilityService : AccessibilityService() {
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
-        // 1. Direct view ID check: row_thread_composer_edittext is 100% inside an Instagram DM conversation
-        try {
-            val composerNodes = root.findAccessibilityNodeInfosByViewId("com.instagram.android:id/row_thread_composer_edittext")
-            if (!composerNodes.isNullOrEmpty()) return true
-        } catch (_: Exception) {}
-
-        // 2. Structural verification:
-        // A conversation screen in Instagram has:
-        // - A Back / Navigate Up button in top-left (top 22%, left 35%)
-        // - A Message Composer in the lower screen (bottom > 45%)
-        // - NO main bottom navigation bar (Home, Reels, Search, Profile)
-        var hasTopLeftBack = false
-        var hasBottomComposer = false
-        var hasMainBottomNav = false
-        var hasCallOrThreadInfo = false
-
-        fun inspect(n: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (n == null || depth > 35) return
+        // 1. Direct view ID check for visible composer EditText
+        for (viewId in listOf(
+            "com.instagram.android:id/row_thread_composer_edittext",
+            "com.instagram.lite:id/row_thread_composer_edittext"
+        )) {
             try {
-                val rect = Rect()
-                n.getBoundsInScreen(rect)
-
-                val id = (n.viewIdResourceName ?: "").lowercase()
-                val desc = (n.contentDescription?.toString() ?: "").trim().lowercase()
-                val text = (n.text?.toString() ?: "").trim().lowercase()
-                val hint = (n.hintText?.toString() ?: "").trim().lowercase()
-
-                // Detect Main Bottom Navigation Bar (Home, Reels, Search, Profile)
-                if (rect.bottom > screenHeight * 0.90f && rect.top > screenHeight * 0.82f) {
-                    if (desc == "home" || desc == "search and explore" || desc == "reels" ||
-                        desc == "profile" || desc == "profile tab" ||
-                        id.endsWith(":id/tab_bar") || id.endsWith(":id/bottom_navigation_bar")) {
-                        hasMainBottomNav = true
-                    }
+                val composerNodes = root.findAccessibilityNodeInfosByViewId(viewId)
+                if (composerNodes?.any { node ->
+                        val r = Rect()
+                        node.getBoundsInScreen(r)
+                        node.isVisibleToUser && r.right > 0 && r.left < screenWidth
+                    } == true) {
+                    return true
                 }
-
-                // Back button in top-left (top 22%, left 35%)
-                if (rect.top < screenHeight * 0.22f && rect.left < screenWidth * 0.35f) {
-                    val isBack = id.contains("back") || desc == "back" || desc.contains("navigate up") ||
-                                 (n.isClickable && rect.width() < screenWidth * 0.25f && !id.contains("camera") && !desc.contains("camera"))
-                    if (isBack) {
-                        hasTopLeftBack = true
-                    }
-                }
-
-                // Detect Call / Details buttons in header (strictly conversation action bar)
-                if (rect.top < screenHeight * 0.22f) {
-                    if (desc.contains("audio call") || desc.contains("video call") || desc.contains("voice call") ||
-                        desc.contains("details") || id.contains("action_bar_call") || id.contains("thread_details") ||
-                        id.contains("direct_thread")) {
-                        hasCallOrThreadInfo = true
-                    }
-                }
-
-                // Message Composer in bottom portion (strictly lower 55% of screen, excluding search & comment)
-                val isLowerScreen = rect.bottom > screenHeight * 0.45f
-                if (isLowerScreen) {
-                    val isComposerId = id.contains("composer_edittext") || id.contains("row_thread_composer")
-                    val isComposerText = text == "message..." || hint == "message..." || text.startsWith("message ") || hint.startsWith("message ") ||
-                                         desc.contains("message...") || desc.contains("send message")
-                    val isEditText = n.isEditable && (n.className?.toString()?.contains("EditText", true) == true)
-                    if (isComposerId || isComposerText || (isEditText && !id.contains("search") && !desc.contains("search") && !hint.contains("comment"))) {
-                        hasBottomComposer = true
-                    }
-                }
-
-                if (hasMainBottomNav) return
-
-                for (i in 0 until n.childCount) {
-                    inspect(n.getChild(i), depth + 1)
-                    if (hasMainBottomNav) return
-                }
-            } catch (_: Throwable) {}
+            } catch (_: Exception) {}
         }
-        inspect(root)
 
-        val hasComposer = hasBottomComposer || findInstagramComposerNode(root) != null
-        if (hasComposer) return true
-        if (hasMainBottomNav) return false
-        return hasTopLeftBack && hasCallOrThreadInfo
+        // 2. Full structural evaluation over visible nodes (never aborted by hidden off-screen tab_bar)
+        val snapshots = collectVisibleSnapshots(root, maxDepth = 60, maxNodes = 750)
+        return ChatAccessibilityHeuristics.isInsideInstagramConversation(snapshots, screenWidth, screenHeight)
     }
 
     fun isInstagramReservedTitle(t: String?): Boolean {
         if (t.isNullOrBlank()) return true
         val trimmed = t.trim()
         val lower = trimmed.lowercase()
+        if (lower == "..." || lower == "…" || """^[\p{P}\p{S}\s.…]+$""".toRegex().matches(trimmed)) return true
 
         val reserved = setOf(
             "instagram", "instagram home feed", "direct", "messages", "search", "search or ask meta ai",
             "reels", "explore", "reels tray container", "your note", "your story", "close friends",
             "turn sound on", "turn sound off", "view tagged people", "install now", "sign up",
             "suggested for you", "made with edits", "more options", "back", "navigate up",
-            "audio call", "video call", "details", "info", "active now", "active today",
+            "audio call", "video call", "video chat", "details", "info", "active now", "active today",
             "home", "activity", "notifications", "post", "posts", "audio", "tagged", "comments",
             "likes", "share", "save", "download", "camera", "create", "settings",
             "profile", "edit profile", "share profile", "professional dashboard",
-            "archive", "requests", "primary", "general", "channels", "chatgpt",
+            "archive", "requests", "message requests", "primary", "general", "channels", "chatgpt",
             "photo", "photos", "video", "videos", "reel", "reels", "sticker", "stickers",
-            "voice message", "voice note", "gallery", "more", "send", "verified",
+            "voice message", "voice note", "gallery", "more", "send", "verified", "verified account",
             "forward message", "riff cutout icon", "blend", "double tap to like",
             "tap and hold to react", "tap to reply", "sending…", "sending...", "sending",
             "delivered", "seen", "typing", "typing...", "typing…", "view profile",
-            "tap for info", "replied to themself", "you replied", "message...", "type a message..."
+            "tap for info", "replied to themself", "you replied", "message...", "type a message...",
+            "chat controls", "vanish mode", "disappearing messages", "end-to-end encryption",
+            "see more", "view all", "open camera"
         )
         if (reserved.contains(lower)) return true
 
@@ -1533,6 +1523,7 @@ class BlockAccessibilityService : AccessibilityService() {
         if ("""^\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}(?:\s+(?:at\s+)?\d{1,2}[:.]\d{2}(?:\s*(?:AM|PM|am|pm))?)?$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
         // 5. Activity status / delivery receipts
         if ("""^(?:Delivered(?:\s+\d+\w*\s+ago)?|Read(?:\s+\d+\w*\s+ago)?|Seen(?:\s+just\s+now|\s+\d+\w*\s+ago|\s+yesterday)?|Sent(?:\s+\d+\w*\s+ago)?|Pending|Sending(?:[\.…\s].*)?|Typing(?:[\.…\s].*)?|Online)$""".toRegex(RegexOption.IGNORE_CASE).matches(t)) return true
+        if (ChatAccessibilityHeuristics.isWhatsAppStatusOrOverflowText(t)) return true
         // 6. WhatsApp UI placeholders, composer icons & encryption banners
         if (t.contains("end-to-end encrypted", ignoreCase = true) ||
             t.equals("Type a message", ignoreCase = true) ||
@@ -1764,85 +1755,25 @@ class BlockAccessibilityService : AccessibilityService() {
         if (actualRoot == null) return null
 
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
-        val maxHeaderY = screenHeight * 0.20f
+        val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         try {
-            val candidateIds = listOf(
-                "com.instagram.android:id/action_bar_title",
-                "com.instagram.android:id/action_bar_large_title_auto_size",
-                "com.instagram.android:id/action_bar_textview_title",
-                "com.instagram.android:id/row_thread_header_name",
-                "com.instagram.android:id/thread_title",
-                "com.instagram.android:id/header_title",
-                "com.instagram.android:id/user_name",
-                "com.instagram.android:id/title"
+            val snapshots = collectVisibleSnapshots(actualRoot, maxDepth = 60, maxNodes = 750)
+            val selection = ChatAccessibilityHeuristics.pickInstagramHeaderTitle(
+                nodes = snapshots,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                isReserved = ::isInstagramReservedTitle,
+                extractFromDesc = ::extractInstagramNameFromDesc
             )
-            for (id in candidateIds) {
-                try {
-                    val nodes = actualRoot.findAccessibilityNodeInfosByViewId(id)
-                    if (!nodes.isNullOrEmpty()) {
-                        for (node in nodes) {
-                            val rect = Rect()
-                            node.getBoundsInScreen(rect)
-                            if (rect.top >= maxHeaderY || rect.bottom <= 20) continue
-
-                            val text = (node.text ?: node.contentDescription)?.toString()?.trim()
-                            if (!text.isNullOrBlank() && !isInstagramReservedTitle(text)) {
-                                val clean = text.replace("\\s+".toRegex(), " ").trim()
-                                if (clean.length in 1..60) {
-                                    lastClickedInstagramChat = clean
-                                    lastClickedInstagramChatTime = System.currentTimeMillis()
-                                    return clean
-                                }
-                            }
-
-                            val cd = node.contentDescription?.toString()
-                            val cdName = extractInstagramNameFromDesc(cd)
-                            if (!cdName.isNullOrBlank()) {
-                                lastClickedInstagramChat = cdName
-                                lastClickedInstagramChatTime = System.currentTimeMillis()
-                                return cdName
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            val headerNodes = mutableListOf<String>()
-            val extractedProfileNames = mutableListOf<String>()
-            val cdNodes = mutableListOf<String>()
-            fun findHeader(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 35) return
-                try {
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    if (rect.top < maxHeaderY && rect.bottom > 20 && rect.height() in 15..250) {
-                        val t = node.text?.toString()?.trim()
-                        val cd = node.contentDescription?.toString()?.trim()
-                        if (!t.isNullOrBlank() && !isInstagramReservedTitle(t) && t.length in 2..60) {
-                            headerNodes.add(t)
-                        }
-                        val cdName = extractInstagramNameFromDesc(cd)
-                        if (!cdName.isNullOrBlank()) {
-                            extractedProfileNames.add(cdName)
-                        } else if (!cd.isNullOrBlank() && !isInstagramReservedTitle(cd) && cd.length in 2..60) {
-                            cdNodes.add(cd)
-                        }
-                    }
-                    for (i in 0 until node.childCount) {
-                        try {
-                            findHeader(node.getChild(i), depth + 1)
-                        } catch (_: Throwable) {}
-                    }
-                } catch (_: Throwable) {}
-            }
-            findHeader(actualRoot)
-            val candidate = extractedProfileNames.firstOrNull() ?: headerNodes.firstOrNull() ?: cdNodes.firstOrNull()
-            if (!candidate.isNullOrBlank()) {
-                val clean = candidate.replace("\\s+".toRegex(), " ").trim()
-                lastClickedInstagramChat = clean
+            if (selection != null) {
+                lastClickedInstagramChat = selection.title
                 lastClickedInstagramChatTime = System.currentTimeMillis()
-                return clean
+                lastInstagramHeaderBottom = selection.headerBottom.coerceIn(
+                    (screenHeight * 0.08f).toInt(),
+                    (screenHeight * 0.25f).toInt()
+                )
+                return selection.title
             }
         } catch (_: Throwable) {}
 
@@ -2176,12 +2107,24 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun getInstagramWindowRoot(fallback: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
+        val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
+        val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
+
+        fun isFullAppRoot(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            val pkg = node.packageName?.toString() ?: ""
+            if (!pkg.contains("instagram")) return false
+            val r = Rect()
+            try { node.getBoundsInScreen(r) } catch (_: Exception) { return false }
+            // Guard against detached leaf nodes (parent == null on transient UI updates) or small popups
+            return r.width() >= (screenWidth * 0.55f).toInt() && r.height() >= (screenHeight * 0.45f).toInt()
+        }
+
         var candidate = fallback
         while (candidate?.parent != null) {
             candidate = candidate.parent
         }
-        val candPkg = candidate?.packageName?.toString() ?: ""
-        if (candPkg.contains("instagram")) {
+        if (isFullAppRoot(candidate)) {
             return candidate
         }
 
@@ -2190,8 +2133,7 @@ class BlockAccessibilityService : AccessibilityService() {
             while (active?.parent != null) {
                 active = active.parent
             }
-            val activePkg = active?.packageName?.toString() ?: ""
-            if (activePkg.contains("instagram")) {
+            if (isFullAppRoot(active)) {
                 return active
             }
         } catch (_: Exception) {}
@@ -2210,7 +2152,9 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         } catch (_: Exception) {}
 
-        return candidate ?: try { rootInActiveWindow } catch (_: Exception) { null }
+        val candPkg = candidate?.packageName?.toString() ?: ""
+        if (candPkg.contains("instagram")) return candidate
+        return try { rootInActiveWindow } catch (_: Exception) { candidate }
     }
 
     private var instagramPollRunnable: Runnable? = null
@@ -2510,11 +2454,19 @@ class BlockAccessibilityService : AccessibilityService() {
 
         // 1. Strict verification: ONLY record if inside an actual conversation!
         if (!isInsideInstagramConversation(actualRoot)) {
+            lastInstagramComposerText = null
+            if ((System.currentTimeMillis() - lastClickedInstagramChatTime) > 1_500L) {
+                lastActiveInstagramChatForSignatures = null
+                lastInstagramHeaderBottom = 0
+            }
             return
         }
 
-        // 2. Find Direct Chat username in top action bar
-        val chatTitle = getInstagramCurrentChatTitle(actualRoot)
+        // 2. Find Direct Chat username in top action bar (fallback briefly to bounded row click during transition)
+        val recentClickFallback = lastClickedInstagramChat?.takeIf {
+            (System.currentTimeMillis() - lastClickedInstagramChatTime) < 6_000L
+        }
+        val chatTitle = getInstagramCurrentChatTitle(actualRoot) ?: recentClickFallback
         if (chatTitle.isNullOrBlank() || isInstagramReservedTitle(chatTitle)) {
             return
         }
@@ -2566,20 +2518,28 @@ class BlockAccessibilityService : AccessibilityService() {
             val composerRect = Rect()
             composerNode?.getBoundsInScreen(composerRect)
             val maxMessageBottom = if (composerRect.top > 100) composerRect.top - 5 else (screenHeight * 0.88f).toInt()
-            val minMessageTop = (screenHeight * 0.10f).toInt()
+            val minHeaderFloor = (screenHeight * 0.12f).toInt()
+            val minMessageTop = if (lastInstagramHeaderBottom in 50..(screenHeight * 0.25f).toInt()) {
+                maxOf(minHeaderFloor, lastInstagramHeaderBottom + 8)
+            } else {
+                minHeaderFloor
+            }
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
             fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 40) return
+                if (node == null || depth > 55) return
                 try {
+                    if (!node.isVisibleToUser && depth > 0) return
                     if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
                     val t = node.text?.toString()?.trim()
                     val cd = node.contentDescription?.toString()?.trim()
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
 
-                    // Message bubbles strictly between header and message composer
-                    if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom) {
+                    // Message bubbles strictly visible on screen between header and message composer
+                    if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
+                        rect.right > 0 && rect.left < screenWidth
+                    ) {
                         val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
                         val isCdValid = !cd.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
 

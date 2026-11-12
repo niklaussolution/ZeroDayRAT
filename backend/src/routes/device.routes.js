@@ -719,7 +719,8 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT IN (
             'whatsapp', 'whatsapp business', 'whatsapp web', 'whatsapp status', 'chats', 'calls', 'updates',
             'communities', 'meta ai', 'ask meta ai', 'search', 'type a message', 'message', 'recent contact',
-            'recent conversation', 'tap to view conversation', 'floating windows', 'search unread chats'
+            'recent conversation', 'tap to view conversation', 'floating windows', 'search unread chats',
+            '...', '…', 'my status', 'add status', 'unread status'
           )
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%messages from % chats%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%joined using a group link%'
@@ -731,7 +732,10 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%picture'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%photo'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%new updates%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%tap to add new status%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
+          AND LOWER(TRIM(ac.chat_name)) !~ '^[[:punct:][:space:].…]+$'
         GROUP BY LOWER(TRIM(ac.chat_name))
         HAVING COUNT(ac.chat_name) > 0
         ORDER BY MAX(ac.last_message_at) DESC

@@ -797,16 +797,24 @@ router.post(
 
           // Drop WhatsApp composer buttons, junk delivery receipts, and UI action items
           const waLower = messageText.toLowerCase().trim();
+          const waChatLower = chatName.toLowerCase().trim();
           const waJunkTexts = new Set([
             "sending…", "sending...", "sending", "more options", "navigate up", "back", "emoji", "gif",
             "sticker", "stickers", "gallery", "attach", "camera", "send", "audio call", "video call",
             "voice call", "profile photo", "profile picture", "scroll to bottom", "unread messages",
-            "active conversation", "active chat", "conversation active"
+            "active conversation", "active chat", "conversation active", "...", "…", "unread status",
+            "my status", "add status"
           ]);
           if (
+            waJunkTexts.has(waChatLower) ||
+            /^[\p{P}\p{S}\s.…]+$/u.test(chatName.trim()) ||
             !messageText ||
             waJunkTexts.has(waLower) ||
-            waLower.startsWith("voice message")
+            waLower.startsWith("voice message") ||
+            waLower.includes("unread status") ||
+            waLower.includes("tap to add new status") ||
+            waLower.includes("'s status.") ||
+            waLower.includes("’s status.")
           ) {
             continue;
           }
