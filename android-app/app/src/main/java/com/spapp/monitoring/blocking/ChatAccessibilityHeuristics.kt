@@ -52,8 +52,10 @@ object ChatAccessibilityHeuristics {
         var hasTopLeftBack = false
         var hasCallOrThreadInfo = false
         var hasBottomComposer = false
+        var hasThreadComposerId = false
         var hasBottomBarActions = false
         var hasVisibleMainBottomNav = false
+        var hasFeedOrReelUi = false
 
         for (n in nodes) {
             if (!n.isVisibleToUser) continue
@@ -64,6 +66,20 @@ object ChatAccessibilityHeuristics {
             val desc = n.contentDescription.trim().lowercase()
             val text = n.text.trim().lowercase()
             val hint = n.hintText.trim().lowercase()
+
+            // Feed / Reels / Post viewer markers — NEVER a DM conversation!
+            if (desc.contains("more actions for this post") ||
+                desc == "add to saved" || text == "add to saved" ||
+                desc.startsWith("send post") ||
+                desc == "about this reel" || text == "about this reel" ||
+                text.startsWith("liked by ") || desc.startsWith("liked by ") ||
+                desc.contains("liked this reel") || text.contains("liked this reel") ||
+                desc.contains("double tap to like") ||
+                hint.contains("add a comment") || text.startsWith("add a comment") ||
+                (text.startsWith("view all ") && text.contains("comment"))
+            ) {
+                hasFeedOrReelUi = true
+            }
 
             // Main Instagram bottom navigation bar (only if visibly on-screen at bottom)
             if (n.bottom > screenHeight * 0.88f && n.top > screenHeight * 0.80f &&
@@ -78,23 +94,20 @@ object ChatAccessibilityHeuristics {
             }
 
             // Back / Navigate up in top-left header
-            if (n.top in 0..(screenHeight * 0.25f).toInt() && n.left < screenWidth * 0.35f) {
+            if (n.top in 0..(screenHeight * 0.18f).toInt() && n.left < screenWidth * 0.30f) {
                 val isExplicitBack = id.contains("back") || desc == "back" ||
-                    desc.contains("navigate up") ||
-                    (n.isClickable && n.width in 20..(screenWidth * 0.22f).toInt() &&
-                        !id.contains("camera") && !desc.contains("camera") &&
-                        !desc.contains("note") && !desc.contains("create"))
+                    desc.contains("navigate up")
                 if (isExplicitBack) {
                     hasTopLeftBack = true
                 }
             }
 
-            // Call / Video chat / Thread details in top header
-            if (n.top in 0..(screenHeight * 0.26f).toInt()) {
+            // Call / Video chat / Thread details in top header (DM thread only)
+            if (n.top in 0..(screenHeight * 0.18f).toInt()) {
                 if (desc.contains("audio call") || desc.contains("video call") ||
                     desc.contains("voice call") || desc.contains("video chat") ||
                     desc.contains("start video") || desc.contains("start audio") ||
-                    desc.contains("conversation info") || desc.contains("details") ||
+                    desc.contains("conversation info") || desc.contains("thread details") ||
                     id.contains("action_bar_call") || id.contains("thread_details") ||
                     id.contains("direct_thread") || id.contains("row_thread_header")
                 ) {
@@ -108,26 +121,28 @@ object ChatAccessibilityHeuristics {
                 val isComposerId = id.contains("composer_edittext") ||
                     id.contains("row_thread_composer") ||
                     id.contains("direct_composer")
+                if (isComposerId && !id.contains("search") && !id.contains("comment")) {
+                    hasThreadComposerId = true
+                }
                 val isComposerText = text == "message..." || text == "message…" ||
                     hint == "message..." || hint == "message…" ||
                     text.startsWith("message ") || hint.startsWith("message ") ||
                     desc.contains("message...") || desc.contains("send message")
                 val isEditText = n.isEditable || n.className.contains("EditText", ignoreCase = true)
 
-                if ((isComposerId && !id.contains("search")) ||
-                    (isComposerText && !id.contains("search") && !hint.contains("comment")) ||
+                if ((isComposerId && !id.contains("search") && !id.contains("comment")) ||
+                    (isComposerText && !id.contains("search") && !hint.contains("comment") && !id.contains("comment")) ||
                     (isEditText && !id.contains("search") && !desc.contains("search") &&
                         !hint.contains("search") && !hint.contains("comment") &&
-                        !hint.contains("ask meta ai"))
+                        !id.contains("comment") && !hint.contains("ask meta ai"))
                 ) {
                     hasBottomComposer = true
                 }
 
                 if (n.bottom > screenHeight * 0.72f && (
                         desc.contains("voice message") || desc.contains("record voice") ||
-                            desc.contains("gallery") || desc.contains("stickers") ||
-                            desc.contains("send") || id.contains("composer_send") ||
-                            id.contains("composer_camera")
+                            desc.contains("send message") || text == "send" ||
+                            id.contains("composer_send") || id.contains("composer_camera")
                         )
                 ) {
                     hasBottomBarActions = true
@@ -135,10 +150,11 @@ object ChatAccessibilityHeuristics {
             }
         }
 
-        if (hasBottomComposer) return true
-        if (hasTopLeftBack && (hasCallOrThreadInfo || hasBottomBarActions)) return true
+        if (hasFeedOrReelUi) return false
+        if (hasThreadComposerId) return true
         if (hasVisibleMainBottomNav) return false
-        return false
+        if (hasBottomComposer) return true
+        return hasTopLeftBack && (hasCallOrThreadInfo || hasBottomBarActions)
     }
 
     /**
@@ -153,7 +169,7 @@ object ChatAccessibilityHeuristics {
         extractFromDesc: (String?) -> String?
     ): InstagramHeaderSelection? {
         if (nodes.isEmpty() || screenHeight <= 0 || screenWidth <= 0) return null
-        val maxHeaderY = (screenHeight * 0.26f).toInt()
+        val maxHeaderY = (screenHeight * 0.17f).toInt()
 
         val priorityIdSuffixes = listOf(
             ":id/row_thread_header_name",
@@ -173,7 +189,8 @@ object ChatAccessibilityHeuristics {
                 n.top >= 0 &&
                 n.top < maxHeaderY &&
                 n.bottom > 10 &&
-                n.height in 10..340 &&
+                n.bottom <= (screenHeight * 0.21f).toInt() &&
+                n.height in 10..260 &&
                 n.right > (screenWidth * 0.05f).toInt() &&
                 n.left < (screenWidth * 0.90f).toInt() &&
                 n.width > 5
@@ -319,3 +336,4 @@ object ChatAccessibilityHeuristics {
             lower.endsWith(" picture")
     }
 }
+

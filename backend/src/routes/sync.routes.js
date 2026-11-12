@@ -1056,6 +1056,19 @@ router.post(
           if (!e.messageText && !e.mediaPath && !e.reelUrl) continue;
           const chatName = String(e.chatName || req.body.activeChat || "").replace(/\s+/g, " ").trim();
           if (!chatName) continue;
+          const chatLower = chatName.toLowerCase();
+          if (
+            chatLower === "friends" ||
+            chatLower === "repost" ||
+            chatLower === "add to saved" ||
+            chatLower === "about this reel" ||
+            chatLower === "more actions for this post" ||
+            chatLower.startsWith("liked by ") ||
+            chatLower.includes("liked this reel") ||
+            chatLower.startsWith("send post")
+          ) {
+            continue;
+          }
           const rawText = String(e.messageText || "").trim();
           if (rawText === "New story" || rawText === "Suggested for you" || rawText === "New instants" || /^\d+\s+missed notification/i.test(rawText)) continue;
           const sender = e.sender ? String(e.sender).trim() : null;
@@ -1091,7 +1104,8 @@ router.post(
           const junkTexts = new Set([
             "sending…", "sending...", "sending", "more", "gallery", "stickers", "sticker", "send", "verified",
             "forward message", "riff cutout icon", "blend", "details", "camera", "audio call", "video call",
-            "double tap to like", "tap and hold to react", "tap to reply", "view profile"
+            "double tap to like", "tap and hold to react", "tap to reply", "view profile",
+            "repost", "add to saved", "about this reel", "more actions for this post"
           ]);
           if (
             junkTexts.has(lowerText) ||
@@ -1099,7 +1113,10 @@ router.post(
             lowerText.startsWith("tap and hold") ||
             lowerText.startsWith("double tap") ||
             lowerText.startsWith("replied to ") ||
-            lowerText.startsWith("you replied")
+            lowerText.startsWith("you replied") ||
+            lowerText.startsWith("send post") ||
+            lowerText.startsWith("liked by ") ||
+            lowerText.includes("liked this reel")
           ) {
             continue;
           }

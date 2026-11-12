@@ -1158,12 +1158,18 @@ router.get("/:id/instagram/chats", requireAuth, async (req, res, next) => {
             'instagram', 'direct', 'meta ai', 'search', 'reels', 'explore', 'notifications',
             'reels tray container', 'instagram home feed', 'turn sound on', 'turn sound off',
             'view tagged people', 'install now', 'search or ask meta ai', 'your note', 'your story',
-            'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?'
+            'suggested for you', 'made with edits', 'sign up', 'chatgpt', 'archive', 'seeing similar ads too often?',
+            'friends', 'following', 'for you', 'repost', 'add to saved', 'about this reel',
+            'more actions for this post'
           )
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switched to%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'switch to%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'uninstall%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'install%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'liked by %'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%liked this reel%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'send post%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'follow %'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%posted a video%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%posted a photo%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%shared a post%'

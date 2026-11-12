@@ -733,7 +733,7 @@ class BlockAccessibilityService : AccessibilityService() {
         // Real-time Instagram Direct capture & in-app account switch detection:
         val isInstagramActive = packageName == "com.instagram.android" || packageName == "com.instagram.lite" ||
                 ((currentForegroundApp == "com.instagram.android" || currentForegroundApp == "com.instagram.lite") &&
-                 (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard") || packageName.contains("swiftkey")))
+                 (packageName.startsWith("com.google.android.inputmethod") || packageName.contains("honeyboard") || packageName.contains("keyboard") || packageName.contains("swiftkey") || packageName.contains("inputmethod")))
         if (isInstagramActive) {
             if (instagramPollRunnable == null) {
                 startInstagramPolling()
@@ -770,9 +770,23 @@ class BlockAccessibilityService : AccessibilityService() {
                         val pId = (clickedNode.parent?.viewIdResourceName ?: "").lowercase()
                         val gpDesc = (clickedNode.parent?.parent?.contentDescription?.toString() ?: "").trim()
                         val gpId = (clickedNode.parent?.parent?.viewIdResourceName ?: "").lowercase()
+                        val ggpDesc = (clickedNode.parent?.parent?.parent?.contentDescription?.toString() ?: "").trim()
+                        val ggpId = (clickedNode.parent?.parent?.parent?.viewIdResourceName ?: "").lowercase()
+                        var childSendMatch = false
+                        for (ci in 0 until clickedNode.childCount.coerceAtMost(6)) {
+                            val ch = clickedNode.getChild(ci) ?: continue
+                            val chT = (ch.text?.toString() ?: "").trim()
+                            val chD = (ch.contentDescription?.toString() ?: "").trim()
+                            val chId = (ch.viewIdResourceName ?: "").lowercase()
+                            if (chT.equals("send", ignoreCase = true) || chD.contains("send", ignoreCase = true) || chId.contains("send")) {
+                                childSendMatch = true
+                                break
+                            }
+                        }
 
                         val inConv = isInsideInstagramConversation(igRoot)
                         val isSendClick = inConv && (
+                            childSendMatch ||
                             cDesc.contains("send", ignoreCase = true) ||
                             cText.equals("send", ignoreCase = true) ||
                             cId.contains("send") ||
@@ -780,7 +794,9 @@ class BlockAccessibilityService : AccessibilityService() {
                             pDesc.contains("send", ignoreCase = true) ||
                             pId.contains("send") ||
                             gpDesc.contains("send", ignoreCase = true) ||
-                            gpId.contains("send")
+                            gpId.contains("send") ||
+                            ggpDesc.contains("send", ignoreCase = true) ||
+                            ggpId.contains("send")
                         )
 
                         if (isSendClick) {
@@ -1017,21 +1033,36 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun collectVisibleSnapshots(
         root: AccessibilityNodeInfo?,
         maxDepth: Int = 60,
-        maxNodes: Int = 750
+        maxNodes: Int = 3500
     ): List<A11yNodeSnapshot> {
         if (root == null) return emptyList()
-        val result = ArrayList<A11yNodeSnapshot>(64)
+        val screenW = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
+        val result = ArrayList<A11yNodeSnapshot>(96)
+        var visited = 0
         fun traverse(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > maxDepth || result.size >= maxNodes) return
+            if (node == null || depth > maxDepth || visited >= maxNodes) return
+            visited++
             try {
                 val snap = snapshotNode(node, depth)
-                // Always traverse container nodes even if they lack their own text,
-                // skipping completely invisible subtrees that carry no visible content.
-                if (!snap.isVisibleToUser && depth > 0) return
-                result.add(snap)
+                // Only prune container subtrees that are genuinely shifted off-screen horizontally (ViewPager pages).
+                // Never prune merely because !snap.isVisibleToUser: wrapper layouts often report false while children are visible!
+                if (depth > 0 && snap.width > 120 && (snap.right <= -20 || snap.left >= screenW + 20)) return
+
+                if (snap.isVisibleToUser && (
+                        snap.text.isNotBlank() ||
+                            snap.contentDescription.isNotBlank() ||
+                            snap.hintText.isNotBlank() ||
+                            snap.viewId.isNotBlank() ||
+                            snap.isEditable ||
+                            snap.isClickable ||
+                            snap.isScrollable
+                        )
+                ) {
+                    result.add(snap)
+                }
                 val count = node.childCount
                 for (i in 0 until count) {
-                    if (result.size >= maxNodes) break
+                    if (visited >= maxNodes) break
                     traverse(node.getChild(i), depth + 1)
                 }
             } catch (_: Throwable) {}
@@ -1205,15 +1236,16 @@ class BlockAccessibilityService : AccessibilityService() {
         fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
             if (node == null || depth > 60 || found != null) return
             try {
-                if (!node.isVisibleToUser && depth > 0) return
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
                     val id = (node.viewIdResourceName ?: "").lowercase()
                     val hint = (node.hintText?.toString() ?: "").lowercase()
                     val desc = (node.contentDescription?.toString() ?: "").lowercase()
-                    if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("comment")) {
-                        if (rect.bottom > screenHeight * 0.35f && rect.right > 0 && rect.left < screenWidth) {
+                    if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") &&
+                        !hint.contains("comment") && !id.contains("comment")
+                    ) {
+                        if (node.isVisibleToUser && rect.bottom > screenHeight * 0.35f && rect.right > 0 && rect.left < screenWidth) {
                             found = node
                             return
                         }
@@ -1396,7 +1428,7 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         // 2. Full structural evaluation over visible nodes (never aborted by hidden off-screen tab_bar)
-        val snapshots = collectVisibleSnapshots(root, maxDepth = 60, maxNodes = 750)
+        val snapshots = collectVisibleSnapshots(root, maxDepth = 60, maxNodes = 3500)
         return ChatAccessibilityHeuristics.isInsideInstagramConversation(snapshots, screenWidth, screenHeight)
     }
 
@@ -1409,11 +1441,12 @@ class BlockAccessibilityService : AccessibilityService() {
         val reserved = setOf(
             "instagram", "instagram home feed", "direct", "messages", "search", "search or ask meta ai",
             "reels", "explore", "reels tray container", "your note", "your story", "close friends",
-            "turn sound on", "turn sound off", "view tagged people", "install now", "sign up",
-            "suggested for you", "made with edits", "more options", "back", "navigate up",
-            "audio call", "video call", "video chat", "details", "info", "active now", "active today",
-            "home", "activity", "notifications", "post", "posts", "audio", "tagged", "comments",
-            "likes", "share", "save", "download", "camera", "create", "settings",
+            "friends", "following", "for you", "repost", "add to saved", "about this reel",
+            "more actions for this post", "turn sound on", "turn sound off", "view tagged people",
+            "install now", "sign up", "suggested for you", "made with edits", "more options", "back",
+            "navigate up", "audio call", "video call", "video chat", "details", "info", "active now",
+            "active today", "home", "activity", "notifications", "post", "posts", "audio", "tagged",
+            "comments", "likes", "share", "save", "download", "camera", "create", "settings",
             "profile", "edit profile", "share profile", "professional dashboard",
             "archive", "requests", "message requests", "primary", "general", "channels", "chatgpt",
             "photo", "photos", "video", "videos", "reel", "reels", "sticker", "stickers",
@@ -1430,10 +1463,12 @@ class BlockAccessibilityService : AccessibilityService() {
         // Subtitle separator in chat list
         if (lower.contains("•") || lower.contains("·")) return true
 
-        // Status, snippet or action phrases
+        // Status, Feed/Reels, or action phrases
         if (lower.startsWith("sent a ") || lower.startsWith("shared a ") || lower.startsWith("liked a ") ||
-            lower.startsWith("voice message") || lower.startsWith("replied to ") || lower.startsWith("reacted ") ||
-            lower.startsWith("active ") || lower.startsWith("seen ") || lower.startsWith("typing ")
+            lower.startsWith("liked by ") || lower.contains("liked this reel") || lower.startsWith("send post") ||
+            lower.startsWith("follow ") || lower.startsWith("voice message") || lower.startsWith("replied to ") ||
+            lower.startsWith("reacted ") || lower.startsWith("active ") || lower.startsWith("seen ") ||
+            lower.startsWith("typing ")
         ) return true
 
         if (lower.startsWith("profile photo") || lower.startsWith("profile picture") ||
@@ -1758,7 +1793,7 @@ class BlockAccessibilityService : AccessibilityService() {
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         try {
-            val snapshots = collectVisibleSnapshots(actualRoot, maxDepth = 60, maxNodes = 750)
+            val snapshots = collectVisibleSnapshots(actualRoot, maxDepth = 60, maxNodes = 3500)
             val selection = ChatAccessibilityHeuristics.pickInstagramHeaderTitle(
                 nodes = snapshots,
                 screenWidth = screenWidth,
@@ -1771,7 +1806,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 lastClickedInstagramChatTime = System.currentTimeMillis()
                 lastInstagramHeaderBottom = selection.headerBottom.coerceIn(
                     (screenHeight * 0.08f).toInt(),
-                    (screenHeight * 0.25f).toInt()
+                    (screenHeight * 0.18f).toInt()
                 )
                 return selection.title
             }
@@ -2518,8 +2553,8 @@ class BlockAccessibilityService : AccessibilityService() {
             val composerRect = Rect()
             composerNode?.getBoundsInScreen(composerRect)
             val maxMessageBottom = if (composerRect.top > 100) composerRect.top - 5 else (screenHeight * 0.88f).toInt()
-            val minHeaderFloor = (screenHeight * 0.12f).toInt()
-            val minMessageTop = if (lastInstagramHeaderBottom in 50..(screenHeight * 0.25f).toInt()) {
+            val minHeaderFloor = (screenHeight * 0.11f).toInt()
+            val minMessageTop = if (lastInstagramHeaderBottom in 50..(screenHeight * 0.19f).toInt()) {
                 maxOf(minHeaderFloor, lastInstagramHeaderBottom + 8)
             } else {
                 minHeaderFloor
@@ -2529,15 +2564,22 @@ class BlockAccessibilityService : AccessibilityService() {
             fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
                 if (node == null || depth > 55) return
                 try {
-                    if (!node.isVisibleToUser && depth > 0) return
                     if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
-                    val t = node.text?.toString()?.trim()
-                    val cd = node.contentDescription?.toString()?.trim()
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
+                    // Only prune horizontally off-screen ViewPager container subtrees
+                    if (depth > 0 && rect.width() > 120 && (rect.right <= -20 || rect.left >= screenWidth + 20)) return
+
+                    val t = node.text?.toString()?.trim()
+                    val cd = node.contentDescription?.toString()?.trim()
+
+                    // Skip full-width container wrappers that have child nodes so centerX=0.5 doesn't invert direction
+                    val isFullWidthWrapperWithChildren = node.childCount > 0 && rect.width() >= (screenWidth * 0.86f).toInt() && t.isNullOrBlank()
 
                     // Message bubbles strictly visible on screen between header and message composer
-                    if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
+                    if (node.isVisibleToUser &&
+                        !isFullWidthWrapperWithChildren &&
+                        rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
                         rect.right > 0 && rect.left < screenWidth
                     ) {
                         val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
