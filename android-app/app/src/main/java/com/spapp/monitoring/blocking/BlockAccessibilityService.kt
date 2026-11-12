@@ -602,20 +602,24 @@ class BlockAccessibilityService : AccessibilityService() {
                                     }
                                 } catch (_: Exception) {}
                             }
-                            var rowContainer = clickedNode
+                            var matchedRow: AccessibilityNodeInfo? = null
+                            var cursor: AccessibilityNodeInfo? = clickedNode
                             var upCount = 0
                             val displayMetrics = resources.displayMetrics
                             val screenW = displayMetrics.widthPixels
-                            while (rowContainer?.parent != null && upCount < 6) {
-                                val r = Rect()
-                                rowContainer.getBoundsInScreen(r)
-                                if (r.height() in 110..550 && r.width() > screenW * 0.65f) {
+                            val screenH = displayMetrics.heightPixels
+                            while (cursor != null && upCount < 8) {
+                                val snap = snapshotNode(cursor, upCount)
+                                if (ChatAccessibilityHeuristics.isScrollableListContainer(snap, screenH)) {
                                     break
                                 }
-                                rowContainer = rowContainer.parent
+                                if (snap.height in 70..(screenH * 0.34f).toInt() && snap.width > screenW * 0.45f) {
+                                    matchedRow = cursor
+                                }
+                                cursor = cursor.parent
                                 upCount++
                             }
-                            walkClick(rowContainer ?: clickedNode)
+                            walkClick(matchedRow ?: clickedNode)
                             val titleCand = texts.firstOrNull {
                                 it.length in 2..60 && !it.contains(":\\d{2}".toRegex()) &&
                                 !it.startsWith("You:", ignoreCase = true) &&
@@ -1015,16 +1019,30 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun collectVisibleSnapshots(
         root: AccessibilityNodeInfo?,
         maxDepth: Int = 45,
-        maxNodes: Int = 900
+        maxNodes: Int = 1400
     ): List<A11yNodeSnapshot> {
         if (root == null) return emptyList()
+        val screenW = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
         val result = ArrayList<A11yNodeSnapshot>(96)
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(64)
+        queue.add(root to 0)
         var visited = 0
-        fun traverse(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > maxDepth || visited >= maxNodes) return
+
+        while (queue.isNotEmpty() && visited < maxNodes) {
+            val (node, depth) = queue.removeFirst()
             visited++
             try {
-                // Fast pre-check using cached strings to avoid ~8 Binder IPC calls on empty layout wrappers!
+                // Prune top-level hidden (View.GONE) or offscreen ViewPager sibling tabs (Feed/Reels/Camera)
+                if (depth in 1..6) {
+                    val visContainer = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                    val cRect = Rect()
+                    try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                    val isOffscreenPager = cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenW + 20)
+                    val isGoneContainer = !visContainer && (cRect.width() <= 0 || cRect.height() <= 0)
+                    if (isOffscreenPager || isGoneContainer) continue
+                }
+
+                // Fast pre-check using cached properties to avoid heavy Binder IPCs on empty layout wrappers
                 val rawText = node.text?.toString() ?: ""
                 val rawDesc = node.contentDescription?.toString() ?: ""
                 val rawId = node.viewIdResourceName ?: ""
@@ -1056,14 +1074,15 @@ class BlockAccessibilityService : AccessibilityService() {
                         )
                     }
                 }
-                val count = node.childCount
-                for (i in 0 until count) {
-                    if (visited >= maxNodes) break
-                    traverse(node.getChild(i), depth + 1)
+                if (depth < maxDepth) {
+                    val count = node.childCount
+                    for (i in 0 until count) {
+                        val child = node.getChild(i) ?: continue
+                        queue.add(child to (depth + 1))
+                    }
                 }
             } catch (_: Throwable) {}
         }
-        traverse(root, 0)
         return result
     }
 
@@ -1179,13 +1198,23 @@ class BlockAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {}
 
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
-        var found: AccessibilityNodeInfo? = null
+        val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(48)
+        queue.add(root to 0)
         var visited = 0
 
-        fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (node == null || depth > 35 || visited >= 450 || found != null) return
+        while (queue.isNotEmpty() && visited < 700) {
+            val (node, depth) = queue.removeFirst()
             visited++
             try {
+                if (depth in 1..6) {
+                    val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                    val cRect = Rect()
+                    try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                    if ((cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenWidth + 20)) ||
+                        (!vis && (cRect.width() <= 0 || cRect.height() <= 0))
+                    ) continue
+                }
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
@@ -1194,20 +1223,19 @@ class BlockAccessibilityService : AccessibilityService() {
                     val desc = (node.contentDescription?.toString() ?: "").lowercase()
                     if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("meta ai")) {
                         if (rect.bottom > screenHeight * 0.35f) {
-                            found = node
-                            return
+                            return node
                         }
                     }
                 }
-                for (i in 0 until node.childCount) {
-                    if (visited >= 450) break
-                    search(node.getChild(i), depth + 1)
-                    if (found != null) return
+                if (depth < 40) {
+                    for (i in 0 until node.childCount) {
+                        val child = node.getChild(i) ?: continue
+                        queue.add(child to (depth + 1))
+                    }
                 }
             } catch (_: Exception) {}
         }
-        search(root)
-        return found
+        return null
     }
 
     fun findInstagramComposerNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -1230,13 +1258,22 @@ class BlockAccessibilityService : AccessibilityService() {
             } catch (_: Exception) {}
         }
 
-        var found: AccessibilityNodeInfo? = null
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(48)
+        queue.add(root to 0)
         var visited = 0
 
-        fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (node == null || depth > 45 || visited >= 500 || found != null) return
+        while (queue.isNotEmpty() && visited < 800) {
+            val (node, depth) = queue.removeFirst()
             visited++
             try {
+                if (depth in 1..6) {
+                    val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                    val cRect = Rect()
+                    try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                    if ((cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenWidth + 20)) ||
+                        (!vis && (cRect.width() <= 0 || cRect.height() <= 0))
+                    ) continue
+                }
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
@@ -1247,20 +1284,19 @@ class BlockAccessibilityService : AccessibilityService() {
                         !hint.contains("comment") && !id.contains("comment")
                     ) {
                         if (node.isVisibleToUser && rect.bottom > screenHeight * 0.35f && rect.right > 0 && rect.left < screenWidth) {
-                            found = node
-                            return
+                            return node
                         }
                     }
                 }
-                for (i in 0 until node.childCount) {
-                    if (visited >= 500) break
-                    search(node.getChild(i), depth + 1)
-                    if (found != null) return
+                if (depth < 45) {
+                    for (i in 0 until node.childCount) {
+                        val child = node.getChild(i) ?: continue
+                        queue.add(child to (depth + 1))
+                    }
                 }
             } catch (_: Exception) {}
         }
-        search(root)
-        return found
+        return null
     }
 
     fun isWhatsAppMainScreen(root: AccessibilityNodeInfo?): Boolean {
@@ -1352,8 +1388,8 @@ class BlockAccessibilityService : AccessibilityService() {
 
                         // Explicit Back button in top-left (top 25%, left 35%)
                         if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
-                            val isBackDesc = id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
-                                             desc.contains("navigate up") || desc == "back"
+                            val isBackDesc = id.contains("back") || id.endsWith(":id/whatsapp_toolbar_home") ||
+                                             desc.contains("navigate up") || desc.startsWith("back") || desc == "close"
                             if (isBackDesc) {
                                 hasTopLeftBack = true
                             }
@@ -1700,49 +1736,67 @@ class BlockAccessibilityService : AccessibilityService() {
             val headerTitles = mutableListOf<String>()
             val extractedProfileTitles = mutableListOf<String>()
             val cdTitles = mutableListOf<String>()
+            val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
-            fun findHeader(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 35) return
+            val hQueue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(48)
+            hQueue.add(root to 0)
+            var hVisited = 0
+            while (hQueue.isNotEmpty() && hVisited < 700) {
+                val (node, depth) = hQueue.removeFirst()
+                hVisited++
                 try {
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    if (rect.top < maxHeaderY && rect.bottom > 20 && rect.height() in 15..250) {
-                        val t = (node.text?.toString() ?: "").trim()
-                        if (t.isNotBlank() && !isWhatsAppReservedTitle(t) &&
-                            !t.startsWith("last seen", ignoreCase = true) &&
-                            !t.startsWith("online", ignoreCase = true) &&
-                            !t.startsWith("typing", ignoreCase = true) &&
-                            !t.contains("end-to-end", ignoreCase = true) &&
-                            !t.contains("tap for contact info", ignoreCase = true) &&
-                            !t.contains("tap for group info", ignoreCase = true) &&
-                            !t.contains("tap here", ignoreCase = true) &&
-                            !isWhatsAppUiMetadataOrTimestamp(t) &&
-                            t.length in 2..60
+                    if (depth in 1..6) {
+                        val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                        val cRect = Rect()
+                        try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                        if ((cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenWidth + 20)) ||
+                            (!vis && (cRect.width() <= 0 || cRect.height() <= 0))
+                        ) continue
+                    }
+                    val t = (node.text?.toString() ?: "").trim()
+                    val cd = node.contentDescription?.toString()
+                    if (t.isNotBlank() || !cd.isNullOrBlank()) {
+                        val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
+                        if (vis && rect.top < maxHeaderY && rect.bottom > 20 && rect.height() in 15..250 &&
+                            rect.right > 0 && rect.left < screenWidth
                         ) {
-                            headerTitles.add(t)
-                        }
+                            if (t.isNotBlank() && !isWhatsAppReservedTitle(t) &&
+                                !t.startsWith("last seen", ignoreCase = true) &&
+                                !t.startsWith("online", ignoreCase = true) &&
+                                !t.startsWith("typing", ignoreCase = true) &&
+                                !t.contains("end-to-end", ignoreCase = true) &&
+                                !t.contains("tap for contact info", ignoreCase = true) &&
+                                !t.contains("tap for group info", ignoreCase = true) &&
+                                !t.contains("tap here", ignoreCase = true) &&
+                                !isWhatsAppUiMetadataOrTimestamp(t) &&
+                                t.length in 2..60
+                            ) {
+                                headerTitles.add(t)
+                            }
 
-                        val cd = node.contentDescription?.toString()
-                        val cdName = extractWhatsAppNameFromDesc(cd)
-                        if (!cdName.isNullOrBlank() && cdName.length in 1..60) {
-                            extractedProfileTitles.add(cdName)
-                        } else if (!cd.isNullOrBlank()) {
-                            val cdTrim = cd.trim()
-                            if (!isWhatsAppReservedTitle(cdTrim) && !isWhatsAppUiMetadataOrTimestamp(cdTrim) &&
-                                !cdTrim.contains(":\\d{2}".toRegex()) && !cdTrim.contains("tap here", ignoreCase = true) &&
-                                cdTrim.length in 2..60) {
-                                cdTitles.add(cdTrim)
+                            val cdName = extractWhatsAppNameFromDesc(cd)
+                            if (!cdName.isNullOrBlank() && cdName.length in 1..60) {
+                                extractedProfileTitles.add(cdName)
+                            } else if (!cd.isNullOrBlank()) {
+                                val cdTrim = cd.trim()
+                                if (!isWhatsAppReservedTitle(cdTrim) && !isWhatsAppUiMetadataOrTimestamp(cdTrim) &&
+                                    !cdTrim.contains(":\\d{2}".toRegex()) && !cdTrim.contains("tap here", ignoreCase = true) &&
+                                    cdTrim.length in 2..60) {
+                                    cdTitles.add(cdTrim)
+                                }
                             }
                         }
                     }
-                    for (i in 0 until node.childCount) {
-                        try {
-                            findHeader(node.getChild(i), depth + 1)
-                        } catch (_: Throwable) {}
+                    if (depth < 40) {
+                        for (i in 0 until node.childCount) {
+                            val child = node.getChild(i) ?: continue
+                            hQueue.add(child to (depth + 1))
+                        }
                     }
                 } catch (_: Throwable) {}
             }
-            findHeader(root)
             val candidate = extractedProfileTitles.firstOrNull() ?: headerTitles.firstOrNull() ?: cdTitles.firstOrNull()
             if (!candidate.isNullOrBlank()) {
                 val clean = candidate.replace("\\s+".toRegex(), " ").trim()
@@ -1892,8 +1946,11 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         try {
-            // Find WhatsApp contact/group name in top action bar
-            val chatTitle = getWhatsAppCurrentChatTitle(actualRoot)
+            // Find WhatsApp contact/group name in top action bar (briefly fallback to bounded row click during transition)
+            val recentWaFallback = lastClickedWhatsAppChat?.takeIf {
+                (System.currentTimeMillis() - lastClickedWhatsAppChatTime) < 5_000L
+            }
+            val chatTitle = getWhatsAppCurrentChatTitle(actualRoot) ?: recentWaFallback
             if (chatTitle.isNullOrBlank() || chatTitle.equals("WhatsApp Chat", ignoreCase = true) || isWhatsAppReservedTitle(chatTitle)) {
                 return
             }
@@ -1947,12 +2004,22 @@ class BlockAccessibilityService : AccessibilityService() {
             val minMessageTop = (screenHeight * 0.10f).toInt()
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+            val waQueue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(64)
+            waQueue.add(actualRoot to 0)
             var waVisited = 0
-            fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 40 || waVisited >= 900) return
+            while (waQueue.isNotEmpty() && waVisited < 1200) {
+                val (node, depth) = waQueue.removeFirst()
                 waVisited++
                 try {
-                    if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
+                    if (depth in 1..6) {
+                        val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                        val cRect = Rect()
+                        try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                        if ((cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenWidth + 20)) ||
+                            (!vis && (cRect.width() <= 0 || cRect.height() <= 0))
+                        ) continue
+                    }
+                    if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) continue
                     val t = node.text?.toString()?.trim()
                     val cd = node.contentDescription?.toString()?.trim()
                     if (!t.isNullOrBlank() || !cd.isNullOrBlank()) {
@@ -1960,7 +2027,9 @@ class BlockAccessibilityService : AccessibilityService() {
                         node.getBoundsInScreen(rect)
 
                         // Message bubbles strictly between header and bottom message composer
-                        if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom) {
+                        if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
+                            rect.right > 0 && rect.left < screenWidth
+                        ) {
                             val isTextTs = !t.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(t)
                             val isCdTs = !cd.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(cd)
 
@@ -1984,15 +2053,14 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
-                    for (i in 0 until node.childCount) {
-                        if (waVisited >= 900) break
-                        try {
-                            collectMessageNodes(node.getChild(i), depth + 1)
-                        } catch (_: Throwable) {}
+                    if (depth < 40) {
+                        for (i in 0 until node.childCount) {
+                            val child = node.getChild(i) ?: continue
+                            waQueue.add(child to (depth + 1))
+                        }
                     }
                 } catch (_: Throwable) {}
             }
-            collectMessageNodes(actualRoot)
 
             for (node in candidateNodes) {
                 val t = node.text?.toString()?.trim()
@@ -2594,19 +2662,27 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+            val igQueue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>(64)
+            igQueue.add(actualRoot to 0)
             var igVisited = 0
-            fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 45 || igVisited >= 900) return
+            while (igQueue.isNotEmpty() && igVisited < 1200) {
+                val (node, depth) = igQueue.removeFirst()
                 igVisited++
                 try {
-                    if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
+                    if (depth in 1..6) {
+                        val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                        val cRect = Rect()
+                        try { node.getBoundsInScreen(cRect) } catch (_: Throwable) {}
+                        if ((cRect.width() > 100 && (cRect.right <= -20 || cRect.left >= screenWidth + 20)) ||
+                            (!vis && (cRect.width() <= 0 || cRect.height() <= 0))
+                        ) continue
+                    }
+                    if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) continue
                     val t = node.text?.toString()?.trim()
                     val cd = node.contentDescription?.toString()?.trim()
                     if (!t.isNullOrBlank() || !cd.isNullOrBlank()) {
                         val rect = Rect()
                         node.getBoundsInScreen(rect)
-                        // Skip horizontally off-screen container subtrees
-                        if (depth > 0 && rect.width() > 120 && (rect.right <= -20 || rect.left >= screenWidth + 20)) return
 
                         // Skip full-width container wrappers that have child nodes so centerX=0.5 doesn't invert direction
                         val isFullWidthWrapperWithChildren = node.childCount > 0 && rect.width() >= (screenWidth * 0.86f).toInt() && t.isNullOrBlank()
@@ -2636,15 +2712,14 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
-                    for (i in 0 until node.childCount) {
-                        if (igVisited >= 900) break
-                        try {
-                            collectMessageNodes(node.getChild(i), depth + 1)
-                        } catch (_: Exception) {}
+                    if (depth < 45) {
+                        for (i in 0 until node.childCount) {
+                            val child = node.getChild(i) ?: continue
+                            igQueue.add(child to (depth + 1))
+                        }
                     }
                 } catch (_: Exception) {}
             }
-            collectMessageNodes(actualRoot)
 
             for (node in candidateNodes) {
                 val t = node.text?.toString()?.trim()

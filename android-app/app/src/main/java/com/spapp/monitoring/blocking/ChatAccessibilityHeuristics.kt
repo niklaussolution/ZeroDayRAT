@@ -96,6 +96,7 @@ object ChatAccessibilityHeuristics {
             // Back / Navigate up in top-left header
             if (n.top in 0..(screenHeight * 0.18f).toInt() && n.left < screenWidth * 0.30f) {
                 val isExplicitBack = id.contains("back") || desc == "back" ||
+                    desc.startsWith("back") || desc.contains("go back") ||
                     desc.contains("navigate up")
                 if (isExplicitBack) {
                     hasTopLeftBack = true
@@ -106,8 +107,10 @@ object ChatAccessibilityHeuristics {
             if (n.top in 0..(screenHeight * 0.18f).toInt()) {
                 if (desc.contains("audio call") || desc.contains("video call") ||
                     desc.contains("voice call") || desc.contains("video chat") ||
-                    desc.contains("start video") || desc.contains("start audio") ||
-                    desc.contains("conversation info") || desc.contains("thread details") ||
+                    desc.contains("voice chat") || desc.contains("start video") ||
+                    desc.contains("start audio") || desc.contains("conversation info") ||
+                    desc.contains("thread details") || desc.contains("chat details") ||
+                    desc.contains("chat controls") || desc == "call" || desc == "video" ||
                     id.contains("action_bar_call") || id.contains("thread_details") ||
                     id.contains("direct_thread") || id.contains("row_thread_header")
                 ) {
@@ -336,4 +339,3 @@ object ChatAccessibilityHeuristics {
             lower.endsWith(" picture")
     }
 }
-

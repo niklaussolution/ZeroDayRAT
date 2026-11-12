@@ -729,12 +729,12 @@ router.get("/:id/whatsapp/chats", requireAuth, async (req, res, next) => {
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%created group%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%end-to-end encrypted%'
           AND LOWER(TRIM(ac.chat_name)) != 'whatsapp group'
-          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%picture'
-          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%photo'
-          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%unread status%'
-          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%new updates%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '% profile picture'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '% profile photo'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '% unread status%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '% new updates%'
           AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%tap to add new status%'
-          AND LOWER(TRIM(ac.chat_name)) NOT LIKE '%filter%'
+          AND LOWER(TRIM(ac.chat_name)) NOT LIKE 'filter by %'
           AND LOWER(TRIM(ac.chat_name)) !~ '^[[:punct:][:space:].…]+$'
         GROUP BY LOWER(TRIM(ac.chat_name))
         HAVING COUNT(ac.chat_name) > 0

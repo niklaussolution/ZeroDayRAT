@@ -218,4 +218,14 @@ class ChatAccessibilityHeuristicsTest {
             )
         )
     }
+
+    @Test
+    fun `isInsideInstagramConversation detects DM thread with Back button variant and Call icon`() {
+        val nodes = listOf(
+            A11yNodeSnapshot(left = 20, top = 100, right = 120, bottom = 190, contentDescription = "Back button"),
+            A11yNodeSnapshot(left = 860, top = 100, right = 960, bottom = 190, contentDescription = "Call"),
+            A11yNodeSnapshot(left = 200, top = 110, right = 600, bottom = 180, text = "Karthik")
+        )
+        assertTrue(ChatAccessibilityHeuristics.isInsideInstagramConversation(nodes, screenW, screenH))
+    }
 }
