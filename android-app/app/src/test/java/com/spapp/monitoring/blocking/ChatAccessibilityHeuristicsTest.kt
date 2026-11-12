@@ -228,4 +228,25 @@ class ChatAccessibilityHeuristicsTest {
         )
         assertTrue(ChatAccessibilityHeuristics.isInsideInstagramConversation(nodes, screenW, screenH))
     }
+
+    @Test
+    fun `isInsideInstagramConversation returns true even when tab_bar stays visible behind fragment or reel is shared`() {
+        val nodes = listOf(
+            // Underlying tab_bar kept visible behind conversation overlay
+            A11yNodeSnapshot(
+                left = 0, top = 2200, right = 1080, bottom = 2400,
+                isVisibleToUser = true,
+                viewId = "com.instagram.android:id/tab_bar"
+            ),
+            // Shared reel card inside DM thread
+            A11yNodeSnapshot(
+                left = 150, top = 1100, right = 850, bottom = 1400,
+                contentDescription = "Double tap to like"
+            ),
+            // Thread Back button + Compose "Message..." box without legacy EditText ID
+            A11yNodeSnapshot(left = 20, top = 110, right = 120, bottom = 210, contentDescription = "Back"),
+            A11yNodeSnapshot(left = 140, top = 2180, right = 780, bottom = 2320, text = "Message...")
+        )
+        assertTrue(ChatAccessibilityHeuristics.isInsideInstagramConversation(nodes, screenW, screenH))
+    }
 }

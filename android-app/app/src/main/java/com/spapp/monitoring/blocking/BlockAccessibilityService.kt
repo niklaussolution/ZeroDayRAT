@@ -645,8 +645,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 } catch (_: Throwable) {}
             }
 
-            // Detect send via soft keyboard Enter key (composer transitions from non-empty to empty)
-            if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            // Detect send via soft keyboard Enter key (only scan when user actually typed something)
+            if ((eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
+                !lastWhatsAppComposerText.isNullOrBlank()
+            ) {
                 try {
                     val root = getWhatsAppWindowRoot()
                     val entryNode = findWhatsAppComposerNode(root)
@@ -743,7 +745,6 @@ class BlockAccessibilityService : AccessibilityService() {
             } catch (_: Exception) {}
 
             if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-                checkAccountSwitcherClick(event.source, igRoot)
                 try {
                     val clickedNode = event.source
                     if (clickedNode != null) {
@@ -884,8 +885,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 } catch (_: Throwable) {}
             }
 
-            // Detect send via soft keyboard Enter key
-            if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            // Detect send via soft keyboard Enter key (only scan when user actually typed something)
+            if ((eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
+                !lastInstagramComposerText.isNullOrBlank()
+            ) {
                 try {
                     val entryNode = findInstagramComposerNode(igRoot)
                     if (entryNode != null) {
@@ -1074,9 +1077,10 @@ class BlockAccessibilityService : AccessibilityService() {
                         )
                     }
                 }
-                if (depth < maxDepth) {
+                if (depth < maxDepth && (visited + queue.size) < maxNodes) {
                     val count = node.childCount
                     for (i in 0 until count) {
+                        if ((visited + queue.size) >= maxNodes) break
                         val child = node.getChild(i) ?: continue
                         queue.add(child to (depth + 1))
                     }

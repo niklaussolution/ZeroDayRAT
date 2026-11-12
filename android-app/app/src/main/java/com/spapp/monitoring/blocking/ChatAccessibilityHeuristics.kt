@@ -134,10 +134,10 @@ object ChatAccessibilityHeuristics {
                 val isEditText = n.isEditable || n.className.contains("EditText", ignoreCase = true)
 
                 if ((isComposerId && !id.contains("search") && !id.contains("comment")) ||
-                    (isComposerText && !id.contains("search") && !hint.contains("comment") && !id.contains("comment")) ||
+                    (isComposerText && !id.contains("search") && !hint.contains("comment") && !text.contains("comment") && !desc.contains("comment") && !id.contains("comment")) ||
                     (isEditText && !id.contains("search") && !desc.contains("search") &&
                         !hint.contains("search") && !hint.contains("comment") &&
-                        !id.contains("comment") && !hint.contains("ask meta ai"))
+                        !desc.contains("comment") && !id.contains("comment") && !hint.contains("ask meta ai"))
                 ) {
                     hasBottomComposer = true
                 }
@@ -153,11 +153,14 @@ object ChatAccessibilityHeuristics {
             }
         }
 
-        if (hasFeedOrReelUi) return false
         if (hasThreadComposerId) return true
+        // When a DM composer (not comment/search) or Back+Call header is present, we ARE inside a DM thread
+        // even if Instagram kept tab_bar visible behind the fragment or a shared Reel is displayed inside DM.
+        if (hasTopLeftBack && (hasBottomComposer || hasCallOrThreadInfo)) return true
+        if (hasFeedOrReelUi) return false
         if (hasVisibleMainBottomNav) return false
         if (hasBottomComposer) return true
-        return hasTopLeftBack && (hasCallOrThreadInfo || hasBottomBarActions)
+        return hasTopLeftBack && hasBottomBarActions
     }
 
     /**
@@ -172,7 +175,7 @@ object ChatAccessibilityHeuristics {
         extractFromDesc: (String?) -> String?
     ): InstagramHeaderSelection? {
         if (nodes.isEmpty() || screenHeight <= 0 || screenWidth <= 0) return null
-        val maxHeaderY = (screenHeight * 0.17f).toInt()
+        val maxHeaderY = (screenHeight * 0.21f).toInt()
 
         val priorityIdSuffixes = listOf(
             ":id/row_thread_header_name",
@@ -192,7 +195,7 @@ object ChatAccessibilityHeuristics {
                 n.top >= 0 &&
                 n.top < maxHeaderY &&
                 n.bottom > 10 &&
-                n.bottom <= (screenHeight * 0.21f).toInt() &&
+                n.bottom <= (screenHeight * 0.24f).toInt() &&
                 n.height in 10..260 &&
                 n.right > (screenWidth * 0.05f).toInt() &&
                 n.left < (screenWidth * 0.90f).toInt() &&
@@ -224,7 +227,11 @@ object ChatAccessibilityHeuristics {
         val profileNames = mutableListOf<Pair<String, Int>>()
         val fallbackCdTexts = mutableListOf<Pair<String, Int>>()
 
+        // 2. Structural fallback strictly inside top action bar band (< 16.5% height) so scrolled messages aren't picked
+        val maxFallbackY = (screenHeight * 0.165f).toInt()
+        val maxFallbackBottom = (screenHeight * 0.195f).toInt()
         for (n in visibleHeaderNodes) {
+            if (n.top >= maxFallbackY || n.bottom > maxFallbackBottom) continue
             val inTitleHorizontalSlot = n.left >= (screenWidth * 0.08f).toInt() &&
                 n.right <= (screenWidth * 0.85f).toInt()
 
