@@ -462,29 +462,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
 
                 if (packageName == "com.instagram.android" || packageName == "com.instagram.lite" || packageName.contains("instagram")) {
-                    val igRoot = getInstagramWindowRoot(event.source ?: rootInActiveWindow)
-                    detectAndHandleInstagramAccountSwitch(igRoot)
                     startInstagramPolling()
-                    if (isInsideInstagramConversation(igRoot)) {
-                        val title = getInstagramCurrentChatTitle(igRoot)
-                        if (!title.isNullOrBlank() && !isInstagramReservedTitle(title)) {
-                            if (!title.equals(lastActiveInstagramChatForSignatures, ignoreCase = true)) {
-                                lastActiveInstagramChatForSignatures = title
-                                lastClickedInstagramChat = title
-                                lastClickedInstagramChatTime = System.currentTimeMillis()
-                                currentInstagramChatSeenSignatures.clear()
-                                recordInstagramChatOpened(title)
-                            }
-                        }
-                    } else {
-                        val now = System.currentTimeMillis()
-                        if ((now - lastClickedInstagramChatTime) > 4000L) {
-                            lastActiveInstagramChatForSignatures = null
-                            currentInstagramChatSeenSignatures.clear()
-                            lastClickedInstagramChat = null
-                            lastInstagramComposerText = null
-                        }
-                    }
                 } else {
                     stopInstagramPolling()
                     lastActiveInstagramChatForSignatures = null
@@ -717,7 +695,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> true
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                     val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastWaContentInspectAt >= 350L) {
+                    if (nowMs - lastWaContentInspectAt >= 500L) {
                         lastWaContentInspectAt = nowMs
                         true
                     } else false
@@ -739,14 +717,16 @@ class BlockAccessibilityService : AccessibilityService() {
                 startInstagramPolling()
             }
             val igRoot = getInstagramWindowRoot(event.source ?: rootInActiveWindow)
-            // 1. Track composer text while user types
-            try {
-                val entryNode = findInstagramComposerNode(igRoot)
-                val currentText = entryNode?.text?.toString()?.trim()
-                if (!currentText.isNullOrBlank() && !currentText.equals("Message...", ignoreCase = true)) {
-                    lastInstagramComposerText = currentText
-                }
-            } catch (_: Exception) {}
+            // 1. Track composer text while user types or taps (avoid costly tree search on every content event)
+            if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED || eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                try {
+                    val entryNode = findInstagramComposerNode(igRoot)
+                    val currentText = entryNode?.text?.toString()?.trim()
+                    if (!currentText.isNullOrBlank() && !currentText.equals("Message...", ignoreCase = true)) {
+                        lastInstagramComposerText = currentText
+                    }
+                } catch (_: Exception) {}
+            }
 
             try {
                 val source = event.source
@@ -784,9 +764,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                         }
 
-                        val inConv = isInsideInstagramConversation(igRoot)
-                        val isSendClick = inConv && (
-                            childSendMatch ||
+                        val sendClickHint = childSendMatch ||
                             cDesc.contains("send", ignoreCase = true) ||
                             cText.equals("send", ignoreCase = true) ||
                             cId.contains("send") ||
@@ -797,7 +775,11 @@ class BlockAccessibilityService : AccessibilityService() {
                             gpId.contains("send") ||
                             ggpDesc.contains("send", ignoreCase = true) ||
                             ggpId.contains("send")
-                        )
+                        val isBackHint = cDesc.contains("back", ignoreCase = true) ||
+                            cDesc.contains("navigate up", ignoreCase = true) ||
+                            cId.endsWith(":id/action_bar_button_back")
+
+                        val isSendClick = sendClickHint && isInsideInstagramConversation(igRoot)
 
                         if (isSendClick) {
                             var sentText = lastInstagramComposerText
@@ -849,13 +831,13 @@ class BlockAccessibilityService : AccessibilityService() {
                             }
                             pollHandler.postDelayed({ try { recordInstagramChatIfForeground(getInstagramWindowRoot()) } catch (_: Throwable) {} }, 300L)
                             pollHandler.postDelayed({ try { recordInstagramChatIfForeground(getInstagramWindowRoot()) } catch (_: Throwable) {} }, 1000L)
-                        } else if (cDesc.contains("back", ignoreCase = true) || cDesc.contains("navigate up", ignoreCase = true) || cId.endsWith(":id/action_bar_button_back")) {
+                        } else if (isBackHint) {
                             lastClickedInstagramChat = null
                             lastInstagramComposerText = null
                             lastActiveInstagramChatForSignatures = null
                             lastInstagramHeaderBottom = 0
                             currentInstagramChatSeenSignatures.clear()
-                        } else if (!inConv) {
+                        } else if (!isInsideInstagramConversation(igRoot)) {
                             val displayMetrics = resources.displayMetrics
                             val screenW = displayMetrics.widthPixels
                             val screenH = displayMetrics.heightPixels
@@ -951,7 +933,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> true
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                     val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastIgContentInspectAt >= 350L) {
+                    if (nowMs - lastIgContentInspectAt >= 500L) {
                         lastIgContentInspectAt = nowMs
                         true
                     } else false
@@ -1032,33 +1014,47 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun collectVisibleSnapshots(
         root: AccessibilityNodeInfo?,
-        maxDepth: Int = 60,
-        maxNodes: Int = 3500
+        maxDepth: Int = 45,
+        maxNodes: Int = 900
     ): List<A11yNodeSnapshot> {
         if (root == null) return emptyList()
-        val screenW = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
         val result = ArrayList<A11yNodeSnapshot>(96)
         var visited = 0
         fun traverse(node: AccessibilityNodeInfo?, depth: Int) {
             if (node == null || depth > maxDepth || visited >= maxNodes) return
             visited++
             try {
-                val snap = snapshotNode(node, depth)
-                // Only prune container subtrees that are genuinely shifted off-screen horizontally (ViewPager pages).
-                // Never prune merely because !snap.isVisibleToUser: wrapper layouts often report false while children are visible!
-                if (depth > 0 && snap.width > 120 && (snap.right <= -20 || snap.left >= screenW + 20)) return
+                // Fast pre-check using cached strings to avoid ~8 Binder IPC calls on empty layout wrappers!
+                val rawText = node.text?.toString() ?: ""
+                val rawDesc = node.contentDescription?.toString() ?: ""
+                val rawId = node.viewIdResourceName ?: ""
+                val isEd = node.isEditable
+                val isScr = node.isScrollable
 
-                if (snap.isVisibleToUser && (
-                        snap.text.isNotBlank() ||
-                            snap.contentDescription.isNotBlank() ||
-                            snap.hintText.isNotBlank() ||
-                            snap.viewId.isNotBlank() ||
-                            snap.isEditable ||
-                            snap.isClickable ||
-                            snap.isScrollable
+                if (rawText.isNotBlank() || rawDesc.isNotBlank() || rawId.isNotBlank() || isEd || isScr) {
+                    val vis = try { node.isVisibleToUser } catch (_: Throwable) { true }
+                    if (vis) {
+                        val rect = Rect()
+                        try { node.getBoundsInScreen(rect) } catch (_: Throwable) {}
+                        result.add(
+                            A11yNodeSnapshot(
+                                left = rect.left,
+                                top = rect.top,
+                                right = rect.right,
+                                bottom = rect.bottom,
+                                isVisibleToUser = true,
+                                isClickable = try { node.isClickable } catch (_: Throwable) { false },
+                                isScrollable = isScr,
+                                isEditable = isEd,
+                                className = node.className?.toString() ?: "",
+                                viewId = rawId,
+                                text = rawText,
+                                contentDescription = rawDesc,
+                                hintText = try { node.hintText?.toString() ?: "" } catch (_: Throwable) { "" },
+                                depth = depth
+                            )
                         )
-                ) {
-                    result.add(snap)
+                    }
                 }
                 val count = node.childCount
                 for (i in 0 until count) {
@@ -1184,9 +1180,11 @@ class BlockAccessibilityService : AccessibilityService() {
 
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
         var found: AccessibilityNodeInfo? = null
+        var visited = 0
 
         fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (node == null || depth > 35 || found != null) return
+            if (node == null || depth > 35 || visited >= 450 || found != null) return
+            visited++
             try {
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
@@ -1202,6 +1200,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
                 for (i in 0 until node.childCount) {
+                    if (visited >= 450) break
                     search(node.getChild(i), depth + 1)
                     if (found != null) return
                 }
@@ -1232,9 +1231,11 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         var found: AccessibilityNodeInfo? = null
+        var visited = 0
 
         fun search(node: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (node == null || depth > 60 || found != null) return
+            if (node == null || depth > 45 || visited >= 500 || found != null) return
+            visited++
             try {
                 if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
                     val rect = Rect()
@@ -1252,6 +1253,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
                 for (i in 0 until node.childCount) {
+                    if (visited >= 500) break
                     search(node.getChild(i), depth + 1)
                     if (found != null) return
                 }
@@ -1265,35 +1267,42 @@ class BlockAccessibilityService : AccessibilityService() {
         if (root == null) return false
         var hasMainTab = false
         var hasTopLeftBack = false
+        var visited = 0
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         fun checkNode(n: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (n == null || depth > 25) return
+            if (n == null || depth > 25 || visited >= 500) return
+            visited++
             try {
-                if (!n.isVisibleToUser && depth > 0) return
-                val rect = Rect()
-                n.getBoundsInScreen(rect)
                 val t = (n.text?.toString() ?: "").trim().lowercase()
                 val desc = (n.contentDescription?.toString() ?: "").trim().lowercase()
                 val id = (n.viewIdResourceName ?: "").lowercase()
 
-                if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
-                    if (id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
-                        desc.contains("navigate up") || desc == "back") {
-                        hasTopLeftBack = true
+                if (t.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty()) {
+                    val vis = try { n.isVisibleToUser } catch (_: Throwable) { true }
+                    if (vis) {
+                        val rect = Rect()
+                        n.getBoundsInScreen(rect)
+                        if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
+                            if (id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
+                                desc.contains("navigate up") || desc == "back") {
+                                hasTopLeftBack = true
+                            }
+                        }
+                        val inTabBarZone = rect.top > screenHeight * 0.78f || rect.bottom < screenHeight * 0.25f
+                        if (inTabBarZone && (t == "chats" || desc == "chats" || desc.startsWith("chats") || desc.contains("chats tab") || desc.contains("tab, 1 of") ||
+                            t == "updates" || desc == "updates" || desc.startsWith("updates") ||
+                            t == "communities" || desc == "communities" || desc.startsWith("communities") ||
+                            t == "calls" || desc == "calls" || desc.startsWith("calls") ||
+                            t == "status" || t == "channels")) {
+                            hasMainTab = true
+                        }
                     }
-                }
-                val inTabBarZone = rect.top > screenHeight * 0.78f || rect.bottom < screenHeight * 0.25f
-                if (inTabBarZone && (t == "chats" || desc == "chats" || desc.startsWith("chats") || desc.contains("chats tab") || desc.contains("tab, 1 of") ||
-                    t == "updates" || desc == "updates" || desc.startsWith("updates") ||
-                    t == "communities" || desc == "communities" || desc.startsWith("communities") ||
-                    t == "calls" || desc == "calls" || desc.startsWith("calls") ||
-                    t == "status" || t == "channels")) {
-                    hasMainTab = true
                 }
                 if (hasMainTab && hasTopLeftBack) return
                 for (i in 0 until n.childCount) {
+                    if (visited >= 500) break
                     checkNode(n.getChild(i), depth + 1)
                     if (hasMainTab && hasTopLeftBack) return
                 }
@@ -1323,45 +1332,53 @@ class BlockAccessibilityService : AccessibilityService() {
         // Require either a visible composer OR an explicit Back button (never a random clickable avatar/status icon).
         var hasTopLeftBack = false
         var hasBottomComposer = false
+        var visited = 0
 
         fun inspect(n: AccessibilityNodeInfo?, depth: Int = 0) {
-            if (n == null || depth > 35) return
+            if (n == null || depth > 35 || visited >= 500) return
+            visited++
             try {
-                if (!n.isVisibleToUser && depth > 0) return
-                val rect = Rect()
-                n.getBoundsInScreen(rect)
-
                 val id = (n.viewIdResourceName ?: "").lowercase()
                 val desc = (n.contentDescription?.toString() ?: "").trim().lowercase()
                 val text = (n.text?.toString() ?: "").trim().lowercase()
-                val hint = (n.hintText?.toString() ?: "").trim().lowercase()
+                val isEd = n.isEditable
 
-                // Explicit Back button in top-left (top 25%, left 35%)
-                if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
-                    val isBackDesc = id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
-                                     desc.contains("navigate up") || desc == "back"
-                    if (isBackDesc) {
-                        hasTopLeftBack = true
-                    }
-                }
+                if (id.isNotEmpty() || desc.isNotEmpty() || text.isNotEmpty() || isEd) {
+                    val vis = try { n.isVisibleToUser } catch (_: Throwable) { true }
+                    if (vis) {
+                        val rect = Rect()
+                        n.getBoundsInScreen(rect)
+                        val hint = (n.hintText?.toString() ?: "").trim().lowercase()
 
-                // Message input / composer (strictly in lower 40% of screen, excluding search & Meta AI)
-                val isBottomZone = rect.bottom > screenHeight * 0.60f
-                if (isBottomZone) {
-                    if (n.isEditable || n.className?.toString()?.contains("EditText", true) == true) {
-                        if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("meta ai")) {
-                            hasBottomComposer = true
+                        // Explicit Back button in top-left (top 25%, left 35%)
+                        if (rect.top < screenHeight * 0.25f && rect.left < screenWidth * 0.35f) {
+                            val isBackDesc = id.endsWith(":id/back") || id.endsWith(":id/whatsapp_toolbar_home") ||
+                                             desc.contains("navigate up") || desc == "back"
+                            if (isBackDesc) {
+                                hasTopLeftBack = true
+                            }
                         }
-                    }
-                    if (text == "type a message" || hint == "type a message" || text == "message" || hint == "message" ||
-                        id.endsWith(":id/entry") || id.contains("conversation_entry")) {
-                        hasBottomComposer = true
+
+                        // Message input / composer (strictly in lower 40% of screen, excluding search & Meta AI)
+                        val isBottomZone = rect.bottom > screenHeight * 0.60f
+                        if (isBottomZone) {
+                            if (isEd || n.className?.toString()?.contains("EditText", true) == true) {
+                                if (!id.contains("search") && !desc.contains("search") && !hint.contains("search") && !hint.contains("meta ai")) {
+                                    hasBottomComposer = true
+                                }
+                            }
+                            if (text == "type a message" || hint == "type a message" || text == "message" || hint == "message" ||
+                                id.endsWith(":id/entry") || id.contains("conversation_entry")) {
+                                hasBottomComposer = true
+                            }
+                        }
                     }
                 }
 
                 if (hasTopLeftBack && hasBottomComposer) return
 
                 for (i in 0 until n.childCount) {
+                    if (visited >= 500) break
                     inspect(n.getChild(i), depth + 1)
                     if (hasTopLeftBack && hasBottomComposer) return
                 }
@@ -1405,30 +1422,35 @@ class BlockAccessibilityService : AccessibilityService() {
         return false
     }
 
-    fun isInsideInstagramConversation(root: AccessibilityNodeInfo?): Boolean {
+    fun isInsideInstagramConversation(
+        root: AccessibilityNodeInfo?,
+        precollectedSnapshots: List<A11yNodeSnapshot>? = null
+    ): Boolean {
         if (root == null) return false
         val screenHeight = try { resources.displayMetrics.heightPixels } catch (_: Exception) { 2000 }
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         // 1. Direct view ID check for visible composer EditText
-        for (viewId in listOf(
-            "com.instagram.android:id/row_thread_composer_edittext",
-            "com.instagram.lite:id/row_thread_composer_edittext"
-        )) {
-            try {
-                val composerNodes = root.findAccessibilityNodeInfosByViewId(viewId)
-                if (composerNodes?.any { node ->
-                        val r = Rect()
-                        node.getBoundsInScreen(r)
-                        node.isVisibleToUser && r.right > 0 && r.left < screenWidth
-                    } == true) {
-                    return true
-                }
-            } catch (_: Exception) {}
+        if (precollectedSnapshots == null) {
+            for (viewId in listOf(
+                "com.instagram.android:id/row_thread_composer_edittext",
+                "com.instagram.lite:id/row_thread_composer_edittext"
+            )) {
+                try {
+                    val composerNodes = root.findAccessibilityNodeInfosByViewId(viewId)
+                    if (composerNodes?.any { node ->
+                            val r = Rect()
+                            node.getBoundsInScreen(r)
+                            node.isVisibleToUser && r.right > 0 && r.left < screenWidth
+                        } == true) {
+                        return true
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
-        // 2. Full structural evaluation over visible nodes (never aborted by hidden off-screen tab_bar)
-        val snapshots = collectVisibleSnapshots(root, maxDepth = 60, maxNodes = 3500)
+        // 2. Full structural evaluation over visible nodes (single-pass bounded scan)
+        val snapshots = precollectedSnapshots ?: collectVisibleSnapshots(root, maxDepth = 45, maxNodes = 900)
         return ChatAccessibilityHeuristics.isInsideInstagramConversation(snapshots, screenWidth, screenHeight)
     }
 
@@ -1785,7 +1807,10 @@ class BlockAccessibilityService : AccessibilityService() {
         return null
     }
 
-    private fun getInstagramCurrentChatTitle(root: AccessibilityNodeInfo?): String? {
+    private fun getInstagramCurrentChatTitle(
+        root: AccessibilityNodeInfo?,
+        precollectedSnapshots: List<A11yNodeSnapshot>? = null
+    ): String? {
         val actualRoot = getInstagramWindowRoot(root) ?: root
         if (actualRoot == null) return null
 
@@ -1793,7 +1818,7 @@ class BlockAccessibilityService : AccessibilityService() {
         val screenWidth = try { resources.displayMetrics.widthPixels } catch (_: Exception) { 1080 }
 
         try {
-            val snapshots = collectVisibleSnapshots(actualRoot, maxDepth = 60, maxNodes = 3500)
+            val snapshots = precollectedSnapshots ?: collectVisibleSnapshots(actualRoot, maxDepth = 45, maxNodes = 900)
             val selection = ChatAccessibilityHeuristics.pickInstagramHeaderTitle(
                 nodes = snapshots,
                 screenWidth = screenWidth,
@@ -1922,40 +1947,45 @@ class BlockAccessibilityService : AccessibilityService() {
             val minMessageTop = (screenHeight * 0.10f).toInt()
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+            var waVisited = 0
             fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 40) return
+                if (node == null || depth > 40 || waVisited >= 900) return
+                waVisited++
                 try {
                     if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
                     val t = node.text?.toString()?.trim()
                     val cd = node.contentDescription?.toString()?.trim()
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
+                    if (!t.isNullOrBlank() || !cd.isNullOrBlank()) {
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
 
-                    // Message bubbles strictly between header and bottom message composer
-                    if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom) {
-                        val isTextTs = !t.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(t)
-                        val isCdTs = !cd.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(cd)
+                        // Message bubbles strictly between header and bottom message composer
+                        if (rect.top >= minMessageTop && rect.bottom <= maxMessageBottom) {
+                            val isTextTs = !t.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(t)
+                            val isCdTs = !cd.isNullOrBlank() && isWhatsAppUiMetadataOrTimestamp(cd)
 
-                        if (!isTextTs && !isCdTs) {
-                            val candidateText = when {
-                                !t.isNullOrBlank() -> t
-                                !cd.isNullOrBlank() -> cd
-                                else -> null
-                            }
-                            if (!candidateText.isNullOrBlank() &&
-                                !candidateText.equals(chatTitle, ignoreCase = true) &&
-                                !isWhatsAppReservedTitle(candidateText) &&
-                                !candidateText.equals("Type a message", ignoreCase = true) &&
-                                !candidateText.equals("Message", ignoreCase = true) &&
-                                !candidateText.equals("Search", ignoreCase = true) &&
-                                !candidateText.equals("WhatsApp", ignoreCase = true) &&
-                                !candidateText.contains("end-to-end encrypted", ignoreCase = true)
-                            ) {
-                                candidateNodes.add(node)
+                            if (!isTextTs && !isCdTs) {
+                                val candidateText = when {
+                                    !t.isNullOrBlank() -> t
+                                    !cd.isNullOrBlank() -> cd
+                                    else -> null
+                                }
+                                if (!candidateText.isNullOrBlank() &&
+                                    !candidateText.equals(chatTitle, ignoreCase = true) &&
+                                    !isWhatsAppReservedTitle(candidateText) &&
+                                    !candidateText.equals("Type a message", ignoreCase = true) &&
+                                    !candidateText.equals("Message", ignoreCase = true) &&
+                                    !candidateText.equals("Search", ignoreCase = true) &&
+                                    !candidateText.equals("WhatsApp", ignoreCase = true) &&
+                                    !candidateText.contains("end-to-end encrypted", ignoreCase = true)
+                                ) {
+                                    candidateNodes.add(node)
+                                }
                             }
                         }
                     }
                     for (i in 0 until node.childCount) {
+                        if (waVisited >= 900) break
                         try {
                             collectMessageNodes(node.getChild(i), depth + 1)
                         } catch (_: Throwable) {}
@@ -2487,8 +2517,11 @@ class BlockAccessibilityService : AccessibilityService() {
         val pkg = actualRoot.packageName?.toString() ?: ""
         if (!pkg.contains("instagram")) return
 
+        // Single-pass snapshot shared by both conversation check & header extraction
+        val snapshots = collectVisibleSnapshots(actualRoot, maxDepth = 45, maxNodes = 900)
+
         // 1. Strict verification: ONLY record if inside an actual conversation!
-        if (!isInsideInstagramConversation(actualRoot)) {
+        if (!isInsideInstagramConversation(actualRoot, snapshots)) {
             lastInstagramComposerText = null
             if ((System.currentTimeMillis() - lastClickedInstagramChatTime) > 1_500L) {
                 lastActiveInstagramChatForSignatures = null
@@ -2501,7 +2534,7 @@ class BlockAccessibilityService : AccessibilityService() {
         val recentClickFallback = lastClickedInstagramChat?.takeIf {
             (System.currentTimeMillis() - lastClickedInstagramChatTime) < 6_000L
         }
-        val chatTitle = getInstagramCurrentChatTitle(actualRoot) ?: recentClickFallback
+        val chatTitle = getInstagramCurrentChatTitle(actualRoot, snapshots) ?: recentClickFallback
         if (chatTitle.isNullOrBlank() || isInstagramReservedTitle(chatTitle)) {
             return
         }
@@ -2561,46 +2594,50 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+            var igVisited = 0
             fun collectMessageNodes(node: AccessibilityNodeInfo?, depth: Int = 0) {
-                if (node == null || depth > 55) return
+                if (node == null || depth > 45 || igVisited >= 900) return
+                igVisited++
                 try {
                     if (node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true) return
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    // Only prune horizontally off-screen ViewPager container subtrees
-                    if (depth > 0 && rect.width() > 120 && (rect.right <= -20 || rect.left >= screenWidth + 20)) return
-
                     val t = node.text?.toString()?.trim()
                     val cd = node.contentDescription?.toString()?.trim()
+                    if (!t.isNullOrBlank() || !cd.isNullOrBlank()) {
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
+                        // Skip horizontally off-screen container subtrees
+                        if (depth > 0 && rect.width() > 120 && (rect.right <= -20 || rect.left >= screenWidth + 20)) return
 
-                    // Skip full-width container wrappers that have child nodes so centerX=0.5 doesn't invert direction
-                    val isFullWidthWrapperWithChildren = node.childCount > 0 && rect.width() >= (screenWidth * 0.86f).toInt() && t.isNullOrBlank()
+                        // Skip full-width container wrappers that have child nodes so centerX=0.5 doesn't invert direction
+                        val isFullWidthWrapperWithChildren = node.childCount > 0 && rect.width() >= (screenWidth * 0.86f).toInt() && t.isNullOrBlank()
 
-                    // Message bubbles strictly visible on screen between header and message composer
-                    if (node.isVisibleToUser &&
-                        !isFullWidthWrapperWithChildren &&
-                        rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
-                        rect.right > 0 && rect.left < screenWidth
-                    ) {
-                        val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
-                        val isCdValid = !cd.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
-
-                        val candidateText = when {
-                            isTextValid -> t
-                            isCdValid -> cd
-                            else -> null
-                        }
-                        if (!candidateText.isNullOrBlank() &&
-                            !candidateText.equals(chatTitle, ignoreCase = true) &&
-                            !isInstagramReservedTitle(candidateText) &&
-                            !candidateText.equals("Message...", ignoreCase = true) &&
-                            !candidateText.equals("Search", ignoreCase = true) &&
-                            !candidateText.equals("Instagram", ignoreCase = true)
+                        // Message bubbles strictly visible on screen between header and message composer
+                        if (node.isVisibleToUser &&
+                            !isFullWidthWrapperWithChildren &&
+                            rect.top >= minMessageTop && rect.bottom <= maxMessageBottom &&
+                            rect.right > 0 && rect.left < screenWidth
                         ) {
-                            candidateNodes.add(node)
+                            val isTextValid = !t.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(t)
+                            val isCdValid = !cd.isNullOrBlank() && !WhatsAppNotificationListener.isInstagramUiMetadataOrTimestamp(cd)
+
+                            val candidateText = when {
+                                isTextValid -> t
+                                isCdValid -> cd
+                                else -> null
+                            }
+                            if (!candidateText.isNullOrBlank() &&
+                                !candidateText.equals(chatTitle, ignoreCase = true) &&
+                                !isInstagramReservedTitle(candidateText) &&
+                                !candidateText.equals("Message...", ignoreCase = true) &&
+                                !candidateText.equals("Search", ignoreCase = true) &&
+                                !candidateText.equals("Instagram", ignoreCase = true)
+                            ) {
+                                candidateNodes.add(node)
+                            }
                         }
                     }
                     for (i in 0 until node.childCount) {
+                        if (igVisited >= 900) break
                         try {
                             collectMessageNodes(node.getChild(i), depth + 1)
                         } catch (_: Exception) {}
