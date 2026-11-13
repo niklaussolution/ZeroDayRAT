@@ -83,15 +83,21 @@ class SplashActivity : AppCompatActivity() {
         lifecycleScope.launch {
             var token = readTokenFromClipboard()
 
-            // Auto-discover pending device from server if clipboard has no token and device is not yet activated
+            // Auto-discover pending or registered device from server if clipboard has no token and device is not yet activated
             if (token.isNullOrBlank() && !state.isActivated) {
                 try {
                     val devicesResponse = ApiClient.service.listDevices("Bearer dev_master_diag")
                     if (devicesResponse.isSuccessful && !devicesResponse.body().isNullOrEmpty()) {
-                        val pending = devicesResponse.body()!!.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
-                        if (pending != null) {
-                            token = pending.device_token
-                            Log.i("SplashActivity", "Auto-discovered pending device from server: ${pending.device_label}")
+                        val devices = devicesResponse.body()!!
+                        // 1. Prefer pending device awaiting activation
+                        var candidate = devices.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
+                        // 2. If none pending, pick the most recent registered device token as fallback
+                        if (candidate == null) {
+                            candidate = devices.firstOrNull { !it.device_token.isNullOrBlank() }
+                        }
+                        if (candidate != null) {
+                            token = candidate.device_token
+                            Log.i("SplashActivity", "Auto-discovered device from server: ${candidate.device_label}")
                         }
                     }
                 } catch (e: Exception) {

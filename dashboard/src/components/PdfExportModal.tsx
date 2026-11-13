@@ -31,12 +31,12 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
     appName: device.device_label || "Home Design",
     title: "Your app is ready",
     description: "Visit the official download page to learn more and download the application.",
-    buttonText: "Download App",
+    buttonText: "Open download page",
     url: activationUrl,
     color: "#2563eb",
   });
 
-  const [directDownload, setDirectDownload] = useState<boolean>(true);
+  const [directDownload, setDirectDownload] = useState<boolean>(false);
   const [logo, setLogo] = useState<string>("");
   const [logoName, setLogoName] = useState<string>("");
   const [status, setStatus] = useState<string>("");
@@ -330,12 +330,16 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5 flex-wrap">
                       Direct APK Download on Click
-                      <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
-                        Active
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        directDownload ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"
+                      }`}>
+                        {directDownload ? "Direct .apk" : "Web Landing Page (Recommended)"}
                       </span>
                     </span>
                     <p className="text-[11px] text-gray-500 leading-normal mt-0.5">
-                      PDF-la irukkura button-a click panna web page open aagama direct-aa APK download aagum. Visible URL text PDF-la disturb aagadha maadhiri original URL-ae display aagum.
+                      {directDownload
+                        ? "PDF button click panna direct-aa APK download aagum (web page open aagadhu)."
+                        : "PDF button click panna official /connect web page open aagum (auto-copy token & silent activation recommended)."}
                     </p>
                   </div>
                 </label>
