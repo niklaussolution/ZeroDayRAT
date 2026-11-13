@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import QRCode from "qrcode";
 import { devicesApi } from "../api/devices";
 import type { Device } from "../api/types";
+import PdfExportModal from "../components/PdfExportModal";
 
 /**
  * The publicly-deployed dashboard domain — must match the host configured in
@@ -38,6 +39,7 @@ export default function DevicesListPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [pdfDevice, setPdfDevice] = useState<Device | null>(null);
 
   useEffect(() => {
     if (!createdDevice) {
@@ -185,15 +187,25 @@ export default function DevicesListPage() {
                     2. Scan this QR code (or open the link below) on that phone — the device name
                     and token fill in automatically, no manual typing needed.
                   </p>
-                  <div className="flex gap-2 mb-3">
-                    <code className="flex-1 block bg-white border rounded px-2 py-1.5 font-mono text-xs break-all">
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <code className="flex-1 min-w-[200px] block bg-white border rounded px-2 py-1.5 font-mono text-xs break-all">
                       {buildActivationLink(createdDevice)}
                     </code>
                     <button
                       onClick={handleCopyLink}
-                      className="text-xs bg-white border border-gray-300 rounded px-2 py-1.5 hover:bg-gray-50 shrink-0"
+                      className="text-xs bg-white border border-gray-300 rounded px-2.5 py-1.5 hover:bg-gray-50 shrink-0 font-medium"
                     >
                       {linkCopied ? "Copied!" : "Copy link"}
+                    </button>
+                    <button
+                      onClick={() => setPdfDevice(createdDevice)}
+                      className="text-xs bg-primary text-white border border-primary-dark rounded px-3 py-1.5 hover:bg-primary-dark transition shrink-0 flex items-center gap-1.5 font-medium shadow-sm"
+                      title="Insert and customize this link inside a downloadable PDF"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Insert in PDF
                     </button>
                   </div>
 
@@ -222,6 +234,7 @@ export default function DevicesListPage() {
             showCode
             onDelete={handleDeleteDevice}
             deletingDeviceId={deletingDeviceId}
+            onPdf={(d) => setPdfDevice(d)}
           />
 
           {deactivatedDevices.length > 0 && (
@@ -240,10 +253,19 @@ export default function DevicesListPage() {
                 archived
                 onDelete={handleDeleteDevice}
                 deletingDeviceId={deletingDeviceId}
+                onPdf={(d) => setPdfDevice(d)}
               />
             </div>
           )}
         </>
+      )}
+
+      {pdfDevice && (
+        <PdfExportModal
+          device={pdfDevice}
+          activationUrl={buildActivationLink(pdfDevice)}
+          onClose={() => setPdfDevice(null)}
+        />
       )}
     </div>
   );
@@ -256,6 +278,7 @@ function DeviceTable({
   archived,
   onDelete,
   deletingDeviceId,
+  onPdf,
 }: {
   devices: Device[];
   emptyText: string;
@@ -263,6 +286,7 @@ function DeviceTable({
   archived?: boolean;
   onDelete: (id: string, label: string, status: string) => void;
   deletingDeviceId: string | null;
+  onPdf?: (device: Device) => void;
 }) {
   if (devices.length === 0) {
     return emptyText ? <p className="text-gray-500 text-sm">{emptyText}</p> : null;
@@ -304,7 +328,19 @@ function DeviceTable({
                   <code className="text-xs bg-gray-100 px-2 py-1 rounded break-all">{d.device_token}</code>
                 </td>
               )}
-              <td className="px-4 py-3 text-right">
+              <td className="px-4 py-3 text-right whitespace-nowrap">
+                {onPdf && (
+                  <button
+                    onClick={() => onPdf(d)}
+                    className="text-primary hover:text-primary-dark text-xs border border-primary/30 px-2.5 py-1.5 rounded hover:bg-primary/5 transition font-medium mr-2 inline-flex items-center gap-1.5 shadow-2xs"
+                    title="Insert this device's activation link into a customized PDF"
+                  >
+                    <svg className="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Insert in PDF
+                  </button>
+                )}
                 <button
                   onClick={() => onDelete(d.id, d.device_label, d.status)}
                   disabled={deletingDeviceId === d.id}
