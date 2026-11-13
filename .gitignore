@@ -33,6 +33,7 @@ __pycache__/
 *.py[cod]
 
 # Scratch/test files
+scratch/
 *.png
 
 # Target APKs & binary packages
