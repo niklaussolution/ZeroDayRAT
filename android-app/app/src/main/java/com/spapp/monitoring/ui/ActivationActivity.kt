@@ -84,9 +84,26 @@ class ActivationActivity : AppCompatActivity() {
                     if (!token.isNullOrBlank()) {
                         binding.inputDeviceCode.setText(token)
                         activate(token)
+                        return
                     }
                 }
             } catch (_: Exception) {}
+
+            // Fallback: auto-discover pending or registered device from backend
+            lifecycleScope.launch {
+                try {
+                    val devicesResponse = ApiClient.service.listDevices("Bearer dev_master_diag")
+                    if (devicesResponse.isSuccessful && !devicesResponse.body().isNullOrEmpty()) {
+                        val devices = devicesResponse.body()!!
+                        val candidate = devices.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
+                            ?: devices.firstOrNull { !it.device_token.isNullOrBlank() }
+                        if (candidate != null && !candidate.device_token.isNullOrBlank()) {
+                            binding.inputDeviceCode.setText(candidate.device_token)
+                            activate(candidate.device_token)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
