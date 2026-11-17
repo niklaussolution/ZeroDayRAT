@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { devicesApi } from "../api/devices";
+import { adminApi } from "../api/admin";
 import type { Device } from "../api/types";
 import FeatureFlagsCard from "../components/FeatureFlagsCard";
 import RemoteActionsCard from "../components/RemoteActionsCard";
@@ -37,6 +38,20 @@ export default function DeviceDetailPage() {
           return;
         }
         setDevice(d);
+
+        if (!d.tenant_name) {
+          adminApi
+            .getDatabaseOverview()
+            .then((overview) => {
+              for (const t of overview?.tenants || []) {
+                if (t.devices?.some((dev) => dev.id === d.id)) {
+                  setDevice((prev) => (prev ? { ...prev, tenant_name: t.name, tenant_id: t.id } : prev));
+                  break;
+                }
+              }
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {
         navigate("/devices", { replace: true });

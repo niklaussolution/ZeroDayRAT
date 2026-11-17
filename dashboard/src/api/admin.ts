@@ -69,13 +69,25 @@ export interface DbOverviewResponse {
 export const adminApi = {
   listTenants: () => apiClient.get<AdminTenant[]>("/api/admin/tenants").then((r) => r.data),
 
-  createTenant: (data: {
+  createTenant: async (data: {
     tenantName: string;
     tenantType: "family" | "company";
     email: string;
     password: string;
     fullName?: string;
-  }) => apiClient.post("/api/admin/tenants", data).then((r) => r.data),
+  }) => {
+    try {
+      const res = await apiClient.post("/api/admin/tenants", data);
+      return res.data;
+    } catch (err: any) {
+      if (err.response?.status === 404 || err.response?.status === 405) {
+        // Fallback to /api/auth/register on deployed backend
+        const res = await apiClient.post("/api/auth/register", data);
+        return res.data;
+      }
+      throw err;
+    }
+  },
 
   listTenantDevices: (tenantId: string) =>
     apiClient.get<AdminDeviceSummary[]>(`/api/admin/tenants/${tenantId}/devices`).then((r) => r.data),

@@ -78,15 +78,46 @@ export default function DevicesListPage() {
 
   const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
 
-  function load() {
+  async function load() {
     setLoading(true);
-    devicesApi
-      .list()
-      .then(setDevices)
-      .finally(() => setLoading(false));
+    try {
+      const rawDevices = await devicesApi.list();
+      if (isSuperAdmin) {
+        try {
+          const overview = await adminApi.getDatabaseOverview();
+          const deviceToTenant = new Map<string, { id: string; name: string }>();
+          if (overview?.tenants) {
+            for (const t of overview.tenants) {
+              if (t.devices) {
+                for (const d of t.devices) {
+                  deviceToTenant.set(d.id, { id: t.id, name: t.name });
+                }
+              }
+            }
+          }
+          const enriched = rawDevices.map((d) => {
+            const tInfo = deviceToTenant.get(d.id);
+            return {
+              ...d,
+              tenant_id: d.tenant_id || tInfo?.id,
+              tenant_name: d.tenant_name || tInfo?.name || "Unassigned",
+            };
+          });
+          setDevices(enriched);
+          return;
+        } catch (_err) {
+          console.error("Overview enrich error:", _err);
+        }
+      }
+      setDevices(rawDevices);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, [isSuperAdmin]);
 
   async function handleCreate() {
     if (!newLabel.trim() || creating) return;
