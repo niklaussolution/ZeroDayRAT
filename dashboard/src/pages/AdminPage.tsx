@@ -85,6 +85,15 @@ export default function AdminPage() {
   const [updatePasswordError, setUpdatePasswordError] = useState<string | null>(null);
   const [updatePasswordSuccess, setUpdatePasswordSuccess] = useState<string | null>(null);
 
+  // Newly created tenant credentials card modal
+  const [createdTenantCredentials, setCreatedTenantCredentials] = useState<{
+    tenantName: string;
+    email: string;
+    password: string;
+    loginUrl: string;
+  } | null>(null);
+  const [showCreatedPassword, setShowCreatedPassword] = useState(true);
+
   function toggleShowPassword(userId: string) {
     setShowPasswords((prev) => ({ ...prev, [userId]: !prev[userId] }));
   }
@@ -112,12 +121,31 @@ export default function AdminPage() {
         fullName: ownerFullName.trim() || undefined,
       });
 
-      // Save plaintext password for super-admin reference
-      saveStoredPassword(ownerEmail.trim(), ownerPassword);
+      const savedPass = ownerPassword;
+      const savedEmail = ownerEmail.trim();
+      const savedTenantName = tenantName.trim();
+
+      // Save plaintext password for super-admin reference across multiple lookup keys
+      saveStoredPassword(savedEmail, savedPass);
+      saveStoredPassword(savedEmail.toLowerCase(), savedPass);
       if (res?.user?.id) {
-        saveStoredPassword(res.user.id, ownerPassword);
+        saveStoredPassword(res.user.id, savedPass);
+      }
+      if (res?.tenant?.id) {
+        saveStoredPassword(res.tenant.id, savedPass);
       }
       setCachedPasswords(getStoredPasswords());
+
+      // Show Tenant Credentials modal with Copy button for direct sharing
+      const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+      const appUrl = isLocal ? PRODUCTION_APP_URL : window.location.origin;
+      setCreatedTenantCredentials({
+        tenantName: savedTenantName,
+        email: savedEmail,
+        password: savedPass,
+        loginUrl: `${appUrl}/login`,
+      });
+      setShowCreatedPassword(true);
 
       setShowCreateTenant(false);
       setTenantName("");
@@ -439,6 +467,8 @@ export default function AdminPage() {
                     u.plain_password ||
                     cachedPasswords[u.id] ||
                     cachedPasswords[u.email.toLowerCase()] ||
+                    cachedPasswords[u.email] ||
+                    cachedPasswords[t.id] ||
                     null;
                   const isVisible = !!showPasswords[u.id];
 
@@ -803,6 +833,103 @@ export default function AdminPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {createdTenantCredentials && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🎉</span>
+                <h3 className="font-bold text-gray-900 text-lg">Tenant Created Successfully</h3>
+              </div>
+              <button
+                onClick={() => setCreatedTenantCredentials(null)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500">
+              Share these credentials with the tenant (<span className="font-bold text-gray-800">{createdTenantCredentials.tenantName}</span>) so they can log in to their dashboard.
+            </p>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Login URL</label>
+                <div className="flex items-center justify-between mt-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-xs">
+                  <span className="font-mono text-gray-800 truncate">{createdTenantCredentials.loginUrl}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(createdTenantCredentials.loginUrl, "created-url")}
+                    className="text-primary hover:text-primary-dark font-medium ml-2 shrink-0 bg-blue-50 px-2 py-0.5 rounded"
+                  >
+                    {copiedKey === "created-url" ? "Copied!" : "Copy URL"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Username / Email</label>
+                <div className="flex items-center justify-between mt-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-xs">
+                  <span className="font-mono font-bold text-gray-900">{createdTenantCredentials.email}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(createdTenantCredentials.email, "created-email")}
+                    className="text-primary hover:text-primary-dark font-medium ml-2 shrink-0 bg-blue-50 px-2 py-0.5 rounded"
+                  >
+                    {copiedKey === "created-email" ? "Copied!" : "Copy Username"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Password</label>
+                <div className="flex items-center justify-between mt-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-xs">
+                  <code className="font-mono font-bold text-gray-900 select-all">
+                    {showCreatedPassword ? createdTenantCredentials.password : "••••••••••••"}
+                  </code>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreatedPassword(!showCreatedPassword)}
+                      className="text-gray-500 hover:text-gray-800 text-[11px] px-1.5 py-0.5 rounded hover:bg-gray-100"
+                    >
+                      {showCreatedPassword ? "Hide" : "Show"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(createdTenantCredentials.password, "created-pass")}
+                      className="text-primary hover:text-primary-dark font-medium bg-blue-50 px-2 py-0.5 rounded"
+                    >
+                      {copiedKey === "created-pass" ? "Copied!" : "Copy Password"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const allText = `Tenant: ${createdTenantCredentials.tenantName}\nLogin URL: ${createdTenantCredentials.loginUrl}\nUsername: ${createdTenantCredentials.email}\nPassword: ${createdTenantCredentials.password}`;
+                  handleCopyText(allText, "created-all");
+                }}
+                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg text-xs font-semibold transition"
+              >
+                {copiedKey === "created-all" ? "✓ All Credentials Copied!" : "📋 Copy All Credentials"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreatedTenantCredentials(null)}
+                className="px-5 py-2 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-dark transition"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
