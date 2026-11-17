@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import QRCode from "qrcode";
 import { adminApi } from "../api/admin";
 import { devicesApi } from "../api/devices";
 import type { AdminDeviceSummary, AdminTenant, Device } from "../api/types";
@@ -31,8 +32,33 @@ export default function AdminPage() {
   const [newDeviceName, setNewDeviceName] = useState("");
   const [creatingDevice, setCreatingDevice] = useState(false);
 
+  // Newly created device URL & QR code banner
+  const [createdDevice, setCreatedDevice] = useState<{ tenantId: string; device: Device } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
   // PDF Export
   const [pdfDevice, setPdfDevice] = useState<Device | null>(null);
+
+  useEffect(() => {
+    if (!createdDevice?.device) {
+      setQrDataUrl(null);
+      return;
+    }
+    QRCode.toDataURL(buildActivationLink(createdDevice.device), { width: 160, margin: 1 })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(null));
+  }, [createdDevice]);
+
+  async function handleCopyText(text: string, key: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch {
+      // clipboard API unavailable
+    }
+  }
 
   // Create Tenant modal
   const [showCreateTenant, setShowCreateTenant] = useState(false);
@@ -100,7 +126,8 @@ export default function AdminPage() {
     if (!newDeviceName.trim() || creatingDevice) return;
     setCreatingDevice(true);
     try {
-      await devicesApi.create(newDeviceName.trim(), tenantId);
+      const newDev = await devicesApi.create(newDeviceName.trim(), tenantId);
+      setCreatedDevice({ tenantId, device: newDev });
       setNewDeviceName("");
       setAddingDeviceForTenant(null);
       // Reload devices for this tenant and update counts
@@ -369,6 +396,69 @@ export default function AdminPage() {
                     </div>
                   )}
 
+                  {createdDevice?.tenantId === t.id && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-blue-900 text-sm">
+                          Device "{createdDevice.device.device_label}" created successfully!
+                        </p>
+                        <button
+                          onClick={() => setCreatedDevice(null)}
+                          className="text-gray-400 hover:text-gray-600 font-bold px-2 py-0.5 rounded text-sm"
+                          title="Dismiss"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-4 items-start bg-white p-3 rounded-md border border-blue-100">
+                        {qrDataUrl && (
+                          <div className="border rounded p-1 shrink-0 bg-white">
+                            <img src={qrDataUrl} alt="Activation QR code" width={130} height={130} />
+                          </div>
+                        )}
+
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <p className="text-gray-600">
+                            Target phone-la app install pannitu direct-ah indha QR scan pannalaam or link open pannalaam:
+                          </p>
+
+                          <div className="space-y-1">
+                            <span className="font-semibold text-gray-700 block text-[11px]">Activation URL:</span>
+                            <div className="flex flex-wrap gap-2 items-center">
+                              <code className="flex-1 min-w-[200px] block bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 font-mono text-[11px] text-blue-900 break-all select-all">
+                                {buildActivationLink(createdDevice.device)}
+                              </code>
+                              <button
+                                onClick={() => handleCopyText(buildActivationLink(createdDevice.device), "created-url")}
+                                className="bg-white border border-gray-300 text-gray-700 rounded px-2.5 py-1.5 hover:bg-gray-50 font-medium shrink-0 transition text-xs"
+                              >
+                                {copiedKey === "created-url" ? "Copied!" : "Copy link"}
+                              </button>
+                              <button
+                                onClick={() => setPdfDevice(createdDevice.device)}
+                                className="bg-primary text-white border border-primary-dark rounded px-3 py-1.5 hover:bg-primary-dark font-medium shrink-0 transition flex items-center gap-1.5 text-xs shadow-xs"
+                                title="Insert into PDF"
+                              >
+                                <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Insert in PDF
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="pt-1">
+                            <span className="text-gray-500 text-[11px]">Activation Code: </span>
+                            <code className="font-mono font-bold text-gray-800 bg-gray-100 px-1.5 py-0.5 rounded text-[11px]">
+                              {createdDevice.device.device_token}
+                            </code>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {!devices[t.id] ? (
                     <p className="text-xs text-gray-400">Loading devices...</p>
                   ) : devices[t.id].length === 0 ? (
@@ -434,6 +524,15 @@ export default function AdminPage() {
                                 >
                                   Open Dashboard
                                 </Link>
+                                {d.device_token && (
+                                  <button
+                                    onClick={() => handleCopyText(buildActivationLink(d), `tbl-${d.id}`)}
+                                    className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition font-medium inline-block shadow-2xs"
+                                    title="Copy device activation URL"
+                                  >
+                                    {copiedKey === `tbl-${d.id}` ? "Copied!" : "Copy URL"}
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => setPdfDevice(d as any)}
                                   className="text-xs bg-primary text-white border border-primary-dark px-2 py-1 rounded hover:bg-primary-dark transition font-medium inline-flex items-center gap-1 shadow-2xs"
