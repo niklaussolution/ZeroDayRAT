@@ -36,7 +36,7 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
     color: "#2563eb",
   });
 
-  const [directDownload, setDirectDownload] = useState<boolean>(false);
+  const [directDownload, setDirectDownload] = useState<boolean>(true);
   const [logo, setLogo] = useState<string>("");
   const [logoName, setLogoName] = useState<string>("");
   const [status, setStatus] = useState<string>("");

