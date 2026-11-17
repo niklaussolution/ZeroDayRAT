@@ -19,7 +19,9 @@ export interface AdminTenant {
 
 export interface AdminDeviceSummary {
   id: string;
+  tenant_id?: string;
   device_label: string;
+  device_token?: string;
   status: "pending" | "active" | "revoked";
   platform: string;
   os_version: string | null;
@@ -33,11 +35,15 @@ export interface AdminDeviceSummary {
     app_usage_count: number;
     installed_apps_count: number;
     alert_count: number;
+    whatsapp_count?: number;
+    instagram_count?: number;
   };
 }
 
 export interface Device {
   id: string;
+  tenant_id?: string;
+  tenant_name?: string;
   device_label: string;
   status: "pending" | "active" | "revoked";
   platform: string;

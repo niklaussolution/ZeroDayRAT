@@ -22,8 +22,8 @@ import type {
 export const devicesApi = {
   list: () => apiClient.get<Device[]>("/api/devices").then((r) => r.data),
 
-  create: (deviceLabel: string) =>
-    apiClient.post<Device>("/api/devices", { deviceLabel }).then((r) => r.data),
+  create: (deviceLabel: string, tenantId?: string) =>
+    apiClient.post<Device>("/api/devices", { deviceLabel, tenantId }).then((r) => r.data),
 
   get: (id: string) => apiClient.get<Device>(`/api/devices/${id}`).then((r) => r.data),
 

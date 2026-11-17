@@ -102,15 +102,30 @@ async function checkDeviceAccess(deviceId, auth) {
  */
 router.get("/", requireAuth, async (req, res, next) => {
   try {
-    const query = req.auth.role === "super_admin"
-      ? `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at
+    const isSuperAdmin = req.auth.role === "super_admin";
+    const query = isSuperAdmin
+      ? `SELECT id, tenant_id, device_label, device_token, status, platform, os_version, app_version,
+                consent_given_at, last_seen_at, created_at, permission_status
          FROM devices ORDER BY created_at DESC`
-      : `SELECT id, device_label, device_token, status, platform, os_version, app_version,
-                consent_given_at, last_seen_at, created_at
+      : `SELECT id, tenant_id, device_label, device_token, status, platform, os_version, app_version,
+                consent_given_at, last_seen_at, created_at, permission_status
          FROM devices WHERE tenant_id = $1 ORDER BY created_at DESC`;
-    const params = req.auth.role === "super_admin" ? [] : [req.auth.tenantId];
+    const params = isSuperAdmin ? [] : [req.auth.tenantId];
     const result = await pool.query(query, params);
+
+    if (isSuperAdmin) {
+      try {
+        const firestore = require("../services/firestore.service");
+        const tenants = await firestore.listAllTenants().catch(() => []);
+        const tenantMap = Object.fromEntries(tenants.map((t) => [t.id, t.name]));
+        const enriched = result.rows.map((d) => ({
+          ...d,
+          tenant_name: tenantMap[d.tenant_id] || (d.tenant_id ? `Tenant (${d.tenant_id.substring(0, 8)})` : "Unassigned"),
+        }));
+        return res.json(enriched);
+      } catch (_e) {}
+    }
+
     res.json(result.rows);
   } catch (err) {
     next(err);
@@ -123,16 +138,17 @@ router.get("/", requireAuth, async (req, res, next) => {
  */
 router.get("/:id", requireAuth, async (req, res, next) => {
   try {
-    const query = req.auth.role === "super_admin"
-      ? `SELECT id, device_label, device_token, status, platform, os_version, app_version,
+    const isSuperAdmin = req.auth.role === "super_admin";
+    const query = isSuperAdmin
+      ? `SELECT id, tenant_id, device_label, device_token, status, platform, os_version, app_version,
                 consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
                 instagram_account
          FROM devices WHERE id = $1`
-      : `SELECT id, device_label, device_token, status, platform, os_version, app_version,
+      : `SELECT id, tenant_id, device_label, device_token, status, platform, os_version, app_version,
                 consent_given_at, last_seen_at, created_at, permission_status, block_rules_synced_at,
                 instagram_account
          FROM devices WHERE id = $1 AND tenant_id = $2`;
-    const params = req.auth.role === "super_admin" ? [req.params.id] : [req.params.id, req.auth.tenantId];
+    const params = isSuperAdmin ? [req.params.id] : [req.params.id, req.auth.tenantId];
     const deviceResult = await pool.query(query, params);
     if (deviceResult.rows.length === 0) {
       return res.status(404).json({ error: "Device not found" });
@@ -143,7 +159,20 @@ router.get("/:id", requireAuth, async (req, res, next) => {
       [req.params.id]
     );
 
-    res.json({ ...deviceResult.rows[0], featureFlags: flagsResult.rows[0] || null });
+    let tenantName = null;
+    if (deviceResult.rows[0].tenant_id) {
+      try {
+        const firestore = require("../services/firestore.service");
+        const tenant = await firestore.getTenant(deviceResult.rows[0].tenant_id).catch(() => null);
+        tenantName = tenant?.name || null;
+      } catch (_e) {}
+    }
+
+    res.json({
+      ...deviceResult.rows[0],
+      tenant_name: tenantName,
+      featureFlags: flagsResult.rows[0] || null,
+    });
   } catch (err) {
     next(err);
   }

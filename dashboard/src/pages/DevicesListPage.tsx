@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import QRCode from "qrcode";
 import { devicesApi } from "../api/devices";
-import type { Device } from "../api/types";
+import { adminApi } from "../api/admin";
+import { useAuth } from "../context/AuthContext";
+import type { Device, AdminTenant } from "../api/types";
 import PdfExportModal from "../components/PdfExportModal";
 
 /**
@@ -30,16 +32,28 @@ function buildActivationLink(device: Device): string {
 }
 
 export default function DevicesListPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "super_admin";
+
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newLabel, setNewLabel] = useState("");
+  const [selectedTenantId, setSelectedTenantId] = useState("");
+  const [selectedTenantFilter, setSelectedTenantFilter] = useState("all");
+  const [tenants, setTenants] = useState<AdminTenant[]>([]);
   const [createdDevice, setCreatedDevice] = useState<Device | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [pdfDevice, setPdfDevice] = useState<Device | null>(null);
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      adminApi.listTenants().then(setTenants).catch(() => {});
+    }
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     if (!createdDevice) {
@@ -79,7 +93,7 @@ export default function DevicesListPage() {
     setCreating(true);
     setCreateError(null);
     try {
-      const device = await devicesApi.create(newLabel.trim());
+      const device = await devicesApi.create(newLabel.trim(), selectedTenantId || undefined);
       setCreatedDevice(device);
       setNewLabel("");
       load();
@@ -115,13 +129,37 @@ export default function DevicesListPage() {
     }
   }
 
-  const connectedDevices = devices.filter((d) => d.status !== "revoked");
-  const deactivatedDevices = devices.filter((d) => d.status === "revoked");
+  const filteredDevices = devices.filter(
+    (d) => selectedTenantFilter === "all" || d.tenant_id === selectedTenantFilter
+  );
+  const connectedDevices = filteredDevices.filter((d) => d.status !== "revoked");
+  const deactivatedDevices = filteredDevices.filter((d) => d.status === "revoked");
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-primary-dark">Devices</h1>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-bold text-primary-dark">
+            {isSuperAdmin ? "All Devices" : "Devices"}
+          </h1>
+          {isSuperAdmin && tenants.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 font-medium">Tenant:</span>
+              <select
+                value={selectedTenantFilter}
+                onChange={(e) => setSelectedTenantFilter(e.target.value)}
+                className="text-xs border border-gray-300 rounded px-2.5 py-1.5 bg-white text-gray-700 font-medium focus:ring-1 focus:ring-primary focus:outline-none"
+              >
+                <option value="all">All Tenants ({devices.length})</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({devices.filter((d) => d.tenant_id === t.id).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
         <button
           onClick={() => setShowCreate(true)}
           className="bg-primary text-white text-sm px-4 py-2 rounded hover:bg-primary-dark transition"
@@ -133,6 +171,25 @@ export default function DevicesListPage() {
       {showCreate && (
         <div className="bg-white rounded-lg shadow-sm p-5 mb-6">
           <h2 className="font-semibold text-sm mb-3">New Device</h2>
+
+          {isSuperAdmin && tenants.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Assign to Tenant:</label>
+              <select
+                value={selectedTenantId}
+                onChange={(e) => setSelectedTenantId(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-white mb-2"
+              >
+                <option value="">Default / First Tenant</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <input
               value={newLabel}
@@ -232,6 +289,7 @@ export default function DevicesListPage() {
             devices={connectedDevices}
             emptyText="No connected devices."
             showCode
+            isSuperAdmin={isSuperAdmin}
             onDelete={handleDeleteDevice}
             deletingDeviceId={deletingDeviceId}
             onPdf={(d) => setPdfDevice(d)}
@@ -251,6 +309,7 @@ export default function DevicesListPage() {
                 emptyText=""
                 showCode
                 archived
+                isSuperAdmin={isSuperAdmin}
                 onDelete={handleDeleteDevice}
                 deletingDeviceId={deletingDeviceId}
                 onPdf={(d) => setPdfDevice(d)}
@@ -276,6 +335,7 @@ function DeviceTable({
   emptyText,
   showCode,
   archived,
+  isSuperAdmin,
   onDelete,
   deletingDeviceId,
   onPdf,
@@ -284,6 +344,7 @@ function DeviceTable({
   emptyText: string;
   showCode?: boolean;
   archived?: boolean;
+  isSuperAdmin?: boolean;
   onDelete: (id: string, label: string, status: string) => void;
   deletingDeviceId: string | null;
   onPdf?: (device: Device) => void;
@@ -298,6 +359,7 @@ function DeviceTable({
         <thead className="bg-gray-50 text-gray-500 text-left">
           <tr>
             <th className="px-4 py-3 font-medium">Label</th>
+            {isSuperAdmin && <th className="px-4 py-3 font-medium">Tenant</th>}
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">OS</th>
             <th className="px-4 py-3 font-medium">Last Seen</th>
@@ -316,6 +378,13 @@ function DeviceTable({
                   {d.device_label}
                 </Link>
               </td>
+              {isSuperAdmin && (
+                <td className="px-4 py-3">
+                  <span className="text-xs bg-gray-100 border border-gray-200 text-gray-700 px-2 py-0.5 rounded font-medium">
+                    {d.tenant_name || "—"}
+                  </span>
+                </td>
+              )}
               <td className="px-4 py-3">
                 <StatusBadge status={d.status} />
               </td>

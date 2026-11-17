@@ -95,8 +95,15 @@ export default function DeviceDetailPage() {
 
       <div className="flex items-center justify-between mt-2 mb-6">
         <div>
-          <h1 className="text-xl font-bold text-primary-dark">{device.device_label}</h1>
-          <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-primary-dark">{device.device_label}</h1>
+            {device.tenant_name && (
+              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                Tenant: {device.tenant_name}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap mt-1">
             <span className="capitalize">{device.status}</span> ·
             <span>{device.os_version || "unknown OS"}</span> ·
             <span
