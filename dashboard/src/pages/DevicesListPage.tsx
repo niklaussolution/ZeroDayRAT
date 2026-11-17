@@ -366,7 +366,6 @@ export default function DevicesListPage() {
 function DeviceTable({
   devices,
   emptyText,
-  showCode,
   archived,
   isSuperAdmin,
   onDelete,
@@ -382,6 +381,16 @@ function DeviceTable({
   deletingDeviceId: string | null;
   onPdf?: (device: Device) => void;
 }) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  async function handleCopy(text: string, id: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {}
+  }
+
   if (devices.length === 0) {
     return emptyText ? <p className="text-gray-500 text-sm">{emptyText}</p> : null;
   }
@@ -396,7 +405,7 @@ function DeviceTable({
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">OS</th>
             <th className="px-4 py-3 font-medium">Last Seen</th>
-            {showCode && <th className="px-4 py-3 font-medium">Reconnect Code</th>}
+            <th className="px-4 py-3 font-medium">Activation URL</th>
             <th className="px-4 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
@@ -425,11 +434,32 @@ function DeviceTable({
               <td className="px-4 py-3 text-gray-600">
                 {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : "Never"}
               </td>
-              {showCode && (
-                <td className="px-4 py-3">
-                  <code className="text-xs bg-gray-100 px-2 py-1 rounded break-all">{d.device_token}</code>
-                </td>
-              )}
+              <td className="px-4 py-3 min-w-[260px] max-w-[340px]">
+                {d.device_token ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <code
+                        className="text-[11px] bg-gray-50 border border-gray-200 text-blue-900 px-2 py-1 rounded font-mono truncate select-all block flex-1"
+                        title={buildActivationLink(d)}
+                      >
+                        {buildActivationLink(d)}
+                      </code>
+                      <button
+                        onClick={() => handleCopy(buildActivationLink(d), d.id)}
+                        className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition font-medium shrink-0 shadow-2xs"
+                        title="Copy activation link"
+                      >
+                        {copiedId === d.id ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-gray-400 font-mono">
+                      Code: <span className="font-semibold text-gray-600">{d.device_token}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-400">—</span>
+                )}
+              </td>
               <td className="px-4 py-3 text-right whitespace-nowrap">
                 {onPdf && (
                   <button
