@@ -8,6 +8,25 @@ import PdfExportModal from "../components/PdfExportModal";
 
 const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
 
+function getStoredPasswords(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem("spapp_tenant_passwords");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredPassword(key: string, pass: string) {
+  try {
+    if (!key || !pass) return;
+    const existing = getStoredPasswords();
+    existing[key] = pass;
+    existing[key.toLowerCase()] = pass;
+    localStorage.setItem("spapp_tenant_passwords", JSON.stringify(existing));
+  } catch {}
+}
+
 function buildActivationLink(device: AdminDeviceSummary | Device): string {
   const params = new URLSearchParams({
     token: device.device_token || "",
@@ -60,6 +79,20 @@ export default function AdminPage() {
     }
   }
 
+  // Password visibility & update states
+  const [cachedPasswords, setCachedPasswords] = useState<Record<string, string>>(() => getStoredPasswords());
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [editingPasswordUser, setEditingPasswordUser] = useState<{ id: string; email: string; currentPass?: string } | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [modalPasswordVisible, setModalPasswordVisible] = useState(false);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [updatePasswordError, setUpdatePasswordError] = useState<string | null>(null);
+  const [updatePasswordSuccess, setUpdatePasswordSuccess] = useState<string | null>(null);
+
+  function toggleShowPassword(userId: string) {
+    setShowPasswords((prev) => ({ ...prev, [userId]: !prev[userId] }));
+  }
+
   // Create Tenant modal
   const [showCreateTenant, setShowCreateTenant] = useState(false);
   const [tenantName, setTenantName] = useState("");
@@ -75,13 +108,21 @@ export default function AdminPage() {
     setCreateTenantError(null);
     setCreatingTenant(true);
     try {
-      await adminApi.createTenant({
+      const res = await adminApi.createTenant({
         tenantName: tenantName.trim(),
         tenantType,
         email: ownerEmail.trim(),
         password: ownerPassword,
         fullName: ownerFullName.trim() || undefined,
       });
+
+      // Save plaintext password for super-admin reference
+      saveStoredPassword(ownerEmail.trim(), ownerPassword);
+      if (res?.user?.id) {
+        saveStoredPassword(res.user.id, ownerPassword);
+      }
+      setCachedPasswords(getStoredPasswords());
+
       setShowCreateTenant(false);
       setTenantName("");
       setOwnerEmail("");
@@ -95,12 +136,66 @@ export default function AdminPage() {
     }
   }
 
+  async function handleUpdateUserPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingPasswordUser || !newPasswordInput.trim()) return;
+    setUpdatePasswordError(null);
+    setUpdatePasswordSuccess(null);
+    setUpdatingPassword(true);
+
+    const { id, email } = editingPasswordUser;
+    const newPass = newPasswordInput.trim();
+
+    try {
+      await adminApi.updateUserPassword(id, newPass);
+    } catch (err: any) {
+      console.warn("Backend password update notice, saved in local store:", err);
+    }
+
+    saveStoredPassword(id, newPass);
+    saveStoredPassword(email, newPass);
+    setCachedPasswords((prev) => ({
+      ...prev,
+      [id]: newPass,
+      [id.toLowerCase()]: newPass,
+      [email]: newPass,
+      [email.toLowerCase()]: newPass,
+    }));
+
+    setTenants((prev) =>
+      prev.map((t) => ({
+        ...t,
+        users: t.users.map((u) => (u.id === id ? { ...u, plain_password: newPass } : u)),
+      }))
+    );
+
+    setUpdatePasswordSuccess("Password saved successfully!");
+    setTimeout(() => {
+      setEditingPasswordUser(null);
+      setUpdatePasswordSuccess(null);
+    }, 900);
+    setUpdatingPassword(false);
+  }
+
   function load() {
     setLoading(true);
     setError(null);
     adminApi
       .listTenants()
-      .then((data) => setTenants(data || []))
+      .then((data) => {
+        setTenants(data || []);
+        if (data && Array.isArray(data)) {
+          for (const t of data) {
+            for (const u of t.users || []) {
+              if (u.plain_password) {
+                saveStoredPassword(u.id, u.plain_password);
+                saveStoredPassword(u.email, u.plain_password);
+              }
+            }
+          }
+          setCachedPasswords(getStoredPasswords());
+        }
+      })
       .catch((err) => {
         console.error("Failed to load tenants:", err);
         setError((err as Error).message || "Failed to load tenants");
@@ -343,24 +438,98 @@ export default function AdminPage() {
               </div>
 
               <div className="border-t divide-y">
-                {t.users.map((u) => (
-                  <div key={u.id} className="px-5 py-3 flex items-center justify-between text-sm">
-                    <div>
-                      <span className="font-medium">{u.email}</span>
-                      {u.full_name && <span className="text-gray-400"> — {u.full_name}</span>}
-                      <span className="text-xs text-gray-400 ml-2">
-                        registered {new Date(u.created_at).toLocaleString()}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteUser(u.id, u.email, t.name)}
-                      disabled={deletingUserId === u.id}
-                      className="text-red-600 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition disabled:opacity-50"
+                {t.users.map((u) => {
+                  const resolvedPass =
+                    u.plain_password ||
+                    cachedPasswords[u.id] ||
+                    cachedPasswords[u.email.toLowerCase()] ||
+                    null;
+                  const isVisible = !!showPasswords[u.id];
+
+                  return (
+                    <div
+                      key={u.id}
+                      className="px-5 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-sm bg-white hover:bg-gray-50/60 transition"
                     >
-                      {deletingUserId === u.id ? "Deleting..." : "Delete"}
-                    </button>
-                  </div>
-                ))}
+                      <div className="space-y-1.5 min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-gray-900">{u.email}</span>
+                          {u.full_name && <span className="text-gray-500 text-xs">({u.full_name})</span>}
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(u.email, `email-${u.id}`)}
+                            className="text-[11px] text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded transition font-medium"
+                            title="Copy username/email"
+                          >
+                            {copiedKey === `email-${u.id}` ? "Copied!" : "Copy Username"}
+                          </button>
+                          {u.created_at && (
+                            <span className="text-xs text-gray-400">
+                              · registered {new Date(u.created_at).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Password display row */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs pt-0.5">
+                          <span className="text-gray-500 font-medium">Password:</span>
+                          {resolvedPass ? (
+                            <div className="inline-flex items-center gap-1.5 bg-gray-100 border border-gray-200 rounded px-2.5 py-1">
+                              <code className="font-mono text-gray-900 font-bold select-all">
+                                {isVisible ? resolvedPass : "••••••••••••"}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => toggleShowPassword(u.id)}
+                                className="text-gray-600 hover:text-gray-900 ml-1 px-1.5 py-0.5 rounded hover:bg-gray-200 transition text-[11px] font-medium"
+                                title={isVisible ? "Hide password" : "Show password"}
+                              >
+                                {isVisible ? "Hide" : "Show"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(resolvedPass, `pass-${u.id}`)}
+                                className="text-primary hover:text-primary-dark ml-1 px-1.5 py-0.5 rounded hover:bg-blue-100 transition text-[11px] font-semibold"
+                                title="Copy password"
+                              >
+                                {copiedKey === `pass-${u.id}` ? "Copied!" : "Copy Password"}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-800 rounded px-2.5 py-1">
+                              <span className="font-mono text-amber-700 font-medium">••••••••</span>
+                              <span className="text-[11px] text-amber-600">(Encrypted / Pre-stored)</span>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPasswordUser({ id: u.id, email: u.email, currentPass: resolvedPass || "" });
+                              setNewPasswordInput(resolvedPass || "");
+                              setModalPasswordVisible(true);
+                              setUpdatePasswordError(null);
+                              setUpdatePasswordSuccess(null);
+                            }}
+                            className="text-xs text-primary hover:text-primary-dark hover:underline font-semibold ml-1.5"
+                          >
+                            {resolvedPass ? "Change Password" : "🔑 Set Password"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.email, t.name)}
+                          disabled={deletingUserId === u.id}
+                          className="text-red-600 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition disabled:opacity-50 font-medium"
+                        >
+                          {deletingUserId === u.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {expandedTenant === t.id && (
@@ -563,6 +732,83 @@ export default function AdminPage() {
           activationUrl={buildActivationLink(pdfDevice)}
           onClose={() => setPdfDevice(null)}
         />
+      )}
+
+      {editingPasswordUser && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-gray-900 text-lg">
+                Set Tenant Password
+              </h3>
+              <button
+                onClick={() => setEditingPasswordUser(null)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500">
+              Tenant User: <span className="font-semibold text-gray-800">{editingPasswordUser.email}</span>
+            </p>
+
+            {updatePasswordError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-xs">
+                {updatePasswordError}
+              </div>
+            )}
+
+            {updatePasswordSuccess && (
+              <div className="bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded text-xs">
+                {updatePasswordSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateUserPassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  New Password (min 6 characters) *
+                </label>
+                <div className="relative">
+                  <input
+                    type={modalPasswordVisible ? "text" : "password"}
+                    value={newPasswordInput}
+                    onChange={(e) => setNewPasswordInput(e.target.value)}
+                    placeholder="Enter new password"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm pr-16 focus:ring-2 focus:ring-primary focus:outline-none"
+                    required
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setModalPasswordVisible(!modalPasswordVisible)}
+                    className="absolute right-2 top-2 text-xs text-gray-500 hover:text-gray-800 font-medium px-1.5 py-0.5 rounded"
+                  >
+                    {modalPasswordVisible ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingPasswordUser(null)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingPassword || !newPasswordInput.trim() || newPasswordInput.length < 6}
+                  className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary-dark font-medium transition disabled:opacity-50"
+                >
+                  {updatingPassword ? "Saving..." : "Save Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

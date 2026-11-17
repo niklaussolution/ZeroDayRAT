@@ -48,19 +48,29 @@ async function getUserById(id) {
   return snap.exists ? snap.data() : null;
 }
 
-async function createUser({ tenantId, email, passwordHash, fullName, role }) {
+async function createUser({ tenantId, email, passwordHash, plainPassword, fullName, role }) {
   const id = crypto.randomUUID();
   const user = {
     id,
     tenantId,
     email,
     passwordHash,
+    plainPassword: plainPassword || null,
     fullName: fullName || null,
     role,
     createdAt: new Date().toISOString(),
   };
   await db().collection(USERS).doc(id).set(user);
   return user;
+}
+
+async function updateUserPassword(id, passwordHash, plainPassword) {
+  const updates = {
+    passwordHash,
+    plainPassword: plainPassword || null,
+    updatedAt: new Date().toISOString(),
+  };
+  await db().collection(USERS).doc(id).update(updates);
 }
 
 async function listUsersByTenant(tenantId) {
@@ -94,6 +104,7 @@ module.exports = {
   findUserByEmail,
   getUserById,
   createUser,
+  updateUserPassword,
   listUsersByTenant,
   listAllTenants,
   listAllUsers,

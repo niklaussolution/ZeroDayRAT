@@ -42,6 +42,7 @@ router.post(
         tenantId: tenant.id,
         email,
         passwordHash,
+        plainPassword: password,
         fullName: fullName || null,
         role: "owner",
       });
@@ -49,7 +50,14 @@ router.post(
       res.status(201).json({
         success: true,
         tenant: { id: tenant.id, name: tenant.name, type: tenant.type, created_at: tenant.createdAt },
-        user: { id: user.id, email: user.email, full_name: user.fullName, role: user.role, created_at: user.createdAt },
+        user: {
+          id: user.id,
+          email: user.email,
+          full_name: user.fullName,
+          plain_password: password,
+          role: user.role,
+          created_at: user.createdAt,
+        },
       });
     } catch (err) {
       next(err);
@@ -95,7 +103,13 @@ router.get("/tenants", async (req, res, next) => {
         device_count: countByTenant[t.id] || 0,
         users: users
           .filter((u) => u.tenantId === t.id)
-          .map((u) => ({ id: u.id, email: u.email, full_name: u.fullName, created_at: u.createdAt })),
+          .map((u) => ({
+            id: u.id,
+            email: u.email,
+            full_name: u.fullName,
+            plain_password: u.plainPassword || null,
+            created_at: u.createdAt,
+          })),
       }))
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
@@ -327,6 +341,42 @@ router.delete("/users/:userId", async (req, res, next) => {
 });
 
 /**
+ * PATCH /api/admin/users/:userId/password
+ * Super Admin sets / resets a tenant user's password.
+ * Stores plainPassword for super admin reference and updates passwordHash for authentication.
+ */
+router.patch(
+  "/users/:userId/password",
+  [body("password").isString().isLength({ min: 6 })],
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Validation failed", details: errors.array() });
+    }
+
+    const { userId } = req.params;
+    const { password } = req.body;
+
+    try {
+      const user = await firestore.getUserById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      await firestore.updateUserPassword(userId, passwordHash, password);
+
+      res.json({
+        success: true,
+        message: "Password updated successfully",
+        userId,
+        plain_password: password,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
  * GET /api/admin/database/tables
  * Lists all PostgreSQL public tables with column definitions and row counts.
  */
@@ -373,7 +423,12 @@ router.get("/database/overview", async (req, res, next) => {
       const deviceIds = tenantDevices.map((d) => d.id);
       const tenantUsers = users
         .filter((u) => u.tenantId === tenant.id)
-        .map((u) => ({ id: u.id, email: u.email, full_name: u.fullName }));
+        .map((u) => ({
+          id: u.id,
+          email: u.email,
+          full_name: u.fullName,
+          plain_password: u.plainPassword || null,
+        }));
 
       let counts = {
         devices: tenantDevices.length,

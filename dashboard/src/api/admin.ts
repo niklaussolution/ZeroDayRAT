@@ -34,7 +34,7 @@ export interface DbTenantOverview {
   name: string;
   type: string;
   created_at: string;
-  users: Array<{ id: string; email: string; full_name?: string }>;
+  users: Array<{ id: string; email: string; full_name?: string; plain_password?: string | null }>;
   devices: Array<{
     id: string;
     device_label: string;
@@ -96,6 +96,14 @@ export const adminApi = {
     apiClient
       .delete<{ deleted: boolean; tenantDeleted: boolean; devicesDeleted: number }>(
         `/api/admin/users/${userId}`
+      )
+      .then((r) => r.data),
+
+  updateUserPassword: (userId: string, password: string) =>
+    apiClient
+      .patch<{ success: boolean; message: string; userId: string; plain_password: string }>(
+        `/api/admin/users/${userId}/password`,
+        { password }
       )
       .then((r) => r.data),
 

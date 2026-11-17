@@ -14,7 +14,13 @@ export interface AdminTenant {
   type: string;
   created_at: string;
   device_count: number;
-  users: { id: string; email: string; full_name: string | null; created_at: string }[];
+  users: {
+    id: string;
+    email: string;
+    full_name: string | null;
+    plain_password?: string | null;
+    created_at?: string;
+  }[];
 }
 
 export interface AdminDeviceSummary {

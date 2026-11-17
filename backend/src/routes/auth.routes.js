@@ -44,6 +44,7 @@ router.post(
         tenantId: tenant.id,
         email,
         passwordHash,
+        plainPassword: password,
         fullName,
         role: "owner",
       });
@@ -57,7 +58,14 @@ router.post(
       res.status(201).json({
         token,
         tenant: { id: tenant.id, name: tenant.name, type: tenant.type, created_at: tenant.createdAt },
-        user: { id: user.id, email: user.email, full_name: user.fullName, role: user.role, created_at: user.createdAt },
+        user: {
+          id: user.id,
+          email: user.email,
+          full_name: user.fullName,
+          plain_password: password,
+          role: user.role,
+          created_at: user.createdAt,
+        },
       });
     } catch (err) {
       next(err);
