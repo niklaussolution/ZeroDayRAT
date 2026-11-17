@@ -34,6 +34,41 @@ export default function AdminPage() {
   // PDF Export
   const [pdfDevice, setPdfDevice] = useState<Device | null>(null);
 
+  // Create Tenant modal
+  const [showCreateTenant, setShowCreateTenant] = useState(false);
+  const [tenantName, setTenantName] = useState("");
+  const [tenantType, setTenantType] = useState<"family" | "company">("family");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPassword, setOwnerPassword] = useState("");
+  const [ownerFullName, setOwnerFullName] = useState("");
+  const [creatingTenant, setCreatingTenant] = useState(false);
+  const [createTenantError, setCreateTenantError] = useState<string | null>(null);
+
+  async function handleCreateTenant(e: React.FormEvent) {
+    e.preventDefault();
+    setCreateTenantError(null);
+    setCreatingTenant(true);
+    try {
+      await adminApi.createTenant({
+        tenantName: tenantName.trim(),
+        tenantType,
+        email: ownerEmail.trim(),
+        password: ownerPassword,
+        fullName: ownerFullName.trim() || undefined,
+      });
+      setShowCreateTenant(false);
+      setTenantName("");
+      setOwnerEmail("");
+      setOwnerPassword("");
+      setOwnerFullName("");
+      load();
+    } catch (err: any) {
+      setCreateTenantError(err.response?.data?.error || err.message || "Failed to create tenant");
+    } finally {
+      setCreatingTenant(false);
+    }
+  }
+
   function load() {
     setLoading(true);
     setError(null);
@@ -120,16 +155,120 @@ export default function AdminPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-xl font-bold text-primary-dark">Registered Tenants</h1>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="text-xs bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50 transition shadow-sm font-medium"
-        >
-          {loading ? "Refreshing..." : "↻ Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCreateTenant(true)}
+            className="text-xs bg-primary text-white border border-primary-dark px-3 py-1.5 rounded hover:bg-primary-dark transition shadow-sm font-semibold flex items-center gap-1.5"
+          >
+            + Create Tenant
+          </button>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="text-xs bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50 transition shadow-sm font-medium"
+          >
+            {loading ? "Refreshing..." : "↻ Refresh"}
+          </button>
+        </div>
       </div>
+
+      {showCreateTenant && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h2 className="text-lg font-bold text-primary-dark mb-1">Create New Tenant</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Add a new family or company tenant account and its primary administrator login.
+            </p>
+
+            {createTenantError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-xs mb-3">
+                {createTenantError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateTenant} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Tenant Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Kumar Family, Acme Security"
+                  value={tenantName}
+                  onChange={(e) => setTenantName(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Tenant Type *</label>
+                <select
+                  value={tenantType}
+                  onChange={(e) => setTenantType(e.target.value as "family" | "company")}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:outline-none bg-white"
+                >
+                  <option value="family">Family</option>
+                  <option value="company">Company</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Email *</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. owner@example.com"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Password (min 8 chars) *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  placeholder="••••••••"
+                  value={ownerPassword}
+                  onChange={(e) => setOwnerPassword(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Full Name (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Priya Sharma"
+                  value={ownerFullName}
+                  onChange={(e) => setOwnerFullName(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateTenant(false)}
+                  className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded transition font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingTenant}
+                  className="px-4 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary-dark transition font-semibold disabled:opacity-50"
+                >
+                  {creatingTenant ? "Creating..." : "Create Tenant"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4 flex items-center justify-between">

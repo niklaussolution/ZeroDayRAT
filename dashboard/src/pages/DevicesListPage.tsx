@@ -160,15 +160,17 @@ export default function DevicesListPage() {
             </div>
           )}
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="bg-primary text-white text-sm px-4 py-2 rounded hover:bg-primary-dark transition"
-        >
-          + Add Device
-        </button>
+        {isSuperAdmin && (
+          <button
+            onClick={() => setShowCreate(true)}
+            className="bg-primary text-white text-sm px-4 py-2 rounded hover:bg-primary-dark transition"
+          >
+            + Add Device
+          </button>
+        )}
       </div>
 
-      {showCreate && (
+      {isSuperAdmin && showCreate && (
         <div className="bg-white rounded-lg shadow-sm p-5 mb-6">
           <h2 className="font-semibold text-sm mb-3">New Device</h2>
 

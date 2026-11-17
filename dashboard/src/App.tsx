@@ -4,7 +4,6 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import SuperAdminRoute from "./components/SuperAdminRoute";
 import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
-import RegisterPage from "./pages/RegisterPage";
 import DevicesListPage from "./pages/DevicesListPage";
 import ConnectPage from "./pages/ConnectPage";
 import DeviceDetailPage from "./pages/DeviceDetailPage";
@@ -21,7 +20,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="/connect" element={<ConnectPage />} />
 
           <Route element={<ProtectedRoute />}>
@@ -31,8 +30,6 @@ export default function App() {
               <Route path="/devices" element={<DevicesListPage />} />
               <Route path="/devices/:id" element={<DeviceDetailPage />} />
               <Route path="/devices/:id/archive" element={<DeviceArchivePage />} />
-              <Route path="/custom-apps" element={<CustomAppsPage />} />
-              <Route path="/devices/:id/custom-apps" element={<CustomAppsPage />} />
             </Route>
           </Route>
 
@@ -40,6 +37,8 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/admin/database" element={<DatabaseViewerPage />} />
+              <Route path="/custom-apps" element={<CustomAppsPage />} />
+              <Route path="/devices/:id/custom-apps" element={<CustomAppsPage />} />
             </Route>
           </Route>
 

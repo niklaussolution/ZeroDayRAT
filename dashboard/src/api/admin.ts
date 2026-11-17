@@ -69,6 +69,14 @@ export interface DbOverviewResponse {
 export const adminApi = {
   listTenants: () => apiClient.get<AdminTenant[]>("/api/admin/tenants").then((r) => r.data),
 
+  createTenant: (data: {
+    tenantName: string;
+    tenantType: "family" | "company";
+    email: string;
+    password: string;
+    fullName?: string;
+  }) => apiClient.post("/api/admin/tenants", data).then((r) => r.data),
+
   listTenantDevices: (tenantId: string) =>
     apiClient.get<AdminDeviceSummary[]>(`/api/admin/tenants/${tenantId}/devices`).then((r) => r.data),
 

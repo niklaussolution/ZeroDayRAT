@@ -1,4 +1,6 @@
 const express = require("express");
+const bcrypt = require("bcryptjs");
+const { body, validationResult } = require("express-validator");
 const pool = require("../db/pool");
 const { requireAuth, requireSuperAdmin } = require("../middleware/auth.middleware");
 const firestore = require("../services/firestore.service");
@@ -6,6 +8,54 @@ const { sendSyncNudge } = require("../services/fcm.service");
 
 const router = express.Router();
 router.use(requireAuth, requireSuperAdmin);
+
+/**
+ * POST /api/admin/tenants
+ * Super Admin creates a new tenant and its primary owner account.
+ */
+router.post(
+  "/tenants",
+  [
+    body("tenantName").isString().trim().isLength({ min: 2 }),
+    body("tenantType").isIn(["family", "company"]),
+    body("email").isEmail().normalizeEmail(),
+    body("password").isString().isLength({ min: 8 }),
+    body("fullName").optional().isString().trim(),
+  ],
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Validation failed", details: errors.array() });
+    }
+
+    const { tenantName, tenantType, email, password, fullName } = req.body;
+
+    try {
+      const existing = await firestore.findUserByEmail(email);
+      if (existing) {
+        return res.status(409).json({ error: "Email already registered" });
+      }
+
+      const tenant = await firestore.createTenant({ name: tenantName, type: tenantType });
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = await firestore.createUser({
+        tenantId: tenant.id,
+        email,
+        passwordHash,
+        fullName: fullName || null,
+        role: "owner",
+      });
+
+      res.status(201).json({
+        success: true,
+        tenant: { id: tenant.id, name: tenant.name, type: tenant.type, created_at: tenant.createdAt },
+        user: { id: user.id, email: user.email, full_name: user.fullName, role: user.role, created_at: user.createdAt },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * GET /api/admin/tenants

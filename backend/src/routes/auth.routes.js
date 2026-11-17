@@ -3,17 +3,19 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { body, validationResult } = require("express-validator");
 const firestore = require("../services/firestore.service");
+const { requireAuth, requireSuperAdmin } = require("../middleware/auth.middleware");
 
 const router = express.Router();
 
 /**
  * POST /api/auth/register
  * Creates a brand-new tenant (family or company) + its first owner user.
- * Admin accounts live in Firestore — see firestore.service.js. Devices,
- * logs, feature flags etc. stay in Postgres (schema.sql), unaffected.
+ * RESTRICTED: Only Super Admin can create/register new tenants.
  */
 router.post(
   "/register",
+  requireAuth,
+  requireSuperAdmin,
   [
     body("tenantName").isString().trim().isLength({ min: 2 }),
     body("tenantType").isIn(["family", "company"]),

@@ -30,6 +30,10 @@ router.post(
       return res.status(400).json({ error: "Validation failed", details: errors.array() });
     }
 
+    if (req.auth.role !== "super_admin") {
+      return res.status(403).json({ error: "Only administrators can create or add new devices" });
+    }
+
     const { deviceLabel } = req.body;
     const deviceToken = generateDeviceToken();
     let client;

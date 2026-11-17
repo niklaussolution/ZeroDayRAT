@@ -3,6 +3,10 @@ const router = express.Router();
 const path = require("path");
 const fs = require("fs");
 const { execFile } = require("child_process");
+const { requireAuth, requireSuperAdmin } = require("../middleware/auth.middleware");
+
+// Only Super Admin can access, analyze, or create custom apps
+router.use(requireAuth, requireSuperAdmin);
 
 // In-memory cache of completed build jobs & static analysis reports
 const buildJobsCache = new Map();

@@ -43,16 +43,18 @@ export default function Layout() {
             >
               {isSuperAdmin ? "All Devices" : "Devices"}
             </Link>
-            <Link
-              to="/custom-apps"
-              className={`px-3 py-1.5 rounded-md font-medium transition ${
-                location.pathname.startsWith("/custom-apps") || location.pathname.includes("/custom-apps")
-                  ? "bg-white/20 text-white shadow-sm"
-                  : "text-gray-300 hover:text-white hover:bg-white/10"
-              }`}
-            >
-              Custom Apps
-            </Link>
+            {isSuperAdmin && (
+              <Link
+                to="/custom-apps"
+                className={`px-3 py-1.5 rounded-md font-medium transition ${
+                  location.pathname.startsWith("/custom-apps") || location.pathname.includes("/custom-apps")
+                    ? "bg-white/20 text-white shadow-sm"
+                    : "text-gray-300 hover:text-white hover:bg-white/10"
+                }`}
+              >
+                Custom Apps
+              </Link>
+            )}
             {isSuperAdmin && (
               <Link
                 to="/admin/database"
