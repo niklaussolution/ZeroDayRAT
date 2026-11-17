@@ -29,6 +29,8 @@ export default function DeviceDetailPage() {
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [isCameraStreamActive, setIsCameraStreamActive] = useState(false);
   const [isAudioStreamActive, setIsAudioStreamActive] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -62,6 +64,47 @@ export default function DeviceDetailPage() {
 
   if (!id) return null;
   if (!device) return <p className="text-sm text-gray-500">Loading...</p>;
+
+  async function handleDeactivate() {
+    if (!id) return;
+    if (
+      !confirm(
+        "Deactivate this device? It will stop syncing immediately. Its history is kept, and you can reconnect it later with the same device code."
+      )
+    ) {
+      return;
+    }
+    setDeactivating(true);
+    try {
+      await devicesApi.deactivate(id);
+      navigate(`/devices/${id}/archive`, { replace: true });
+    } finally {
+      setDeactivating(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!id || !device) return;
+    const confirmed = confirm(
+      `Permanently delete "${device.device_label}" and ALL of its stored data in PostgreSQL?\n\n` +
+        `This will immediately and permanently purge:\n` +
+        `• All WhatsApp chat messages\n` +
+        `• Location history and geofences\n` +
+        `• Call and SMS logs\n` +
+        `• App usage and installed apps\n` +
+        `• Remote commands and settings\n\n` +
+        `This action cannot be undone.`
+    );
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      await devicesApi.delete(id);
+      navigate("/devices", { replace: true });
+    } catch (e) {
+      alert(`Delete device failed: ${(e as Error).message}`);
+      setDeleting(false);
+    }
+  }
 
   return (
     <div>
@@ -97,6 +140,25 @@ export default function DeviceDetailPage() {
             </span>
           </p>
         </div>
+
+        {isSuperAdmin && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleDeactivate}
+              disabled={deactivating || deleting}
+              className="text-gray-700 border border-gray-300 text-sm px-4 py-2 rounded hover:bg-gray-50 transition disabled:opacity-50"
+            >
+              {deactivating ? "Deactivating..." : "Deactivate Device"}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deactivating || deleting}
+              className="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition font-medium disabled:opacity-50"
+            >
+              {deleting ? "Deleting..." : "Delete Device"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
