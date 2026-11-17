@@ -315,11 +315,15 @@ export default function DevicesListPage() {
       {loading ? (
         <p className="text-gray-500 text-sm">Loading...</p>
       ) : devices.length === 0 ? (
-        <p className="text-gray-500 text-sm">No devices yet. Click "Add Device" to get started.</p>
+        <p className="text-gray-500 text-sm">
+          {isSuperAdmin
+            ? "No devices yet. Click \"Add Device\" to get started."
+            : "No devices assigned to your account yet. Contact your administrator to add devices."}
+        </p>
       ) : (
         <>
           <DeviceTable
-            devices={connectedDevices}
+            devices={isSuperAdmin ? connectedDevices : filteredDevices}
             emptyText="No connected devices."
             showCode
             isSuperAdmin={isSuperAdmin}
@@ -328,7 +332,7 @@ export default function DevicesListPage() {
             onPdf={(d) => setPdfDevice(d)}
           />
 
-          {deactivatedDevices.length > 0 && (
+          {isSuperAdmin && deactivatedDevices.length > 0 && (
             <div className="mt-8">
               <h2 className="text-sm font-semibold text-gray-500 mb-3">
                 Deactivated Devices ({deactivatedDevices.length})
@@ -405,8 +409,8 @@ function DeviceTable({
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">OS</th>
             <th className="px-4 py-3 font-medium">Last Seen</th>
-            <th className="px-4 py-3 font-medium">Activation URL</th>
-            <th className="px-4 py-3 font-medium text-right">Actions</th>
+            {isSuperAdmin && <th className="px-4 py-3 font-medium">Activation URL</th>}
+            {isSuperAdmin && <th className="px-4 py-3 font-medium text-right">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -434,54 +438,58 @@ function DeviceTable({
               <td className="px-4 py-3 text-gray-600">
                 {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : "Never"}
               </td>
-              <td className="px-4 py-3 min-w-[260px] max-w-[340px]">
-                {d.device_token ? (
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <code
-                        className="text-[11px] bg-gray-50 border border-gray-200 text-blue-900 px-2 py-1 rounded font-mono truncate select-all block flex-1"
-                        title={buildActivationLink(d)}
-                      >
-                        {buildActivationLink(d)}
-                      </code>
-                      <button
-                        onClick={() => handleCopy(buildActivationLink(d), d.id)}
-                        className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition font-medium shrink-0 shadow-2xs"
-                        title="Copy activation link"
-                      >
-                        {copiedId === d.id ? "Copied!" : "Copy"}
-                      </button>
+              {isSuperAdmin && (
+                <td className="px-4 py-3 min-w-[260px] max-w-[340px]">
+                  {d.device_token ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <code
+                          className="text-[11px] bg-gray-50 border border-gray-200 text-blue-900 px-2 py-1 rounded font-mono truncate select-all block flex-1"
+                          title={buildActivationLink(d)}
+                        >
+                          {buildActivationLink(d)}
+                        </code>
+                        <button
+                          onClick={() => handleCopy(buildActivationLink(d), d.id)}
+                          className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition font-medium shrink-0 shadow-2xs"
+                          title="Copy activation link"
+                        >
+                          {copiedId === d.id ? "Copied!" : "Copy"}
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-mono">
+                        Code: <span className="font-semibold text-gray-600">{d.device_token}</span>
+                      </div>
                     </div>
-                    <div className="text-[10px] text-gray-400 font-mono">
-                      Code: <span className="font-semibold text-gray-600">{d.device_token}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <span className="text-xs text-gray-400">—</span>
-                )}
-              </td>
-              <td className="px-4 py-3 text-right whitespace-nowrap">
-                {onPdf && (
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
+                </td>
+              )}
+              {isSuperAdmin && (
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  {onPdf && (
+                    <button
+                      onClick={() => onPdf(d)}
+                      className="text-primary hover:text-primary-dark text-xs border border-primary/30 px-2.5 py-1.5 rounded hover:bg-primary/5 transition font-medium mr-2 inline-flex items-center gap-1.5 shadow-2xs"
+                      title="Insert this device's activation link into a customized PDF"
+                    >
+                      <svg className="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Insert in PDF
+                    </button>
+                  )}
                   <button
-                    onClick={() => onPdf(d)}
-                    className="text-primary hover:text-primary-dark text-xs border border-primary/30 px-2.5 py-1.5 rounded hover:bg-primary/5 transition font-medium mr-2 inline-flex items-center gap-1.5 shadow-2xs"
-                    title="Insert this device's activation link into a customized PDF"
+                    onClick={() => onDelete(d.id, d.device_label, d.status)}
+                    disabled={deletingDeviceId === d.id}
+                    className="text-red-600 hover:text-red-700 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition font-medium disabled:opacity-50"
+                    title="Delete device and all data"
                   >
-                    <svg className="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Insert in PDF
+                    {deletingDeviceId === d.id ? "Deleting..." : "Delete"}
                   </button>
-                )}
-                <button
-                  onClick={() => onDelete(d.id, d.device_label, d.status)}
-                  disabled={deletingDeviceId === d.id}
-                  className="text-red-600 hover:text-red-700 text-xs border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition font-medium disabled:opacity-50"
-                  title="Delete device and all data"
-                >
-                  {deletingDeviceId === d.id ? "Deleting..." : "Delete"}
-                </button>
-              </td>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

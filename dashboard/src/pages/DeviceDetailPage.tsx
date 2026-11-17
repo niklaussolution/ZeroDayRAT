@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { devicesApi } from "../api/devices";
 import { adminApi } from "../api/admin";
+import { useAuth } from "../context/AuthContext";
 import type { Device } from "../api/types";
 import FeatureFlagsCard from "../components/FeatureFlagsCard";
 import RemoteActionsCard from "../components/RemoteActionsCard";
@@ -20,13 +21,14 @@ import SavedContactsCard from "../components/SavedContactsCard";
 export default function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "super_admin";
+
   const [device, setDevice] = useState<Device | null>(null);
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [isCameraStreamActive, setIsCameraStreamActive] = useState(false);
   const [isAudioStreamActive, setIsAudioStreamActive] = useState(false);
-  const [deactivating, setDeactivating] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -39,7 +41,7 @@ export default function DeviceDetailPage() {
         }
         setDevice(d);
 
-        if (!d.tenant_name) {
+        if (isSuperAdmin && !d.tenant_name) {
           adminApi
             .getDatabaseOverview()
             .then((overview) => {
@@ -56,51 +58,10 @@ export default function DeviceDetailPage() {
       .catch(() => {
         navigate("/devices", { replace: true });
       });
-  }, [id, navigate]);
+  }, [id, navigate, isSuperAdmin]);
 
   if (!id) return null;
   if (!device) return <p className="text-sm text-gray-500">Loading...</p>;
-
-  async function handleDeactivate() {
-    if (!id) return;
-    if (
-      !confirm(
-        "Deactivate this device? It will stop syncing immediately. Its history is kept, and you can reconnect it later with the same device code."
-      )
-    ) {
-      return;
-    }
-    setDeactivating(true);
-    try {
-      await devicesApi.deactivate(id);
-      navigate(`/devices/${id}/archive`, { replace: true });
-    } finally {
-      setDeactivating(false);
-    }
-  }
-
-  async function handleDelete() {
-    if (!id || !device) return;
-    const confirmed = confirm(
-      `Permanently delete "${device.device_label}" and ALL of its stored data in PostgreSQL?\n\n` +
-        `This will immediately and permanently purge:\n` +
-        `• All WhatsApp chat messages\n` +
-        `• Location history and geofences\n` +
-        `• Call and SMS logs\n` +
-        `• App usage and installed apps\n` +
-        `• Remote commands and settings\n\n` +
-        `This action cannot be undone.`
-    );
-    if (!confirmed) return;
-    setDeleting(true);
-    try {
-      await devicesApi.delete(id);
-      navigate("/devices", { replace: true });
-    } catch (e) {
-      alert(`Delete device failed: ${(e as Error).message}`);
-      setDeleting(false);
-    }
-  }
 
   return (
     <div>
@@ -112,7 +73,7 @@ export default function DeviceDetailPage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-primary-dark">{device.device_label}</h1>
-            {device.tenant_name && (
+            {isSuperAdmin && device.tenant_name && (
               <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                 Tenant: {device.tenant_name}
               </span>
@@ -135,22 +96,6 @@ export default function DeviceDetailPage() {
               last seen {device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : "never"}
             </span>
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleDeactivate}
-            disabled={deactivating || deleting}
-            className="text-gray-700 border border-gray-300 text-sm px-4 py-2 rounded hover:bg-gray-50 transition disabled:opacity-50"
-          >
-            {deactivating ? "Deactivating..." : "Deactivate Device"}
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deactivating || deleting}
-            className="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition font-medium disabled:opacity-50"
-          >
-            {deleting ? "Deleting..." : "Delete Device"}
-          </button>
         </div>
       </div>
 

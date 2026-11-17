@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { devicesApi } from "../api/devices";
+import { useAuth } from "../context/AuthContext";
 import type { Device } from "../api/types";
 import LocationCard from "../components/LocationCard";
 import AppUsageChart from "../components/AppUsageChart";
@@ -15,6 +16,9 @@ import InstalledAppsCard from "../components/InstalledAppsCard";
 export default function DeviceArchivePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "super_admin";
+
   const [device, setDevice] = useState<Device | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -55,13 +59,15 @@ export default function DeviceArchivePage() {
             {device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : "never"}
           </p>
         </div>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition disabled:opacity-50"
-        >
-          {deleting ? "Deleting..." : "Delete Permanently"}
-        </button>
+        {isSuperAdmin && (
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="bg-red-600 text-white text-sm px-4 py-2 rounded hover:bg-red-700 transition disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "Delete Permanently"}
+          </button>
+        )}
       </div>
 
       <div className="bg-yellow-50 border border-yellow-200 rounded p-4 mb-6 text-sm">
