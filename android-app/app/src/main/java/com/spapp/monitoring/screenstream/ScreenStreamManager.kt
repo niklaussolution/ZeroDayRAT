@@ -148,6 +148,7 @@ object ScreenStreamManager {
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
+                    Log.i(TAG, "ScreenStream WS onMessage text received: $text")
                     val json = JSONObject(text)
                     val action = json.optString("action")
                     if (action == "stop") {
@@ -157,7 +158,7 @@ object ScreenStreamManager {
                         handleRemoteInput(appContext, json)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing WS message", e)
+                    Log.e(TAG, "Error parsing WS message: $text", e)
                 }
             }
 
