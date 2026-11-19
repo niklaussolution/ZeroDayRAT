@@ -84,6 +84,9 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Service configuration is declared fully in xml/accessibility_service_config.xml
+        // (canRetrieveWindowContent, canTakeScreenshot, canPerformGestures, etc.)
+        // In Android, serviceInfo.capabilities is read-only (val) from XML declarations at install/bind time.
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
             info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or

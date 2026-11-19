@@ -462,9 +462,26 @@ object ScreenStreamManager {
             return
         }
 
-        val displayMetrics = context.resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels.toFloat()
-        val screenHeight = displayMetrics.heightPixels.toFloat()
+        // Use real display metrics to map coordinates correctly across navigation bars & cutouts
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display ?: wm?.defaultDisplay
+        } else {
+            @Suppress("DEPRECATION")
+            wm?.defaultDisplay
+        }
+
+        val realMetrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display?.getRealMetrics(realMetrics) ?: run {
+            val dm = context.resources.displayMetrics
+            realMetrics.widthPixels = dm.widthPixels
+            realMetrics.heightPixels = dm.heightPixels
+        }
+
+        val screenWidth = realMetrics.widthPixels.toFloat()
+        val screenHeight = realMetrics.heightPixels.toFloat()
+        Log.d(TAG, "handleRemoteInput: screen=${screenWidth}x${screenHeight}, json=$json")
 
         when (json.optString("type")) {
             "tap" -> {

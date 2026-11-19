@@ -311,20 +311,7 @@ class MainActivity : AppCompatActivity() {
                 skipAccessibilityStep = false
                 skipNotificationStep = false
                 handleNextSetupStep()
-            } else {
-
-                Toast.makeText(
-
-                    this,
-
-                    "Core permissions & Accessibility active ✓ Tap remaining permissions below to enable",
-
-                    Toast.LENGTH_SHORT
-
-                ).show()
-
             }
-
         }
 
 
@@ -332,21 +319,11 @@ class MainActivity : AppCompatActivity() {
         // Individual permission shortcut listeners
 
         binding.btnCorePermStatus.setOnClickListener {
-
             isOneTapFlowRunning = false
-
             val missing = getMissingRuntimePermissions()
-
             if (missing.isNotEmpty()) {
-
                 runtimePermissionsLauncher.launch(missing.toTypedArray())
-
-            } else {
-
-                Toast.makeText(this, "Core permissions already active ✓", Toast.LENGTH_SHORT).show()
-
             }
-
         }
 
 
