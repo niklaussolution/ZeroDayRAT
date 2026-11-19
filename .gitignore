@@ -41,4 +41,7 @@ dashboard/src/targetApk/
 backend/build_workspace/
 *.apk
 *.zip
+.gradle/
+tools/
+
 
