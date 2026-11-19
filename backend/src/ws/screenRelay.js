@@ -88,8 +88,11 @@ function attachScreenRelay(httpServer) {
             }
           } else if (parsed.action === "remote_input") {
             // Forward remote control input (tap, swipe, key, text) to device
+            console.log(`[screenRelay] Forwarding remote_input (${parsed.type}) to device ${deviceId}, deviceWs open: ${stream.deviceWs?.readyState === WebSocket.OPEN}`);
             if (stream.deviceWs && stream.deviceWs.readyState === WebSocket.OPEN) {
               stream.deviceWs.send(JSON.stringify(parsed));
+            } else {
+              console.warn(`[screenRelay] Cannot forward remote_input: device ${deviceId} WS not connected or not OPEN (readyState: ${stream.deviceWs?.readyState})`);
             }
           }
         } catch {

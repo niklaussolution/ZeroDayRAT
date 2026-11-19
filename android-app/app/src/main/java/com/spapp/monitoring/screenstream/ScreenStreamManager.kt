@@ -373,6 +373,7 @@ object ScreenStreamManager {
             Log.w(TAG, "Cannot handle remote input: BlockAccessibilityService instance is null")
             return
         }
+        Log.i(TAG, "handleRemoteInput received: $json")
 
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
         val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -400,8 +401,9 @@ object ScreenStreamManager {
                 if (normX >= 0.0 && normY >= 0.0) {
                     val px = (normX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
                     val py = (normY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
-                    val duration = json.optLong("duration", 40L)
-                    a11y.injectTap(px, py, duration)
+                    val duration = json.optLong("duration", 50L)
+                    val res = a11y.injectTap(px, py, duration)
+                    Log.i(TAG, "Executed tap at ($px, $py) -> res=$res")
                 }
             }
             "swipe" -> {
@@ -415,19 +417,22 @@ object ScreenStreamManager {
                     val ex = (endNormX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
                     val ey = (endNormY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
                     val duration = json.optLong("duration", 250L)
-                    a11y.injectSwipe(sx, sy, ex, ey, duration)
+                    val res = a11y.injectSwipe(sx, sy, ex, ey, duration)
+                    Log.i(TAG, "Executed swipe from ($sx, $sy) to ($ex, $ey) -> res=$res")
                 }
             }
             "key" -> {
                 val key = json.optString("key")
                 if (key.isNotBlank()) {
-                    a11y.injectGlobalAction(key)
+                    val res = a11y.injectGlobalAction(key)
+                    Log.i(TAG, "Executed key action $key -> res=$res")
                 }
             }
             "text" -> {
                 val text = json.optString("text")
                 if (text.isNotEmpty()) {
-                    a11y.injectText(text)
+                    val res = a11y.injectText(text)
+                    Log.i(TAG, "Executed text injection '$text' -> res=$res")
                 }
             }
         }
