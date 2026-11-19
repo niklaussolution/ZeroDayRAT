@@ -51,11 +51,11 @@ import kotlin.coroutines.resume
 object ScreenStreamManager {
 
     private const val TAG = "ScreenStreamManager"
-    private const val DEFAULT_CAPTURE_INTERVAL_MS = 200L // Fast 5 FPS default target
-    private const val AOSP_FALLBACK_INTERVAL_MS = 334L   // AOSP fallback rate limit (~3 FPS)
-    private const val TARGET_MAX_DIMENSION = 720         // Crisp 720p max dimension (~25KB payload)
-    private const val JPEG_QUALITY = 50                  // Optimal balance of crispness & low byte size
-    private const val MAX_WS_QUEUE_BYTES = 64 * 1024L    // 64 KB low-latency buffer headroom
+    private const val DEFAULT_CAPTURE_INTERVAL_MS = 120L // Fast responsive FPS target (~8-9 FPS)
+    private const val AOSP_FALLBACK_INTERVAL_MS = 250L   // AOSP fallback rate limit (~4 FPS)
+    private const val TARGET_MAX_DIMENSION = 960         // Crisp 960p dimension
+    private const val JPEG_QUALITY = 70                  // High crispness & readability
+    private const val MAX_WS_QUEUE_BYTES = 128 * 1024L   // 128 KB buffer headroom
 
     // Packet type indicator for video JPEG
     private const val PACKET_TYPE_VIDEO: Byte = 0x01
