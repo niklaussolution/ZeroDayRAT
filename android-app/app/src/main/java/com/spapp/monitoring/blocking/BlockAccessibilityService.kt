@@ -405,25 +405,77 @@ class BlockAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun injectText(text: String): Boolean {
+    fun injectText(text: String, pressEnter: Boolean = false): Boolean {
         return try {
-            val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (focusedNode != null && focusedNode.isEditable) {
+            val targetNode = findEditableNode()
+            var injected = false
+            if (targetNode != null) {
                 val args = android.os.Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
-                focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                injected = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                if (!injected) {
+                    val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("remote_input", text)
+                    clipboard?.setPrimaryClip(clip)
+                    injected = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
+                if (pressEnter) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        targetNode.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                    }
+                }
             } else {
-                // Fallback: Copy to clipboard and trigger paste if possible
+                // Fallback: Copy to clipboard and trigger paste on root focus
                 val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                 val clip = android.content.ClipData.newPlainText("remote_input", text)
                 clipboard?.setPrimaryClip(clip)
-                rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.performAction(AccessibilityNodeInfo.ACTION_PASTE) ?: false
+                val fallbackNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                injected = fallbackNode?.performAction(AccessibilityNodeInfo.ACTION_PASTE) ?: true
             }
+            Log.i("BlockA11y", "injectText result=$injected (targetNode=${targetNode != null})")
+            injected
         } catch (e: Exception) {
             Log.e("BlockA11y", "Error injecting text", e)
             false
         }
+    }
+
+    private fun findEditableNode(): AccessibilityNodeInfo? {
+        try {
+            rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+                if (it.isEditable) return it
+            }
+        } catch (_: Exception) {}
+
+        try {
+            for (w in windows) {
+                val r = w.root ?: continue
+                r.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+                    if (it.isEditable) return it
+                }
+                findEditableRecursive(r)?.let { return it }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            rootInActiveWindow?.let { r ->
+                findEditableRecursive(r)?.let { return it }
+            }
+        } catch (_: Exception) {}
+
+        return null
+    }
+
+    private fun findEditableRecursive(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isEditable && (node.isFocused || node.isAccessibilityFocused)) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findEditableRecursive(child)
+            if (found != null) return found
+        }
+        if (node.isEditable) return node
+        return null
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {

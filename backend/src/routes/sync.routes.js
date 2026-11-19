@@ -98,10 +98,10 @@ router.post(
         return res.status(403).json({ error: "sms_log is not enabled for this device" });
       }
 
+      let insertedCount = 0;
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        let insertedCount = 0;
         for (const e of req.body.entries) {
           if (!e.counterparty || !e.direction || !e.messageAt) continue;
           await client.query(
@@ -125,16 +125,6 @@ router.post(
       }
 
       await touchLastSeen(req.device.deviceId);
-      emitDeviceEvent(req.device.deviceId, {
-        type: "sms_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
-      emitDeviceEvent(req.device.deviceId, {
-        type: "call_log",
-        count: insertedCount,
-        timestamp: new Date().toISOString(),
-      });
       emitDeviceEvent(req.device.deviceId, {
         type: "sms_log",
         count: insertedCount,
@@ -175,10 +165,10 @@ router.post(
         return res.status(403).json({ error: "call_log is not enabled for this device" });
       }
 
+      let insertedCount = 0;
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        let insertedCount = 0;
         for (const e of req.body.entries) {
           const existing = await client.query(
             `SELECT id, contact_name FROM call_logs

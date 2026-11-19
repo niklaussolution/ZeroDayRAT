@@ -54,21 +54,42 @@ export default function ScreenStreamView({
 
 
   // Remote Control Helpers (AnyDesk style Touch & Gestures)
-  const sendRemoteInput = (payload: Record<string, unknown>) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn("[ScreenStreamView] WebSocket not connected; cannot send remote input:", payload);
-      return;
+  const [lastActionFeedback, setLastActionFeedback] = useState<string | null>(null);
+  const [forceCommandMode, setForceCommandMode] = useState(false);
+  const [pressEnterOnSend, setPressEnterOnSend] = useState(false);
+
+  const sendRemoteInput = async (payload: Record<string, unknown>, forceCommand = forceCommandMode) => {
+    let sentWs = false;
+    if (!forceCommand && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        const msg = JSON.stringify({
+          action: "remote_input",
+          ...payload,
+        });
+        console.log("[ScreenStreamView] Sending remote input via WebSocket:", msg);
+        wsRef.current.send(msg);
+        sentWs = true;
+        setLastActionFeedback("Live WebSocket (0ms)");
+      } catch (err) {
+        console.warn("[ScreenStreamView] WebSocket send failed, falling back to Command API:", err);
+      }
     }
-    const msg = JSON.stringify({
-      action: "remote_input",
-      ...payload,
-    });
-    console.log("[ScreenStreamView] Sending remote input:", msg);
-    try {
-      wsRef.current.send(msg);
-    } catch (err) {
-      console.warn("Failed sending remote input", err);
+
+    if (!sentWs || forceCommand) {
+      try {
+        console.log("[ScreenStreamView] Dispatching remote input via Command queue:", payload);
+        setLastActionFeedback("Queueing Command...");
+        await devicesApi.createCommand(deviceId, "remote_action", payload);
+        setLastActionFeedback("Command queued to device");
+      } catch (e) {
+        console.warn("Failed to create remote_action command:", e);
+        setLastActionFeedback("Delivery error");
+      }
     }
+
+    setTimeout(() => {
+      setLastActionFeedback((prev) => (prev ? null : prev));
+    }, 2500);
   };
 
   const getCanvasNormalizedCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -151,18 +172,54 @@ export default function ScreenStreamView({
     }
   };
 
-  const handleSendGlobalKey = (key: "BACK" | "HOME" | "RECENTS" | "NOTIFICATIONS") => {
+  const handleSendGlobalKey = (key: "BACK" | "HOME" | "RECENTS" | "NOTIFICATIONS" | "QUICK_SETTINGS" | "LOCK_SCREEN") => {
     sendRemoteInput({
       type: "key",
       key,
     });
   };
 
-  const handleSendText = () => {
-    if (!inputText) return;
+  const handleScroll = (direction: "UP" | "DOWN" | "LEFT" | "RIGHT") => {
+    let startX = 0.5, startY = 0.5, endX = 0.5, endY = 0.5;
+    if (direction === "UP") {
+      startY = 0.75;
+      endY = 0.25;
+    } else if (direction === "DOWN") {
+      startY = 0.25;
+      endY = 0.75;
+    } else if (direction === "LEFT") {
+      startX = 0.8;
+      endX = 0.2;
+    } else if (direction === "RIGHT") {
+      startX = 0.2;
+      endX = 0.8;
+    }
+    sendRemoteInput({
+      type: "swipe",
+      startX,
+      startY,
+      endX,
+      endY,
+      duration: 250,
+    });
+  };
+
+  const handleTapCenter = () => {
+    sendRemoteInput({
+      type: "tap",
+      x: 0.5,
+      y: 0.5,
+      duration: 50,
+    });
+  };
+
+  const handleSendText = (textToSend?: string) => {
+    const text = textToSend ?? inputText;
+    if (!text) return;
     sendRemoteInput({
       type: "text",
-      text: inputText,
+      text,
+      pressEnter: pressEnterOnSend,
     });
     setInputText("");
     setShowInputModal(false);
@@ -494,8 +551,11 @@ export default function ScreenStreamView({
         isStandalone ? "min-h-screen p-4 sm:p-6" : "p-4 w-full"
       }`}
     >
-      {/* Top Header Bar */}
-      <div className="w-full max-w-md flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
+      <div className={`w-full ${isFullscreen ? "max-w-md" : "max-w-5xl"} flex flex-col xl:flex-row items-center xl:items-start justify-center gap-6`}>
+        {/* Left Column: Phone Screen Stream */}
+        <div className="flex flex-col items-center w-full max-w-md">
+          {/* Top Header Bar */}
+          <div className="w-full flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
         <div className="flex items-center gap-2.5">
           <div className="relative flex items-center justify-center">
             <span
@@ -793,7 +853,7 @@ export default function ScreenStreamView({
             autoFocus
           />
           <button
-            onClick={handleSendText}
+            onClick={() => handleSendText()}
             className="px-3 py-1.5 text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition"
           >
             Send
@@ -864,6 +924,233 @@ export default function ScreenStreamView({
             </svg>
             <span>Pop Out</span>
           </button>
+        )}
+      </div>
+        </div>
+
+        {/* Right Column: Dedicated Remote Control Station */}
+        {!isFullscreen && (
+          <div className="w-full max-w-md xl:w-80 flex flex-col gap-4 bg-slate-900/95 border border-slate-800 rounded-2xl p-5 shadow-2xl backdrop-blur">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">Remote Control Station</h3>
+                  <p className="text-[11px] text-slate-400">Direct Device Remote Actions</p>
+                </div>
+              </div>
+              {lastActionFeedback && (
+                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
+                  {lastActionFeedback}
+                </span>
+              )}
+            </div>
+
+            {/* Dispatch Channel Selector */}
+            <div className="flex items-center justify-between text-xs bg-slate-950/70 p-2 rounded-xl border border-slate-800/80">
+              <span className="text-slate-400 text-[11px]">Channel:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setForceCommandMode(false)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-medium transition ${
+                    !forceCommandMode
+                      ? "bg-sky-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Live WebSocket
+                </button>
+                <button
+                  onClick={() => setForceCommandMode(true)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-medium transition ${
+                    forceCommandMode
+                      ? "bg-amber-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Command Queue
+                </button>
+              </div>
+            </div>
+
+            {/* Android Navigation Keys */}
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+                System Navigation
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => handleSendGlobalKey("BACK")}
+                  disabled={!hasFirstFrame}
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
+                >
+                  <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span className="text-xs font-semibold">Back</span>
+                </button>
+                <button
+                  onClick={() => handleSendGlobalKey("HOME")}
+                  disabled={!hasFirstFrame}
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
+                >
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="7" strokeWidth={2} />
+                  </svg>
+                  <span className="text-xs font-semibold">Home</span>
+                </button>
+                <button
+                  onClick={() => handleSendGlobalKey("RECENTS")}
+                  disabled={!hasFirstFrame}
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
+                >
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="5" y="5" width="14" height="14" rx="2" strokeWidth={2} />
+                  </svg>
+                  <span className="text-xs font-semibold">Recents</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                <button
+                  onClick={() => handleSendGlobalKey("NOTIFICATIONS")}
+                  disabled={!hasFirstFrame}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                >
+                  <span>🔔 Alerts</span>
+                </button>
+                <button
+                  onClick={() => handleSendGlobalKey("QUICK_SETTINGS")}
+                  disabled={!hasFirstFrame}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                >
+                  <span>⚙ Settings</span>
+                </button>
+                <button
+                  onClick={() => handleSendGlobalKey("LOCK_SCREEN")}
+                  disabled={!hasFirstFrame}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-rose-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                >
+                  <span>🔒 Lock</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Scroll & Gesture Pad */}
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+                Scroll & Gesture Pad
+              </span>
+              <div className="flex flex-col items-center gap-1.5 bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+                <button
+                  onClick={() => handleScroll("UP")}
+                  disabled={!hasFirstFrame}
+                  title="Scroll Up (Swipe Downwards)"
+                  className="w-24 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                >
+                  <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                  <span>Up</span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleScroll("LEFT")}
+                    disabled={!hasFirstFrame}
+                    title="Swipe Left"
+                    className="w-20 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                  >
+                    <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    <span>Left</span>
+                  </button>
+                  <button
+                    onClick={handleTapCenter}
+                    disabled={!hasFirstFrame}
+                    title="Tap Screen Center"
+                    className="w-16 py-1.5 rounded-lg bg-sky-600/90 hover:bg-sky-500 active:scale-95 text-white text-xs font-bold flex items-center justify-center transition disabled:opacity-40"
+                  >
+                    <span>TAP</span>
+                  </button>
+                  <button
+                    onClick={() => handleScroll("RIGHT")}
+                    disabled={!hasFirstFrame}
+                    title="Swipe Right"
+                    className="w-20 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                  >
+                    <span>Right</span>
+                    <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+                <button
+                  onClick={() => handleScroll("DOWN")}
+                  disabled={!hasFirstFrame}
+                  title="Scroll Down (Swipe Upwards)"
+                  className="w-24 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                >
+                  <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                  <span>Down</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Remote Text Injection */}
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+                Type Text into Phone
+              </span>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSendText();
+                    }}
+                    placeholder="Enter text to type..."
+                    className="flex-1 px-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                  />
+                  <button
+                    onClick={() => handleSendText()}
+                    disabled={!inputText.trim()}
+                    className="px-3.5 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-xl transition disabled:opacity-40 shadow-sm"
+                  >
+                    Send
+                  </button>
+                </div>
+                <div className="flex items-center justify-between px-1">
+                  <label className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={pressEnterOnSend}
+                      onChange={(e) => setPressEnterOnSend(e.target.checked)}
+                      className="rounded border-slate-700 text-sky-600 focus:ring-0 bg-slate-950"
+                    />
+                    <span>Press Enter after typing</span>
+                  </label>
+                  {inputText && (
+                    <button
+                      onClick={() => setInputText("")}
+                      className="text-[11px] text-slate-500 hover:text-slate-300 transition"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

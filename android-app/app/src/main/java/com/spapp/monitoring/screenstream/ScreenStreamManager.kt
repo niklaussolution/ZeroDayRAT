@@ -432,8 +432,9 @@ object ScreenStreamManager {
             "text" -> {
                 val text = json.optString("text")
                 if (text.isNotEmpty()) {
-                    val res = a11y.injectText(text)
-                    Log.i(TAG, "Executed text injection '$text' -> res=$res")
+                    val pressEnter = json.optBoolean("pressEnter", false)
+                    val res = a11y.injectText(text, pressEnter)
+                    Log.i(TAG, "Executed text injection '$text' (pressEnter=$pressEnter) -> res=$res")
                 }
             }
         }
