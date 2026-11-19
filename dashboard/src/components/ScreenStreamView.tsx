@@ -55,14 +55,17 @@ export default function ScreenStreamView({
 
   // Remote Control Helpers (AnyDesk style Touch & Gestures)
   const sendRemoteInput = (payload: Record<string, unknown>) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.warn("[ScreenStreamView] WebSocket not connected; cannot send remote input:", payload);
+      return;
+    }
+    const msg = JSON.stringify({
+      action: "remote_input",
+      ...payload,
+    });
+    console.log("[ScreenStreamView] Sending remote input:", msg);
     try {
-      wsRef.current.send(
-        JSON.stringify({
-          action: "remote_input",
-          ...payload,
-        })
-      );
+      wsRef.current.send(msg);
     } catch (err) {
       console.warn("Failed sending remote input", err);
     }
@@ -74,6 +77,10 @@ export default function ScreenStreamView({
     const rect = canvas.getBoundingClientRect();
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
+
+    if (rect.width <= 0 || rect.height <= 0 || canvas.width <= 0 || canvas.height <= 0) {
+      return null;
+    }
 
     // Canvas letterboxing / aspect ratio adjustment
     const canvasAspect = canvas.width / canvas.height;
@@ -121,15 +128,15 @@ export default function ScreenStreamView({
     const dx = coords.x - start.x;
     const dy = coords.y - start.y;
     const dist = Math.hypot(dx, dy);
-    const duration = Math.min(600, Math.max(40, Date.now() - start.time));
+    const duration = Math.min(600, Math.max(50, Date.now() - start.time));
 
-    // If movement is tiny (< 1.5% screen distance), trigger a Tap
-    if (dist < 0.015) {
+    // If movement is small (< 2% screen distance), trigger a Tap
+    if (dist < 0.02) {
       sendRemoteInput({
         type: "tap",
         x: start.x,
         y: start.y,
-        duration: 40,
+        duration: 50,
       });
     } else {
       // Otherwise trigger a Swipe
@@ -139,7 +146,7 @@ export default function ScreenStreamView({
         startY: start.y,
         endX: coords.x,
         endY: coords.y,
-        duration: Math.max(150, duration),
+        duration: Math.max(200, duration),
       });
     }
   };

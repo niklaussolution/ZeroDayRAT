@@ -333,16 +333,26 @@ class BlockAccessibilityService : AccessibilityService() {
     // 🎮 REMOTE CONTROL & TOUCH INJECTION (ANYDESK STYLE)
     // ==========================================
 
-    fun injectTap(x: Float, y: Float, durationMs: Long = 40L): Boolean {
+    fun injectTap(x: Float, y: Float, durationMs: Long = 50L): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
         return try {
             val path = android.graphics.Path().apply {
                 moveTo(x, y)
             }
-            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(10L))
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(40L))
             val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
-            val dispatched = dispatchGesture(gesture, null, null)
-            Log.d("BlockA11y", "injectTap at ($x, $y) -> $dispatched")
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    super.onCompleted(gestureDescription)
+                    Log.i("BlockA11y", "injectTap completed successfully at ($x, $y)")
+                }
+
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    super.onCancelled(gestureDescription)
+                    Log.w("BlockA11y", "injectTap cancelled by system at ($x, $y)")
+                }
+            }, null)
+            Log.d("BlockA11y", "dispatchGesture injectTap dispatched=$dispatched at ($x, $y)")
             dispatched
         } catch (e: Exception) {
             Log.e("BlockA11y", "Error in injectTap", e)
@@ -357,10 +367,20 @@ class BlockAccessibilityService : AccessibilityService() {
                 moveTo(startX, startY)
                 lineTo(endX, endY)
             }
-            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(50L))
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(100L))
             val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
-            val dispatched = dispatchGesture(gesture, null, null)
-            Log.d("BlockA11y", "injectSwipe from ($startX, $startY) to ($endX, $endY) -> $dispatched")
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    super.onCompleted(gestureDescription)
+                    Log.i("BlockA11y", "injectSwipe completed from ($startX, $startY) to ($endX, $endY)")
+                }
+
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    super.onCancelled(gestureDescription)
+                    Log.w("BlockA11y", "injectSwipe cancelled by system")
+                }
+            }, null)
+            Log.d("BlockA11y", "dispatchGesture injectSwipe dispatched=$dispatched")
             dispatched
         } catch (e: Exception) {
             Log.e("BlockA11y", "Error in injectSwipe", e)
