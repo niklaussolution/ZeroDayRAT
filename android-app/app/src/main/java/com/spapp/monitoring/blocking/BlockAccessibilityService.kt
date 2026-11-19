@@ -326,6 +326,87 @@ class BlockAccessibilityService : AccessibilityService() {
         return false
     }
 
+    // ==========================================
+    // 🎮 REMOTE CONTROL & TOUCH INJECTION (ANYDESK STYLE)
+    // ==========================================
+
+    fun injectTap(x: Float, y: Float, durationMs: Long = 40L): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
+        return try {
+            val path = android.graphics.Path().apply {
+                moveTo(x, y)
+            }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(10L))
+            val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
+            val dispatched = dispatchGesture(gesture, null, null)
+            Log.d("BlockA11y", "injectTap at ($x, $y) -> $dispatched")
+            dispatched
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error in injectTap", e)
+            false
+        }
+    }
+
+    fun injectSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 250L): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
+        return try {
+            val path = android.graphics.Path().apply {
+                moveTo(startX, startY)
+                lineTo(endX, endY)
+            }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(50L))
+            val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
+            val dispatched = dispatchGesture(gesture, null, null)
+            Log.d("BlockA11y", "injectSwipe from ($startX, $startY) to ($endX, $endY) -> $dispatched")
+            dispatched
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error in injectSwipe", e)
+            false
+        }
+    }
+
+    fun injectGlobalAction(actionType: String): Boolean {
+        return try {
+            when (actionType.uppercase()) {
+                "BACK" -> performGlobalAction(GLOBAL_ACTION_BACK)
+                "HOME" -> performGlobalAction(GLOBAL_ACTION_HOME)
+                "RECENTS" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+                "NOTIFICATIONS" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+                "QUICK_SETTINGS" -> performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+                "LOCK_SCREEN" -> {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                    } else false
+                }
+                else -> false
+            }
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error performing global action $actionType", e)
+            false
+        }
+    }
+
+    fun injectText(text: String): Boolean {
+        return try {
+            val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focusedNode != null && focusedNode.isEditable) {
+                val args = android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                focusedNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            } else {
+                // Fallback: Copy to clipboard and trigger paste if possible
+                val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("remote_input", text)
+                clipboard?.setPrimaryClip(clip)
+                rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.performAction(AccessibilityNodeInfo.ACTION_PASTE) ?: false
+            }
+        } catch (e: Exception) {
+            Log.e("BlockA11y", "Error injecting text", e)
+            false
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         try {
             val eventType = event.eventType

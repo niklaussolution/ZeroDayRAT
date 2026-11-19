@@ -34,6 +34,9 @@ export default function ScreenStreamView({
   const [streamDuration, setStreamDuration] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [screenResolution, setScreenResolution] = useState<string | null>(null);
+  const [isControlEnabled, setIsControlEnabled] = useState<boolean>(true);
+  const [inputText, setInputText] = useState<string>("");
+  const [showInputModal, setShowInputModal] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -46,8 +49,117 @@ export default function ScreenStreamView({
   const latestFrameRef = useRef<Uint8Array | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
+  // Mouse touch gesture tracking on canvas
+  const dragStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
-  // Duration timer
+
+  // Remote Control Helpers (AnyDesk style Touch & Gestures)
+  const sendRemoteInput = (payload: Record<string, unknown>) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    try {
+      wsRef.current.send(
+        JSON.stringify({
+          action: "remote_input",
+          ...payload,
+        })
+      );
+    } catch (err) {
+      console.warn("Failed sending remote input", err);
+    }
+  };
+
+  const getCanvasNormalizedCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
+
+    // Canvas letterboxing / aspect ratio adjustment
+    const canvasAspect = canvas.width / canvas.height;
+    const boxAspect = rect.width / rect.height;
+
+    let renderW = rect.width;
+    let renderH = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (boxAspect > canvasAspect) {
+      renderW = rect.height * canvasAspect;
+      offsetX = (rect.width - renderW) / 2;
+    } else {
+      renderH = rect.width / canvasAspect;
+      offsetY = (rect.height - renderH) / 2;
+    }
+
+    const xInRender = clientX - offsetX;
+    const yInRender = clientY - offsetY;
+
+    if (xInRender < 0 || xInRender > renderW || yInRender < 0 || yInRender > renderH) {
+      return null;
+    }
+
+    return {
+      x: Math.max(0, Math.min(1, xInRender / renderW)),
+      y: Math.max(0, Math.min(1, yInRender / renderH)),
+    };
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isControlEnabled || !hasFirstFrame) return;
+    const coords = getCanvasNormalizedCoords(e);
+    if (!coords) return;
+    dragStartRef.current = { x: coords.x, y: coords.y, time: Date.now() };
+  };
+
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isControlEnabled || !hasFirstFrame || !dragStartRef.current) return;
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+
+    const coords = getCanvasNormalizedCoords(e) || { x: start.x, y: start.y };
+    const dx = coords.x - start.x;
+    const dy = coords.y - start.y;
+    const dist = Math.hypot(dx, dy);
+    const duration = Math.min(600, Math.max(40, Date.now() - start.time));
+
+    // If movement is tiny (< 1.5% screen distance), trigger a Tap
+    if (dist < 0.015) {
+      sendRemoteInput({
+        type: "tap",
+        x: start.x,
+        y: start.y,
+        duration: 40,
+      });
+    } else {
+      // Otherwise trigger a Swipe
+      sendRemoteInput({
+        type: "swipe",
+        startX: start.x,
+        startY: start.y,
+        endX: coords.x,
+        endY: coords.y,
+        duration: Math.max(150, duration),
+      });
+    }
+  };
+
+  const handleSendGlobalKey = (key: "BACK" | "HOME" | "RECENTS" | "NOTIFICATIONS") => {
+    sendRemoteInput({
+      type: "key",
+      key,
+    });
+  };
+
+  const handleSendText = () => {
+    if (!inputText) return;
+    sendRemoteInput({
+      type: "text",
+      text: inputText,
+    });
+    setInputText("");
+    setShowInputModal(false);
+  };
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
     if (status === "streaming") {
@@ -506,8 +618,10 @@ export default function ScreenStreamView({
         <div className="w-full h-full bg-black rounded-[34px] overflow-hidden relative flex items-center justify-center">
           <canvas
             ref={canvasRef}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseUp={handleCanvasMouseUp}
             className={`w-full h-full object-contain select-none ${
-              hasFirstFrame ? "block" : "hidden"
+              hasFirstFrame ? "block cursor-pointer active:cursor-grabbing" : "hidden"
             }`}
           />
 
@@ -580,8 +694,108 @@ export default function ScreenStreamView({
         </div>
       </div>
 
+      {/* Remote Navigation Control Bar (AnyDesk Style Controls) */}
+      <div className="w-full max-w-md mt-3 flex items-center justify-between gap-1.5 px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800 shadow-lg backdrop-blur-md">
+        <div className="flex items-center gap-1.5">
+          {/* Recents Button */}
+          <button
+            onClick={() => handleSendGlobalKey("RECENTS")}
+            disabled={!hasFirstFrame || !isControlEnabled}
+            title="Recent Apps (Overview)"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <rect x="5" y="5" width="14" height="14" rx="2" strokeWidth={2} />
+            </svg>
+            <span>Apps</span>
+          </button>
+
+          {/* Home Button */}
+          <button
+            onClick={() => handleSendGlobalKey("HOME")}
+            disabled={!hasFirstFrame || !isControlEnabled}
+            title="Home Screen"
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="6" strokeWidth={2} />
+            </svg>
+            <span>Home</span>
+          </button>
+
+          {/* Back Button */}
+          <button
+            onClick={() => handleSendGlobalKey("BACK")}
+            disabled={!hasFirstFrame || !isControlEnabled}
+            title="Back Button"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            <span>Back</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Text Input Modal Trigger */}
+          <button
+            onClick={() => setShowInputModal((prev) => !prev)}
+            disabled={!hasFirstFrame || !isControlEnabled}
+            title="Type Text into Active Field"
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 ${
+              showInputModal
+                ? "bg-sky-600 text-white"
+                : "bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M7 6h10M7 18h10" />
+            </svg>
+            <span>Type</span>
+          </button>
+
+          {/* Touch Control Toggle */}
+          <button
+            onClick={() => setIsControlEnabled((prev) => !prev)}
+            title={isControlEnabled ? "Remote Control Active (Click to Pause)" : "Remote Control Paused (Click to Enable)"}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition ${
+              isControlEnabled
+                ? "bg-emerald-950/80 text-emerald-400 border border-emerald-600/60"
+                : "bg-slate-800 text-slate-400 border border-slate-700"
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${isControlEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+            <span>{isControlEnabled ? "Control ON" : "View Only"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Remote Text Injection Dropdown Bar */}
+      {showInputModal && (
+        <div className="w-full max-w-md mt-2 flex items-center gap-2 p-2 rounded-xl bg-slate-900 border border-sky-500/40 shadow-lg">
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSendText();
+            }}
+            placeholder="Type text and press Send..."
+            className="flex-1 px-3 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            autoFocus
+          />
+          <button
+            onClick={handleSendText}
+            className="px-3 py-1.5 text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition"
+          >
+            Send
+          </button>
+        </div>
+      )}
+
       {/* Bottom Control Bar */}
-      <div className="w-full max-w-md mt-4 flex flex-wrap items-center justify-center gap-2 pt-2">
+      <div className="w-full max-w-md mt-2 flex flex-wrap items-center justify-center gap-2 pt-1">
 
         <button
           onClick={handleSnapshot}

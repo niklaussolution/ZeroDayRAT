@@ -86,6 +86,11 @@ function attachScreenRelay(httpServer) {
             if (stream.deviceWs && stream.deviceWs.readyState === WebSocket.OPEN) {
               stream.deviceWs.send(JSON.stringify({ action: "stop" }));
             }
+          } else if (parsed.action === "remote_input") {
+            // Forward remote control input (tap, swipe, key, text) to device
+            if (stream.deviceWs && stream.deviceWs.readyState === WebSocket.OPEN) {
+              stream.deviceWs.send(JSON.stringify(parsed));
+            }
           }
         } catch {
           // ignore non-json messages

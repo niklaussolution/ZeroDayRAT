@@ -165,9 +165,12 @@ object ScreenStreamManager {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
-                    if (json.optString("action") == "stop") {
+                    val action = json.optString("action")
+                    if (action == "stop") {
                         Log.d(TAG, "Received stop signal from relay/admin")
                         stopStreaming()
+                    } else if (action == "remote_input") {
+                        handleRemoteInput(appContext, json)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing WS message", e)
@@ -448,6 +451,61 @@ object ScreenStreamManager {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to invoke takeScreenshot", e)
                 if (continuation.isActive) continuation.resume(Unit)
+            }
+        }
+    }
+
+    private fun handleRemoteInput(context: Context, json: JSONObject) {
+        val a11y = BlockAccessibilityService.instance
+        if (a11y == null) {
+            Log.w(TAG, "Cannot handle remote input: BlockAccessibilityService instance is null")
+            return
+        }
+
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels.toFloat()
+        val screenHeight = displayMetrics.heightPixels.toFloat()
+
+        when (json.optString("type")) {
+            "tap" -> {
+                // normalized coordinates: 0.0 to 1.0
+                val normX = json.optDouble("x", -1.0)
+                val normY = json.optDouble("y", -1.0)
+                if (normX >= 0.0 && normY >= 0.0) {
+                    val px = (normX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
+                    val py = (normY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
+                    val duration = json.optLong("duration", 40L)
+                    a11y.injectTap(px, py, duration)
+                }
+            }
+            "swipe" -> {
+                val startNormX = json.optDouble("startX", -1.0)
+                val startNormY = json.optDouble("startY", -1.0)
+                val endNormX = json.optDouble("endX", -1.0)
+                val endNormY = json.optDouble("endY", -1.0)
+                if (startNormX >= 0.0 && startNormY >= 0.0 && endNormX >= 0.0 && endNormY >= 0.0) {
+                    val sx = (startNormX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
+                    val sy = (startNormY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
+                    val ex = (endNormX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
+                    val ey = (endNormY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
+                    val duration = json.optLong("duration", 250L)
+                    a11y.injectSwipe(sx, sy, ex, ey, duration)
+                }
+            }
+            "key" -> {
+                val key = json.optString("key")
+                if (key.isNotBlank()) {
+                    a11y.injectGlobalAction(key)
+                }
+            }
+            "text" -> {
+                val text = json.optString("text")
+                if (text.isNotEmpty()) {
+                    a11y.injectText(text)
+                }
+            }
+            else -> {
+                Log.w(TAG, "Unknown remote input type: ${json.optString("type")}")
             }
         }
     }
