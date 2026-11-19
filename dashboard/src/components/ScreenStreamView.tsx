@@ -36,7 +36,6 @@ export default function ScreenStreamView({
   const [screenResolution, setScreenResolution] = useState<string | null>(null);
   const [isControlEnabled, setIsControlEnabled] = useState<boolean>(true);
   const [inputText, setInputText] = useState<string>("");
-  const [showInputModal, setShowInputModal] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -222,7 +221,6 @@ export default function ScreenStreamView({
       pressEnter: pressEnterOnSend,
     });
     setInputText("");
-    setShowInputModal(false);
   };
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -551,15 +549,12 @@ export default function ScreenStreamView({
         isStandalone ? "min-h-screen p-4 sm:p-6" : "p-4 w-full"
       }`}
     >
-      <div className={`w-full ${isFullscreen ? "max-w-md" : "max-w-5xl"} flex flex-col xl:flex-row items-center xl:items-start justify-center gap-6`}>
-        {/* Left Column: Phone Screen Stream */}
-        <div className="flex flex-col items-center w-full max-w-md">
-          {/* Top Header Bar */}
-          <div className="w-full flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
-        <div className="flex items-center gap-2.5">
+      {/* Global Device Bar */}
+      <div className="w-full max-w-5xl flex flex-wrap items-center justify-between gap-3 pb-4 mb-6 border-b border-slate-800/80">
+        <div className="flex items-center gap-3">
           <div className="relative flex items-center justify-center">
             <span
-              className={`w-3 h-3 rounded-full ${
+              className={`w-3.5 h-3.5 rounded-full ${
                 status === "streaming"
                   ? "bg-emerald-500 animate-ping absolute opacity-75"
                   : status === "waiting_device"
@@ -570,31 +565,31 @@ export default function ScreenStreamView({
               }`}
             />
             <span
-              className={`w-2.5 h-2.5 rounded-full ${
+              className={`w-3 h-3 rounded-full ${
                 status === "streaming"
-                  ? "bg-emerald-500"
+                  ? "bg-emerald-500 shadow-lg shadow-emerald-500/50"
                   : status === "waiting_device"
-                  ? "bg-amber-400"
+                  ? "bg-amber-400 shadow-lg shadow-amber-400/50"
                   : status === "error"
-                  ? "bg-rose-500"
+                  ? "bg-rose-500 shadow-lg shadow-rose-500/50"
                   : "bg-slate-500"
               }`}
             />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-1.5">
-              <span>{deviceName || "Target Device"}</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-wider ${
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-base font-bold text-slate-100 tracking-tight">{deviceName || "Target Device"}</h2>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                 status === "streaming"
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
+                  ? "bg-emerald-950/80 text-emerald-400 border border-emerald-700/80 shadow-sm shadow-emerald-950"
                   : status === "error"
-                  ? "bg-rose-950 text-rose-400 border border-rose-800"
-                  : "bg-slate-800 text-slate-400"
+                  ? "bg-rose-950/80 text-rose-400 border border-rose-700/80"
+                  : "bg-slate-800 text-slate-400 border border-slate-700"
               }`}>
-                {status === "streaming" ? "LIVE" : status}
+                {status === "streaming" ? "LIVE STREAM" : status}
               </span>
-            </h3>
-            <p className={`text-[11px] truncate max-w-[220px] ${
+            </div>
+            <p className={`text-xs truncate max-w-xs sm:max-w-md ${
               status === "error" ? "text-rose-400 font-medium" : "text-slate-400"
             }`}>
               {statusMessage}
@@ -602,24 +597,47 @@ export default function ScreenStreamView({
           </div>
         </div>
 
-        {/* Action icons */}
-        <div className="flex items-center gap-1.5">
-          {!isStandalone && onPopOut && (
+        {/* Global Toolbar Controls */}
+        <div className="flex items-center gap-2">
+          {status === "streaming" || status === "waiting_device" ? (
             <button
-              onClick={onPopOut}
-              title="Pop out to separate window"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition"
+              onClick={() => stopStream(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-xs font-semibold shadow-md shadow-rose-950 transition"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" strokeWidth={2} />
               </svg>
+              <span>Stop Stream</span>
+            </button>
+          ) : (
+            <button
+              onClick={startStream}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-semibold shadow-md shadow-emerald-950 transition"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              </svg>
+              <span>Start Stream</span>
             </button>
           )}
 
           <button
+            onClick={handleSnapshot}
+            disabled={!hasFirstFrame}
+            title="Save high-resolution screenshot"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 text-xs font-medium transition disabled:opacity-40"
+          >
+            <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span className="hidden sm:inline">Snapshot</span>
+          </button>
+
+          <button
             onClick={toggleFullscreen}
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition"
+            className="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               {isFullscreen ? (
@@ -630,11 +648,23 @@ export default function ScreenStreamView({
             </svg>
           </button>
 
+          {!isStandalone && onPopOut && (
+            <button
+              onClick={onPopOut}
+              title="Open in separate window"
+              className="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </button>
+          )}
+
           {onClose && (
             <button
               onClick={onClose}
               title="Close Stream"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition"
+              className="p-2 rounded-xl bg-slate-800/90 hover:bg-rose-950/80 hover:text-rose-400 hover:border-rose-800/80 text-slate-400 border border-slate-700/60 transition"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -644,510 +674,377 @@ export default function ScreenStreamView({
         </div>
       </div>
 
-      {/* Stream Metrics Pills */}
-      <div className="w-full max-w-md flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-900/90 rounded-lg px-3 py-1.5 mb-3 border border-slate-800/60">
-        <div className="flex items-center gap-2.5">
-          <span className="flex items-center gap-1">
-            <span className="text-slate-500">FPS:</span>
-            <span className={`font-semibold ${fps > 0 ? "text-emerald-400" : "text-slate-400"}`}>
-              {fps.toFixed(1)}
-            </span>
-          </span>
-          <span className="text-slate-700">|</span>
-          <span className="flex items-center gap-1">
-            <span className="text-slate-500">TIME:</span>
-            <span className="text-slate-300 font-semibold">{formatTimer(streamDuration)}</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2.5">
-
-          {screenResolution && (
-            <>
-              <span className="text-slate-300">{screenResolution}</span>
+      {/* Main Content: Dual-Column Deck */}
+      <div className={`w-full ${isFullscreen ? "max-w-md" : "max-w-5xl"} flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8`}>
+        {/* Left Column: Mobile Phone Mockup */}
+        <div className="flex flex-col items-center w-full max-w-[360px]">
+          {/* Status Pills Bar */}
+          <div className="w-full flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-900/90 backdrop-blur rounded-xl px-3.5 py-2 mb-3 border border-slate-800/80 shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1">
+                <span className="text-slate-500 font-medium">FPS:</span>
+                <span className={`font-bold ${fps > 0 ? "text-emerald-400" : "text-slate-400"}`}>{fps.toFixed(1)}</span>
+              </span>
               <span className="text-slate-700">|</span>
-            </>
-          )}
-          <span className="text-slate-400">{frameCount} frames</span>
-        </div>
-      </div>
-
-      {/* Mobile Device Frame Chassis */}
-      <div className="relative w-full max-w-[340px] sm:max-w-[360px] aspect-[9/18.5] bg-slate-900 rounded-[44px] p-2.5 sm:p-3 shadow-2xl shadow-black/90 border-[4px] border-slate-800/90 flex flex-col items-center justify-center">
-        {/* Top Speaker & Camera Cutout Notch */}
-        <div className="absolute top-2.5 z-20 flex items-center justify-center gap-2 px-3 py-0.5 rounded-full bg-slate-950/80 border border-slate-800/50 backdrop-blur-sm">
-          <div className="w-2.5 h-2.5 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center">
-            <div className="w-1 h-1 rounded-full bg-sky-950" />
-          </div>
-          <div className="w-8 h-1 rounded-full bg-slate-800" />
-        </div>
-
-        {/* Device Screen Viewport */}
-        <div className="w-full h-full bg-black rounded-[34px] overflow-hidden relative flex items-center justify-center">
-          <canvas
-            ref={canvasRef}
-            onMouseDown={handleCanvasMouseDown}
-            onMouseUp={handleCanvasMouseUp}
-            className={`w-full h-full object-contain select-none ${
-              hasFirstFrame ? "block cursor-pointer active:cursor-grabbing" : "hidden"
-            }`}
-          />
-
-          {!hasFirstFrame && (
-            /* Standby / Loading / Radar state */
-            <div className="flex flex-col items-center justify-center text-center p-6 space-y-4">
-              <div className="relative flex items-center justify-center">
-                {status === "error" ? (
-                  <div className="w-12 h-12 rounded-full bg-rose-950 border border-rose-600 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                ) : (
-                  <>
-                    <div className="w-16 h-16 rounded-full border border-sky-500/20 animate-ping absolute" />
-                    <div className="w-12 h-12 rounded-full border border-sky-400/40 animate-pulse absolute" />
-                    <div className="w-10 h-10 rounded-full bg-sky-500/10 border border-sky-500/60 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-sky-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        />
-                      </svg>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <p className={`text-xs font-semibold ${
-                  status === "error" ? "text-rose-400" : "text-slate-200"
-                }`}>
-                  {status === "error"
-                    ? "Streaming Error"
-                    : status === "waiting_device"
-                    ? "Connecting to Screen Pipe..."
-                    : status === "connecting_ws"
-                    ? "Connecting to Relay..."
-                    : status === "stopped"
-                    ? "Stream Inactive"
-                    : "Connecting..."}
-                </p>
-                <p className="text-[11px] text-slate-400 max-w-[220px] leading-relaxed break-words">
-                  {statusMessage}
-                </p>
-              </div>
-
-              {(status === "stopped" || status === "error") && (
-                <button
-                  onClick={startStream}
-                  className="px-3 py-1.5 text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition shadow-sm"
-                >
-                  Restart Stream
-                </button>
+              <span className="flex items-center gap-1">
+                <span className="text-slate-500 font-medium">FRAMES:</span>
+                <span className="text-slate-300 font-semibold">{frameCount}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {screenResolution && (
+                <>
+                  <span className="text-slate-400">{screenResolution}</span>
+                  <span className="text-slate-700">|</span>
+                </>
               )}
+              <span className="text-slate-500 font-medium">TIME:</span>
+              <span className="text-slate-200 font-semibold">{formatTimer(streamDuration)}</span>
+            </div>
+          </div>
 
-              {status === "waiting_device" && (
-                <div className="text-[10px] text-slate-500 bg-slate-900/60 rounded p-2 max-w-[220px]">
-                  💡 Tip: Ensure target phone has SPApp Accessibility Service ON and the latest app installed.
+          {/* Phone Frame */}
+          <div className="relative w-full aspect-[9/19] bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 rounded-[48px] p-3 shadow-2xl shadow-cyan-950/20 border-[3px] border-slate-700/70 ring-1 ring-white/10 flex flex-col items-center justify-between">
+            {/* Top Dynamic Island / Speaker Pill */}
+            <div className="absolute top-3.5 z-20 flex items-center justify-center gap-2 px-3.5 py-1 rounded-full bg-slate-950 border border-slate-800 shadow-inner">
+              <div className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-700/80 flex items-center justify-center">
+                <div className="w-1 h-1 rounded-full bg-cyan-500/80 animate-pulse" />
+              </div>
+              <div className="w-9 h-1 rounded-full bg-slate-800" />
+            </div>
+
+            {/* Screen Viewport Canvas */}
+            <div className="w-full h-full bg-black rounded-[36px] overflow-hidden relative flex items-center justify-center">
+              <canvas
+                ref={canvasRef}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseUp={handleCanvasMouseUp}
+                className={`w-full h-full object-contain select-none ${
+                  hasFirstFrame ? "block cursor-pointer active:cursor-grabbing" : "hidden"
+                }`}
+              />
+
+              {!hasFirstFrame && (
+                <div className="flex flex-col items-center justify-center text-center p-6 space-y-4">
+                  <div className="relative flex items-center justify-center">
+                    {status === "error" ? (
+                      <div className="w-12 h-12 rounded-full bg-rose-950 border border-rose-600 flex items-center justify-center">
+                        <svg className="w-6 h-6 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-16 h-16 rounded-full border border-sky-500/20 animate-ping absolute" />
+                        <div className="w-12 h-12 rounded-full border border-sky-400/40 animate-pulse absolute" />
+                        <div className="w-10 h-10 rounded-full bg-sky-500/10 border border-sky-500/60 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-sky-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className={`text-xs font-semibold ${status === "error" ? "text-rose-400" : "text-slate-200"}`}>
+                      {status === "error" ? "Stream Stalled" : "Awaiting Device Screen..."}
+                    </p>
+                    <p className="text-[11px] text-slate-400 max-w-[200px] leading-relaxed break-words">
+                      {statusMessage}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={startStream}
+                    className="px-3.5 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-xl shadow-md shadow-sky-950 transition"
+                  >
+                    Retry Connection
+                  </button>
                 </div>
               )}
+
+              {/* Bottom White Indicator Pill */}
+              <div className="absolute bottom-2.5 z-20 w-24 h-1 bg-slate-400/50 rounded-full backdrop-blur-sm pointer-events-none" />
             </div>
-          )}
+          </div>
 
-          {/* Bottom Home Indicator Bar */}
-          <div className="absolute bottom-2 z-20 w-24 h-1 bg-slate-700/60 rounded-full backdrop-blur-sm pointer-events-none" />
-        </div>
-      </div>
+          {/* Under-Phone Hardware Nav Bar */}
+          <div className="w-full mt-3 flex items-center justify-between p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg backdrop-blur">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => handleSendGlobalKey("RECENTS")}
+                disabled={!hasFirstFrame || !isControlEnabled}
+                title="Recent Apps (Overview)"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium border border-slate-700/50 transition disabled:opacity-40"
+              >
+                <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <rect x="5" y="5" width="14" height="14" rx="2" strokeWidth={2} />
+                </svg>
+                <span>Apps</span>
+              </button>
 
-      {/* Remote Navigation Control Bar (AnyDesk Style Controls) */}
-      <div className="w-full max-w-md mt-3 flex items-center justify-between gap-1.5 px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800 shadow-lg backdrop-blur-md">
-        <div className="flex items-center gap-1.5">
-          {/* Recents Button */}
-          <button
-            onClick={() => handleSendGlobalKey("RECENTS")}
-            disabled={!hasFirstFrame || !isControlEnabled}
-            title="Recent Apps (Overview)"
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <rect x="5" y="5" width="14" height="14" rx="2" strokeWidth={2} />
-            </svg>
-            <span>Apps</span>
-          </button>
+              <button
+                onClick={() => handleSendGlobalKey("HOME")}
+                disabled={!hasFirstFrame || !isControlEnabled}
+                title="Home Screen"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium border border-slate-700/50 transition disabled:opacity-40"
+              >
+                <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="7" strokeWidth={2} />
+                </svg>
+                <span>Home</span>
+              </button>
 
-          {/* Home Button */}
-          <button
-            onClick={() => handleSendGlobalKey("HOME")}
-            disabled={!hasFirstFrame || !isControlEnabled}
-            title="Home Screen"
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="6" strokeWidth={2} />
-            </svg>
-            <span>Home</span>
-          </button>
+              <button
+                onClick={() => handleSendGlobalKey("BACK")}
+                disabled={!hasFirstFrame || !isControlEnabled}
+                title="Back Button"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium border border-slate-700/50 transition disabled:opacity-40"
+              >
+                <svg className="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                <span>Back</span>
+              </button>
+            </div>
 
-          {/* Back Button */}
-          <button
-            onClick={() => handleSendGlobalKey("BACK")}
-            disabled={!hasFirstFrame || !isControlEnabled}
-            title="Back Button"
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            <span>Back</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {/* Text Input Modal Trigger */}
-          <button
-            onClick={() => setShowInputModal((prev) => !prev)}
-            disabled={!hasFirstFrame || !isControlEnabled}
-            title="Type Text into Active Field"
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 ${
-              showInputModal
-                ? "bg-sky-600 text-white"
-                : "bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700"
-            }`}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M7 6h10M7 18h10" />
-            </svg>
-            <span>Type</span>
-          </button>
-
-          {/* Touch Control Toggle */}
-          <button
-            onClick={() => setIsControlEnabled((prev) => !prev)}
-            title={isControlEnabled ? "Remote Control Active (Click to Pause)" : "Remote Control Paused (Click to Enable)"}
-            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition ${
-              isControlEnabled
-                ? "bg-emerald-950/80 text-emerald-400 border border-emerald-600/60"
-                : "bg-slate-800 text-slate-400 border border-slate-700"
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${isControlEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-            <span>{isControlEnabled ? "Control ON" : "View Only"}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Remote Text Injection Dropdown Bar */}
-      {showInputModal && (
-        <div className="w-full max-w-md mt-2 flex items-center gap-2 p-2 rounded-xl bg-slate-900 border border-sky-500/40 shadow-lg">
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSendText();
-            }}
-            placeholder="Type text and press Send..."
-            className="flex-1 px-3 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500"
-            autoFocus
-          />
-          <button
-            onClick={() => handleSendText()}
-            className="px-3 py-1.5 text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition"
-          >
-            Send
-          </button>
-        </div>
-      )}
-
-      {/* Bottom Control Bar */}
-      <div className="w-full max-w-md mt-2 flex flex-wrap items-center justify-center gap-2 pt-1">
-
-        <button
-          onClick={handleSnapshot}
-          disabled={!hasFirstFrame}
-          title="Save screenshot"
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs font-medium transition disabled:opacity-40 disabled:hover:bg-slate-800 shadow-sm"
-        >
-          <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span>Snapshot</span>
-        </button>
-
-        {status === "streaming" || status === "waiting_device" ? (
-          <button
-            onClick={() => stopStream(true)}
-            title="Stop screen stream"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-medium transition shadow-sm"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-            </svg>
-            <span>Stop Stream</span>
-          </button>
-        ) : (
-          <button
-            onClick={startStream}
-            title="Start screen stream"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition shadow-sm"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>Start Stream</span>
-          </button>
-        )}
-
-        <button
-          onClick={startStream}
-          title="Reconnect / Re-sync"
-          className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition shadow-sm"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-        </button>
-
-        {!isStandalone && onPopOut && (
-          <button
-            onClick={onPopOut}
-            title="Open in separate window"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-700/80 hover:bg-sky-600 text-white text-xs font-medium transition shadow-sm"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            <span>Pop Out</span>
-          </button>
-        )}
-      </div>
+            <button
+              onClick={() => setIsControlEnabled((prev) => !prev)}
+              title={isControlEnabled ? "Touch Gestures Active" : "Touch Gestures Paused"}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 border ${
+                isControlEnabled
+                  ? "bg-emerald-950/80 text-emerald-400 border-emerald-600/60 shadow-sm shadow-emerald-950"
+                  : "bg-slate-800 text-slate-400 border-slate-700"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isControlEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+              <span>{isControlEnabled ? "Touch ON" : "View Only"}</span>
+            </button>
+          </div>
         </div>
 
-        {/* Right Column: Dedicated Remote Control Station */}
+        {/* Right Column: Sleek AnyDesk-Style Control Console */}
         {!isFullscreen && (
-          <div className="w-full max-w-md xl:w-80 flex flex-col gap-4 bg-slate-900/95 border border-slate-800 rounded-2xl p-5 shadow-2xl backdrop-blur">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400">
+          <div className="w-full max-w-md lg:w-96 flex flex-col gap-4 bg-slate-900/80 border border-slate-800/90 rounded-3xl p-5 shadow-2xl ring-1 ring-white/5 backdrop-blur-xl">
+            {/* Header / Dispatch Status */}
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-100">Remote Control Station</h3>
-                  <p className="text-[11px] text-slate-400">Direct Device Remote Actions</p>
+                  <h3 className="text-sm font-bold text-slate-100 tracking-tight">Remote Control Deck</h3>
+                  <p className="text-[11px] text-slate-400">Interactive Device Automation</p>
                 </div>
               </div>
-              {lastActionFeedback && (
-                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
+
+              {lastActionFeedback ? (
+                <span className="text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-700/80 shadow-sm animate-pulse">
                   {lastActionFeedback}
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                  Ready
                 </span>
               )}
             </div>
 
-            {/* Dispatch Channel Selector */}
-            <div className="flex items-center justify-between text-xs bg-slate-950/70 p-2 rounded-xl border border-slate-800/80">
-              <span className="text-slate-400 text-[11px]">Channel:</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setForceCommandMode(false)}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-medium transition ${
-                    !forceCommandMode
-                      ? "bg-sky-600 text-white shadow-sm"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Live WebSocket
-                </button>
-                <button
-                  onClick={() => setForceCommandMode(true)}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-medium transition ${
-                    forceCommandMode
-                      ? "bg-amber-600 text-white shadow-sm"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Command Queue
-                </button>
-              </div>
-            </div>
-
-            {/* Android Navigation Keys */}
+            {/* Quick System Action Cards */}
             <div>
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                System Navigation
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2 px-1">
+                Quick Actions
               </span>
               <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => handleSendGlobalKey("BACK")}
-                  disabled={!hasFirstFrame}
-                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
-                >
-                  <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  <span className="text-xs font-semibold">Back</span>
-                </button>
-                <button
-                  onClick={() => handleSendGlobalKey("HOME")}
-                  disabled={!hasFirstFrame}
-                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
-                >
-                  <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="7" strokeWidth={2} />
-                  </svg>
-                  <span className="text-xs font-semibold">Home</span>
-                </button>
-                <button
-                  onClick={() => handleSendGlobalKey("RECENTS")}
-                  disabled={!hasFirstFrame}
-                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700/60 transition disabled:opacity-40"
-                >
-                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <rect x="5" y="5" width="14" height="14" rx="2" strokeWidth={2} />
-                  </svg>
-                  <span className="text-xs font-semibold">Recents</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                <button
                   onClick={() => handleSendGlobalKey("NOTIFICATIONS")}
                   disabled={!hasFirstFrame}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-800/90 active:scale-95 text-slate-200 border border-slate-800/80 hover:border-slate-700 transition disabled:opacity-40 shadow-sm group"
                 >
-                  <span>🔔 Alerts</span>
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-300">Alerts</span>
                 </button>
+
                 <button
                   onClick={() => handleSendGlobalKey("QUICK_SETTINGS")}
                   disabled={!hasFirstFrame}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-800/90 active:scale-95 text-slate-200 border border-slate-800/80 hover:border-slate-700 transition disabled:opacity-40 shadow-sm group"
                 >
-                  <span>⚙ Settings</span>
+                  <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 group-hover:scale-110 transition">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-300">Settings</span>
                 </button>
+
                 <button
                   onClick={() => handleSendGlobalKey("LOCK_SCREEN")}
                   disabled={!hasFirstFrame}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700 text-rose-300 text-[11px] font-medium border border-slate-700/40 transition disabled:opacity-40"
+                  className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-800/90 active:scale-95 text-slate-200 border border-slate-800/80 hover:border-slate-700 transition disabled:opacity-40 shadow-sm group"
                 >
-                  <span>🔒 Lock</span>
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 group-hover:scale-110 transition">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-300">Lock Screen</span>
                 </button>
               </div>
             </div>
 
-            {/* Scroll & Gesture Pad */}
+            {/* Directional Touch & Scroll Pad (D-Pad) */}
             <div>
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                Scroll & Gesture Pad
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2 px-1">
+                Directional Scroll & Swipe Pad
               </span>
-              <div className="flex flex-col items-center gap-1.5 bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+              <div className="flex flex-col items-center gap-2 bg-slate-950/70 p-4 rounded-3xl border border-slate-800/80 shadow-inner">
                 <button
                   onClick={() => handleScroll("UP")}
                   disabled={!hasFirstFrame}
-                  title="Scroll Up (Swipe Downwards)"
-                  className="w-24 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                  title="Scroll Content Down (Swipe Upwards)"
+                  className="w-28 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-700/60 shadow-sm transition disabled:opacity-40"
                 >
                   <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
                   </svg>
-                  <span>Up</span>
+                  <span>Scroll Up</span>
                 </button>
-                <div className="flex items-center gap-2">
+
+                <div className="flex items-center gap-2.5">
                   <button
                     onClick={() => handleScroll("LEFT")}
                     disabled={!hasFirstFrame}
                     title="Swipe Left"
-                    className="w-20 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                    className="w-24 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 border border-slate-700/60 shadow-sm transition disabled:opacity-40"
                   >
                     <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
                     </svg>
                     <span>Left</span>
                   </button>
+
                   <button
                     onClick={handleTapCenter}
                     disabled={!hasFirstFrame}
                     title="Tap Screen Center"
-                    className="w-16 py-1.5 rounded-lg bg-sky-600/90 hover:bg-sky-500 active:scale-95 text-white text-xs font-bold flex items-center justify-center transition disabled:opacity-40"
+                    className="w-20 py-2.5 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 active:scale-90 text-white text-xs font-extrabold shadow-lg shadow-sky-950 transition disabled:opacity-40 flex items-center justify-center"
                   >
                     <span>TAP</span>
                   </button>
+
                   <button
                     onClick={() => handleScroll("RIGHT")}
                     disabled={!hasFirstFrame}
                     title="Swipe Right"
-                    className="w-20 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                    className="w-24 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 border border-slate-700/60 shadow-sm transition disabled:opacity-40"
                   >
                     <span>Right</span>
                     <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
                 </div>
+
                 <button
                   onClick={() => handleScroll("DOWN")}
                   disabled={!hasFirstFrame}
-                  title="Scroll Down (Swipe Upwards)"
-                  className="w-24 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium flex items-center justify-center gap-1 transition disabled:opacity-40"
+                  title="Scroll Content Up (Swipe Downwards)"
+                  className="w-28 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-700/60 shadow-sm transition disabled:opacity-40"
                 >
                   <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
                   </svg>
-                  <span>Down</span>
+                  <span>Scroll Down</span>
                 </button>
               </div>
             </div>
 
-            {/* Remote Text Injection */}
+            {/* Remote Keyboard & Text Injector */}
             <div>
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                Type Text into Phone
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2 px-1">
+                Remote Keyboard
               </span>
-              <div className="flex flex-col gap-2">
+              <div className="bg-slate-950/70 p-3.5 rounded-2xl border border-slate-800/80 shadow-inner flex flex-col gap-2.5">
                 <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSendText();
-                    }}
-                    placeholder="Enter text to type..."
-                    className="flex-1 px-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500"
-                  />
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSendText();
+                      }}
+                      placeholder="Type text for active input..."
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/50 transition"
+                    />
+                    <svg className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M7 6h10M7 18h10" />
+                    </svg>
+                  </div>
                   <button
                     onClick={() => handleSendText()}
                     disabled={!inputText.trim()}
-                    className="px-3.5 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-xl transition disabled:opacity-40 shadow-sm"
+                    className="px-4 py-2 text-xs font-bold bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-xl shadow-md shadow-sky-950 transition disabled:opacity-40"
                   >
                     Send
                   </button>
                 </div>
-                <div className="flex items-center justify-between px-1">
-                  <label className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none">
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={pressEnterOnSend}
                       onChange={(e) => setPressEnterOnSend(e.target.checked)}
-                      className="rounded border-slate-700 text-sky-600 focus:ring-0 bg-slate-950"
+                      className="rounded border-slate-700 text-sky-600 focus:ring-0 bg-slate-900 w-3.5 h-3.5"
                     />
-                    <span>Press Enter after typing</span>
+                    <span>Press Enter (Submit) after typing</span>
                   </label>
                   {inputText && (
                     <button
                       onClick={() => setInputText("")}
-                      className="text-[11px] text-slate-500 hover:text-slate-300 transition"
+                      className="text-slate-500 hover:text-slate-300 font-medium transition"
                     >
                       Clear
                     </button>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Channel Mode Toggle */}
+            <div className="flex items-center justify-between text-xs bg-slate-950/50 px-3 py-2 rounded-xl border border-slate-800/60 mt-1">
+              <span className="text-[11px] text-slate-400 font-medium">Channel:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setForceCommandMode(false)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition ${
+                    !forceCommandMode
+                      ? "bg-sky-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  WebSocket 0ms
+                </button>
+                <button
+                  onClick={() => setForceCommandMode(true)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition ${
+                    forceCommandMode
+                      ? "bg-amber-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  HTTP Queue
+                </button>
               </div>
             </div>
           </div>
