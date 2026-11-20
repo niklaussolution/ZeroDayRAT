@@ -376,24 +376,19 @@ object ScreenStreamManager {
         }
         Log.i(TAG, "handleRemoteInput received: $json")
 
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
-        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display ?: wm?.defaultDisplay
-        } else {
-            @Suppress("DEPRECATION")
-            wm?.defaultDisplay
-        }
-
-        val realMetrics = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION")
-        display?.getRealMetrics(realMetrics) ?: run {
+        val (screenWidth, screenHeight) = try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && wm != null) {
+                val bounds = wm.maximumWindowMetrics.bounds
+                Pair(bounds.width().toFloat(), bounds.height().toFloat())
+            } else {
+                val dm = context.resources.displayMetrics
+                Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
+            }
+        } catch (e: Exception) {
             val dm = context.resources.displayMetrics
-            realMetrics.widthPixels = dm.widthPixels
-            realMetrics.heightPixels = dm.heightPixels
+            Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
         }
-
-        val screenWidth = realMetrics.widthPixels.toFloat()
-        val screenHeight = realMetrics.heightPixels.toFloat()
 
         when (json.optString("type")) {
             "tap" -> {
@@ -402,7 +397,7 @@ object ScreenStreamManager {
                 if (normX >= 0.0 && normY >= 0.0) {
                     val px = (normX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
                     val py = (normY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
-                    val duration = json.optLong("duration", 50L)
+                    val duration = json.optLong("duration", 100L)
                     val res = a11y.injectTap(px, py, duration)
                     Log.i(TAG, "Executed tap at ($px, $py) -> res=$res")
                 }
@@ -417,7 +412,7 @@ object ScreenStreamManager {
                     val sy = (startNormY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
                     val ex = (endNormX * screenWidth).toFloat().coerceIn(0f, screenWidth - 1f)
                     val ey = (endNormY * screenHeight).toFloat().coerceIn(0f, screenHeight - 1f)
-                    val duration = json.optLong("duration", 250L)
+                    val duration = json.optLong("duration", 300L)
                     val res = a11y.injectSwipe(sx, sy, ex, ey, duration)
                     Log.i(TAG, "Executed swipe from ($sx, $sy) to ($ex, $ey) -> res=$res")
                 }

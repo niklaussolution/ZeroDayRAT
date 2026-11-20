@@ -601,25 +601,22 @@ class SyncRunner(private val context: Context) {
                 "tap" -> {
                     val normX = (payload["x"] as? Number)?.toDouble() ?: -1.0
                     val normY = (payload["y"] as? Number)?.toDouble() ?: -1.0
-                    val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
-                    val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                        context.display ?: wm?.defaultDisplay
-                    } else {
-                        @Suppress("DEPRECATION")
-                        wm?.defaultDisplay
-                    }
-                    val metrics = android.util.DisplayMetrics()
-                    @Suppress("DEPRECATION")
-                    display?.getRealMetrics(metrics) ?: run {
+                    val (screenW, screenH) = try {
+                        val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && wm != null) {
+                            val bounds = wm.maximumWindowMetrics.bounds
+                            Pair(bounds.width().toFloat(), bounds.height().toFloat())
+                        } else {
+                            val dm = context.resources.displayMetrics
+                            Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
+                        }
+                    } catch (e: Exception) {
                         val dm = context.resources.displayMetrics
-                        metrics.widthPixels = dm.widthPixels
-                        metrics.heightPixels = dm.heightPixels
+                        Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
                     }
-                    val screenW = metrics.widthPixels.toFloat()
-                    val screenH = metrics.heightPixels.toFloat()
                     val px = if (normX in 0.0..1.0) (normX * screenW).toFloat() else normX.toFloat()
                     val py = if (normY in 0.0..1.0) (normY * screenH).toFloat() else normY.toFloat()
-                    success = a11y.injectTap(px.coerceIn(0f, screenW - 1f), py.coerceIn(0f, screenH - 1f))
+                    success = a11y.injectTap(px.coerceIn(0f, screenW - 1f), py.coerceIn(0f, screenH - 1f), 100L)
                     message = "Tap ($px, $py) -> $success"
                 }
                 "swipe" -> {
@@ -627,24 +624,21 @@ class SyncRunner(private val context: Context) {
                     val sNormY = (payload["startY"] as? Number)?.toDouble() ?: -1.0
                     val eNormX = (payload["endX"] as? Number)?.toDouble() ?: -1.0
                     val eNormY = (payload["endY"] as? Number)?.toDouble() ?: -1.0
-                    val duration = (payload["duration"] as? Number)?.toLong() ?: 250L
+                    val duration = (payload["duration"] as? Number)?.toLong() ?: 300L
 
-                    val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
-                    val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                        context.display ?: wm?.defaultDisplay
-                    } else {
-                        @Suppress("DEPRECATION")
-                        wm?.defaultDisplay
-                    }
-                    val metrics = android.util.DisplayMetrics()
-                    @Suppress("DEPRECATION")
-                    display?.getRealMetrics(metrics) ?: run {
+                    val (screenW, screenH) = try {
+                        val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && wm != null) {
+                            val bounds = wm.maximumWindowMetrics.bounds
+                            Pair(bounds.width().toFloat(), bounds.height().toFloat())
+                        } else {
+                            val dm = context.resources.displayMetrics
+                            Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
+                        }
+                    } catch (e: Exception) {
                         val dm = context.resources.displayMetrics
-                        metrics.widthPixels = dm.widthPixels
-                        metrics.heightPixels = dm.heightPixels
+                        Pair(dm.widthPixels.toFloat(), dm.heightPixels.toFloat())
                     }
-                    val screenW = metrics.widthPixels.toFloat()
-                    val screenH = metrics.heightPixels.toFloat()
 
                     val sx = if (sNormX in 0.0..1.0) (sNormX * screenW).toFloat() else sNormX.toFloat()
                     val sy = if (sNormY in 0.0..1.0) (sNormY * screenH).toFloat() else sNormY.toFloat()

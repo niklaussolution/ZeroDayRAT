@@ -7,6 +7,7 @@ import type { Device } from "../api/types";
 import FeatureFlagsCard from "../components/FeatureFlagsCard";
 import RemoteActionsCard from "../components/RemoteActionsCard";
 import ScreenStreamCard from "../components/ScreenStreamCard";
+import RemoteControlCard from "../components/RemoteControlCard";
 import CameraStreamCard from "../components/CameraStreamCard";
 import AudioStreamCard from "../components/AudioStreamCard";
 import LocationCard from "../components/LocationCard";
@@ -167,6 +168,13 @@ export default function DeviceDetailPage() {
           deviceName={device.device_label}
           isActive={isStreamActive}
           onToggleActive={setIsStreamActive}
+        />
+
+        <RemoteControlCard
+          deviceId={id}
+          deviceName={device.device_label}
+          isStreamActive={isStreamActive}
+          onStartStream={() => setIsStreamActive(true)}
         />
 
         <CameraStreamCard

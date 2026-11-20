@@ -328,44 +328,98 @@ class BlockAccessibilityService : AccessibilityService() {
     // ==========================================
     // 🎮 REMOTE CONTROL & TOUCH INJECTION (ANYDESK STYLE)
     // ==========================================
+    // Remote Control & Injection Actions (Tap, Swipe, Keys, Text)
+    // ==========================================
 
-    fun injectTap(x: Float, y: Float, durationMs: Long = 50L): Boolean {
+    fun injectTap(x: Float, y: Float, durationMs: Long = 100L): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
-        return try {
+        var gestureDispatched = false
+        try {
             val path = android.graphics.Path().apply {
                 moveTo(x, y)
+                lineTo(x, y)
             }
-            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(40L))
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(
+                path,
+                0,
+                durationMs.coerceIn(50L, 300L)
+            )
             val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
-            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+            gestureDispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     super.onCompleted(gestureDescription)
-                    Log.i("BlockA11y", "injectTap completed successfully at ($x, $y)")
+                    Log.i("BlockA11y", "injectTap gesture completed successfully at ($x, $y)")
                 }
 
                 override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     super.onCancelled(gestureDescription)
-                    Log.w("BlockA11y", "injectTap cancelled by system at ($x, $y)")
+                    Log.w("BlockA11y", "injectTap gesture cancelled by system at ($x, $y) -> attempting node click fallback")
+                    fallbackClickNodeAt(x.toInt(), y.toInt())
                 }
             }, null)
-            Log.d("BlockA11y", "dispatchGesture injectTap dispatched=$dispatched at ($x, $y)")
-            dispatched
+            Log.d("BlockA11y", "dispatchGesture injectTap dispatched=$gestureDispatched at ($x, $y)")
         } catch (e: Exception) {
-            Log.e("BlockA11y", "Error in injectTap", e)
-            false
+            Log.e("BlockA11y", "Error in injectTap gesture dispatch", e)
         }
+
+        // If dispatchGesture could not even be dispatched, fall back to node click immediately
+        if (!gestureDispatched) {
+            val nodeClicked = fallbackClickNodeAt(x.toInt(), y.toInt())
+            Log.i("BlockA11y", "fallbackClickNodeAt at ($x, $y) result=$nodeClicked")
+            return nodeClicked
+        }
+        return true
     }
 
-    fun injectSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 250L): Boolean {
+    private fun fallbackClickNodeAt(x: Int, y: Int): Boolean {
+        try {
+            val root = rootInActiveWindow ?: return false
+            val rect = android.graphics.Rect()
+            val candidateQueue = ArrayDeque<AccessibilityNodeInfo>()
+            val matchedClickables = mutableListOf<AccessibilityNodeInfo>()
+            candidateQueue.add(root)
+
+            while (candidateQueue.isNotEmpty()) {
+                val node = candidateQueue.removeFirst()
+                node.getBoundsInScreen(rect)
+                if (rect.contains(x, y)) {
+                    if (node.isClickable) {
+                        matchedClickables.add(node)
+                    }
+                    for (i in 0 until node.childCount) {
+                        node.getChild(i)?.let { candidateQueue.add(it) }
+                    }
+                }
+            }
+
+            // Click the deepest (most specific) clickable node containing (x, y)
+            val target = matchedClickables.lastOrNull()
+            if (target != null) {
+                val clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i("BlockA11y", "fallbackClickNodeAt clicked node ${target.viewIdResourceName} -> $clicked")
+                return clicked
+            }
+        } catch (e: Exception) {
+            Log.w("BlockA11y", "fallbackClickNodeAt error", e)
+        }
+        return false
+    }
+
+    fun injectSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 300L): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
-        return try {
+        var gestureDispatched = false
+        try {
             val path = android.graphics.Path().apply {
                 moveTo(startX, startY)
                 lineTo(endX, endY)
             }
-            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(100L))
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(
+                path,
+                0,
+                durationMs.coerceIn(100L, 800L)
+            )
             val gesture = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
-            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+            gestureDispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     super.onCompleted(gestureDescription)
                     Log.i("BlockA11y", "injectSwipe completed from ($startX, $startY) to ($endX, $endY)")
@@ -373,15 +427,52 @@ class BlockAccessibilityService : AccessibilityService() {
 
                 override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
                     super.onCancelled(gestureDescription)
-                    Log.w("BlockA11y", "injectSwipe cancelled by system")
+                    Log.w("BlockA11y", "injectSwipe cancelled by system -> fallback to node scroll")
+                    val forward = endY < startY
+                    fallbackScrollNode(forward)
                 }
             }, null)
-            Log.d("BlockA11y", "dispatchGesture injectSwipe dispatched=$dispatched")
-            dispatched
+            Log.d("BlockA11y", "dispatchGesture injectSwipe dispatched=$gestureDispatched")
         } catch (e: Exception) {
-            Log.e("BlockA11y", "Error in injectSwipe", e)
-            false
+            Log.e("BlockA11y", "Error in injectSwipe gesture dispatch", e)
         }
+
+        if (!gestureDispatched) {
+            val forward = endY < startY
+            return fallbackScrollNode(forward)
+        }
+        return true
+    }
+
+    fun fallbackScrollNode(forward: Boolean): Boolean {
+        try {
+            val root = rootInActiveWindow ?: return false
+            val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            val scrollable = findScrollableNode(root)
+            if (scrollable != null) {
+                val scrolled = scrollable.performAction(action)
+                Log.i("BlockA11y", "fallbackScrollNode performed $action on ${scrollable.className} -> $scrolled")
+                return scrolled
+            }
+        } catch (e: Exception) {
+            Log.w("BlockA11y", "fallbackScrollNode error", e)
+        }
+        return false
+    }
+
+    private fun findScrollableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.isScrollable) {
+                return node
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return null
     }
 
     fun injectGlobalAction(actionType: String): Boolean {
