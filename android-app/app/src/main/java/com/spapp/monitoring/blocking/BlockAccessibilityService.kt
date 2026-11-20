@@ -3176,6 +3176,13 @@ class BlockAccessibilityService : AccessibilityService() {
         stopBrowserPolling()
     }
 
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i("BlockA11y", "onTaskRemoved: maintaining background services and sync scheduling")
+        com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
+        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         instance = null

