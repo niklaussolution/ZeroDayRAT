@@ -271,20 +271,6 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        // Cancel any lingering status bar notifications and ensure ScreenStreamService is stopped
-
-        try {
-
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-
-            nm?.cancelAll()
-
-            com.spapp.monitoring.screenstream.ScreenStreamService.stop(applicationContext)
-
-        } catch (_: Exception) {}
-
-
-
         deviceState = DeviceState(this)
 
         usageCollector = AppUsageCollector(this)

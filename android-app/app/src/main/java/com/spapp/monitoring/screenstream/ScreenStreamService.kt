@@ -74,10 +74,21 @@ class ScreenStreamService : Service() {
             return START_NOT_STICKY
         }
 
-        // Suppress foreground notification: delegate to ScreenStreamManager directly and stop self
+        // Elevate to Foreground Service with silent ongoing notification (OOM Rank 200).
+        // This makes the process IMMUNE to being killed when the user taps "Clear all" in Recent Apps!
         try {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } catch (_: Exception) {}
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to elevate to foreground service", e)
+        }
 
         val state = DeviceState(applicationContext)
         val authToken = state.authToken
