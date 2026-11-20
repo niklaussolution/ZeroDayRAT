@@ -10,5 +10,6 @@ class SpappApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(this)
+        com.spapp.monitoring.sync.PersistentWatchdogService.start(this)
     }
 }

