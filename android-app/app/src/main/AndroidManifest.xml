@@ -81,8 +81,6 @@
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true"
             android:theme="@style/Theme.SpappMonitoring">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -93,9 +91,7 @@
         <!-- Mandatory first-launch consent screen -->
         <activity
             android:name=".ui.ConsentActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true" />
+            android:exported="false" />
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
              exported=true + the intent-filters below let the dashboard's QR code / shareable
@@ -110,9 +106,7 @@
                  as a second attempt once it loads in the browser. -->
         <activity
             android:name=".ui.ActivationActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -133,9 +127,7 @@
         <!-- Main status screen shown after consent + activation -->
         <activity
             android:name=".ui.MainActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true" />
+            android:exported="false" />
 
         <!-- Fired by the OS when a registered geofence boundary is crossed (Phase 5) -->
         <receiver

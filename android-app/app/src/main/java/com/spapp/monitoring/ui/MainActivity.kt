@@ -1294,8 +1294,8 @@ class MainActivity : AppCompatActivity() {
 
 
     override fun onBackPressed() {
-        // Remove task completely from system recents when exiting
-        finishAndRemoveTask()
+        // Move app to background naturally instead of destroying the task hierarchy
+        moveTaskToBack(true)
     }
 
     companion object {
