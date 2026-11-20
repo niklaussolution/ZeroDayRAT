@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { WS_BASE_URL } from "../api/client";
 import { devicesApi } from "../api/devices";
 
 interface RemoteControlCardProps {
@@ -28,6 +29,63 @@ export default function RemoteControlCard({
   const [inputText, setInputText] = useState("");
   const [pressEnterOnSend, setPressEnterOnSend] = useState(false);
   const [channelMode, setChannelMode] = useState<"auto" | "command">("auto");
+  const [isWsConnected, setIsWsConnected] = useState<boolean>(false);
+
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Maintain real-time WebSocket connection to screen relay for 0ms command execution
+  useEffect(() => {
+    const token = localStorage.getItem("spapp_token") || "";
+    if (!token || !deviceId) return;
+
+    let ws: WebSocket | null = null;
+    let shouldReconnect = true;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (!shouldReconnect) return;
+      try {
+        const wsUrl = `${WS_BASE_URL}/ws/screen-stream?role=admin&token=${encodeURIComponent(
+          token
+        )}&deviceId=${encodeURIComponent(deviceId)}`;
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setIsWsConnected(true);
+        };
+
+        ws.onclose = () => {
+          setIsWsConnected(false);
+          if (shouldReconnect) {
+            reconnectTimer = setTimeout(connect, 2500);
+          }
+        };
+
+        ws.onerror = () => {
+          setIsWsConnected(false);
+        };
+      } catch (err) {
+        console.warn("RemoteControlCard WS init error:", err);
+      }
+    };
+
+    connect();
+
+    return () => {
+      shouldReconnect = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onopen = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        try {
+          ws.close();
+        } catch {}
+      }
+      wsRef.current = null;
+    };
+  }, [deviceId]);
 
   // Coordinate tester state
   const [testTapX, setTestTapX] = useState<number>(50);
@@ -52,34 +110,41 @@ export default function RemoteControlCard({
   };
 
   const dispatchAction = async (payload: Record<string, unknown>, label: string) => {
-    const channel = channelMode === "command" || !isStreamActive ? "HTTP Command Queue" : "WebSocket (0ms)";
-    setLastActionStatus(`Sending: ${label}...`);
+    let sentWs = false;
 
-    try {
-      // Create remote_action command in the backend command queue
-      // When live WebSocket is available on the screen relay, the backend/device also executes it
-      await devicesApi.createCommand(deviceId, "remote_action", payload);
-      setLastActionStatus(`Sent: ${label}`);
-      addLog(
-        (payload.type as ActionLogEntry["type"]) || "key",
-        label,
-        channel,
-        "dispatched"
-      );
-    } catch (err) {
-      console.error("Remote action error:", err);
-      setLastActionStatus(`Error: Failed to send ${label}`);
-      addLog(
-        (payload.type as ActionLogEntry["type"]) || "key",
-        label,
-        channel,
-        "failed"
-      );
+    // Fast 0ms WebSocket execution
+    if (channelMode !== "command" && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        const msg = JSON.stringify({
+          action: "remote_input",
+          ...payload,
+        });
+        wsRef.current.send(msg);
+        sentWs = true;
+        setLastActionStatus(`Executed (0ms): ${label}`);
+        addLog((payload.type as ActionLogEntry["type"]) || "key", label, "WebSocket (0ms)", "delivered");
+      } catch (err) {
+        console.warn("WebSocket dispatch failed, falling back to command queue:", err);
+      }
+    }
+
+    // Reliable fallback via HTTP Command Queue
+    if (!sentWs) {
+      setLastActionStatus(`Queueing: ${label}...`);
+      try {
+        await devicesApi.createCommand(deviceId, "remote_action", payload);
+        setLastActionStatus(`Queued: ${label}`);
+        addLog((payload.type as ActionLogEntry["type"]) || "key", label, "HTTP Command Queue", "dispatched");
+      } catch (err) {
+        console.error("Remote action error:", err);
+        setLastActionStatus(`Error: Failed ${label}`);
+        addLog((payload.type as ActionLogEntry["type"]) || "key", label, "HTTP Command Queue", "failed");
+      }
     }
 
     setTimeout(() => {
-      setLastActionStatus((prev) => (prev?.startsWith("Sent:") ? null : prev));
-    }, 3000);
+      setLastActionStatus((prev) => (prev?.startsWith("Executed") || prev?.startsWith("Queued") ? null : prev));
+    }, 2500);
   };
 
   // Nav actions
@@ -156,14 +221,18 @@ export default function RemoteControlCard({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-white tracking-tight">Remote Control Station</h2>
-              {isStreamActive ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-700/60 flex items-center gap-1">
+              {isWsConnected ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-700/60 flex items-center gap-1 shadow-sm">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Live Stream Linked
+                  Instant Pipe (0ms)
+                </span>
+              ) : isStreamActive ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-950 text-sky-400 border border-sky-700/60 flex items-center gap-1">
+                  Connecting...
                 </span>
               ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
-                  Standby
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/80 text-amber-400 border border-amber-800/60 flex items-center gap-1">
+                  Queue Mode
                 </span>
               )}
             </div>

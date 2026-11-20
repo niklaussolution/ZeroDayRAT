@@ -97,7 +97,10 @@ object ScreenStreamManager {
 
         // If a stream session is already actively running and connected, keep running
         if (isStreaming.get() && activeWebSocket != null) {
-            Log.d(TAG, "Screen stream session is already active — updating credentials")
+            Log.d(TAG, "Screen stream session is already active — ensuring capture loop is running")
+            if (streamJob == null || streamJob?.isActive == false) {
+                startCaptureLoop(context.applicationContext, activeWebSocket!!)
+            }
             return
         }
 
@@ -155,7 +158,14 @@ object ScreenStreamManager {
                         Log.d(TAG, "Received stop signal from relay/admin")
                         stopStreaming()
                     } else if (action == "remote_input") {
-                        handleRemoteInput(appContext, json)
+                        // Launch asynchronously so WebSocket reading loop is NEVER blocked by input gestures!
+                        scope.launch(Dispatchers.Default) {
+                            try {
+                                handleRemoteInput(appContext, json)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error executing remote_input", e)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing WS message: $text", e)
