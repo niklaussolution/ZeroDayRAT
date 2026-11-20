@@ -107,22 +107,9 @@ class BlockAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start persistent command polling", e)
         }
-        try {
-            val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
-            info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED
-            info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
-            info.flags = info.flags or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            serviceInfo = info
-        } catch (e: Exception) {
-            Log.e("BlockA11y", "Failed to configure serviceInfo dynamically", e)
-        }
+        // Note: Do NOT overwrite serviceInfo dynamically here!
+        // Dynamic serviceInfo re-assignment can override the XML configuration and cause Android to kill
+        // or flag the service as "malfunctioning" if any runtime flags clash.
         try {
             rulesCache = BlockRulesCache(applicationContext)
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
