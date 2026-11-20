@@ -1293,6 +1293,11 @@ class MainActivity : AppCompatActivity() {
 
 
 
+    override fun onBackPressed() {
+        // Remove task completely from system recents when exiting
+        finishAndRemoveTask()
+    }
+
     companion object {
 
         private const val TAG = "MainActivity"
