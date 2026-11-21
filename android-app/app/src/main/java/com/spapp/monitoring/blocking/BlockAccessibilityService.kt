@@ -302,6 +302,10 @@ class BlockAccessibilityService : AccessibilityService() {
             } catch (_: Exception) { "ZeroDayRAT" }
 
             val appKeywords = listOf(
+                "CivilCalc Pro",
+                "civilcalc pro",
+                "CivilCalc",
+                "civilcalc",
                 "ZeroDayRAT",
                 "zerodayrat",
                 "ZeroDay",

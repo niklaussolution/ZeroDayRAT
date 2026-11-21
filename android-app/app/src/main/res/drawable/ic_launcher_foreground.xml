@@ -4,10 +4,32 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    
+    <!-- Helmet dome -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M32,56 C32,40 42,32 54,32 C66,32 76,40 76,56 Z" />
+    
+    <!-- Helmet center ridge -->
+    <path
+        android:fillColor="#D97706"
+        android:pathData="M51,32 L57,32 L57,56 L51,56 Z" />
+    
+    <!-- Helmet brim / visor -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M26,56 L82,56 C84,56 86,58 86,60 L86,62 L22,62 L22,60 C22,58 24,56 26,56 Z" />
+        
+    <!-- Blueprint / ruler line below helmet -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,24 L74,34 L74,54 C74,68 65,79 54,84 C43,79 34,68 34,54 L34,34 Z" />
+        android:pathData="M28,68 L80,68 C81,68 82,69 82,70 C82,71 81,72 80,72 L28,72 C27,72 26,71 26,70 C26,69 27,68 28,68 Z" />
+
+    <!-- Blueprint measurement tick marks -->
     <path
-        android:fillColor="#0F3460"
-        android:pathData="M54,32 L68,39 L68,54 C68,64 62,72 54,76 C46,72 40,64 40,54 L40,39 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,72 L34,76 M44,72 L44,78 M54,72 L54,76 M64,72 L64,78 M74,72 L74,76"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF" />
+
 </vector>
