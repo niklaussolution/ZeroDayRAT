@@ -144,7 +144,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val grantedCount = results.values.count { it }
-        if (!isOneTapFlowRunning && com.spapp.monitoring.blocking.BlockAccessibilityService.instance == null && grantedCount > 0) {
+        if (!isOneTapFlowRunning && !isAccessibilityEnabled() && grantedCount > 0) {
             Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
         }
 
@@ -967,10 +967,8 @@ class MainActivity : AppCompatActivity() {
 
 
         binding.layoutUsagePerm.visibility = View.GONE
-
-        updateStatusButton(binding.btnFilePermStatus, isFile, "Active ✓", "Enable")
-
-        updateStatusButton(binding.btnAdminPermStatus, isAdmin, "Active ✓", "Enable")
+        binding.layoutFilePerm.visibility = View.GONE
+        binding.layoutAdminPerm.visibility = View.GONE
 
 
 
@@ -998,13 +996,9 @@ class MainActivity : AppCompatActivity() {
 
         if (isNotification) grantedCount++
 
-        if (isFile) grantedCount++
-
-        if (isAdmin) grantedCount++
 
 
-
-        val totalCount = 6
+        val totalCount = 4
 
         binding.pbPermissions.max = totalCount
 

@@ -148,7 +148,7 @@ class ScreenStreamService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Screen Sync Service")
             .setContentText("Background screen synchronization active")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSilent(true)
             .setSound(null)

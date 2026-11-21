@@ -38,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "spapp_local_buffer.db"
                 )
+                    .enableMultiInstanceInvalidation()
                     // Pre-release app, no user data worth preserving across schema
                     // changes yet — revisit with a real migration before store release.
                     .fallbackToDestructiveMigration()
