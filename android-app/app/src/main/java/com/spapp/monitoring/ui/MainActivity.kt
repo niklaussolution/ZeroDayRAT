@@ -191,7 +191,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        completeSetupAndClose()
+        handleNextSetupStep()
     }
 
 
@@ -246,13 +246,10 @@ class MainActivity : AppCompatActivity() {
 
 
     private val autostartLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
+        handleNextSetupStep()
     }
 
 
@@ -642,6 +639,22 @@ class MainActivity : AppCompatActivity() {
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to launch battery exemption intent", e)
+            }
+        }
+
+        // Step 5: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All)
+        if (isOemRom() && !autostartPrompted) {
+            autostartPrompted = true
+            val autostartIntent = getAutostartIntent() ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            try {
+                Toast.makeText(this, "Enable Autostart to keep background monitoring active", Toast.LENGTH_SHORT).show()
+                autostartLauncher.launch(autostartIntent)
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch autostart settings", e)
             }
         }
 
@@ -1105,73 +1118,60 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun isOemRom(): Boolean {
-
         val manufacturer = Build.MANUFACTURER.lowercase()
-
         return manufacturer.contains("xiaomi") ||
-
                 manufacturer.contains("redmi") ||
-
+                manufacturer.contains("poco") ||
                 manufacturer.contains("oppo") ||
-
+                manufacturer.contains("realme") ||
                 manufacturer.contains("vivo") ||
-
                 manufacturer.contains("huawei") ||
-
-                manufacturer.contains("honor")
-
+                manufacturer.contains("honor") ||
+                manufacturer.contains("oneplus") ||
+                manufacturer.contains("samsung")
     }
 
-
-
     private fun getAutostartIntent(): Intent? {
-
         val candidates = listOf(
-
             Intent().setComponent(
-
                 ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
-
             ),
-
+            Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
             Intent().setComponent(
-
-                ComponentName("com.letv.android.letvsafe", "com.letv.android.letvsafe.AutobootManageActivity")
-
-            ),
-
-            Intent().setComponent(
-
-                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
-
-            ),
-
-            Intent().setComponent(
-
-                ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
-
-            ),
-
-            Intent().setComponent(
-
                 ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
-
             ),
-
+            Intent().setComponent(
+                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
+            ),
+            Intent().setComponent(
+                ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.letv.android.letvsafe", "com.letv.android.letvsafe.AutobootManageActivity")
+            )
         )
 
         for (intent in candidates) {
-
-            if (packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
-
-                return intent
-
-            }
-
+            try {
+                if (packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                    return intent
+                }
+            } catch (_: Exception) {}
         }
 
         return null
-
     }
 
 
