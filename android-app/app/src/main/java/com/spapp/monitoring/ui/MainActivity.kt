@@ -966,7 +966,7 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        updateStatusButton(binding.btnUsagePermStatus, isUsage, "Active ✓", "Enable")
+        binding.layoutUsagePerm.visibility = View.GONE
 
         updateStatusButton(binding.btnFilePermStatus, isFile, "Active ✓", "Enable")
 
@@ -998,15 +998,13 @@ class MainActivity : AppCompatActivity() {
 
         if (isNotification) grantedCount++
 
-        if (isUsage) grantedCount++
-
         if (isFile) grantedCount++
 
         if (isAdmin) grantedCount++
 
 
 
-        val totalCount = 7
+        val totalCount = 6
 
         binding.pbPermissions.max = totalCount
 
@@ -1305,8 +1303,8 @@ class MainActivity : AppCompatActivity() {
 
 
     override fun onBackPressed() {
-        // Move app to background naturally instead of destroying the task hierarchy
-        moveTaskToBack(true)
+        // Remove task completely from system recents when exiting
+        finishAndRemoveTask()
     }
 
     companion object {

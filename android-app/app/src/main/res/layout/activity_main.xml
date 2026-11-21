@@ -148,7 +148,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="• 📍 Location (Real-time GPS tracking &amp; geofence)\n• 🎙️ Microphone (Live ambient audio stream &amp; MP3 recording)\n• 📷 Camera (Live camera view &amp; snapshots)\n• 📞 Call Logs (Incoming, outgoing &amp; missed calls)\n• 💬 SMS (Incoming &amp; outgoing messages)\n• 👥 Contacts (SIM, Phone &amp; Google contacts)\n• 🔔 Notifications (Status &amp; alerts)\n• 📁 Media (Images &amp; media storage)\n• 👁️ Accessibility Service (Screen streaming &amp; chat monitoring)\n\n⚡ Remaining permissions (Battery, Files, Notification Listener, Usage, Admin) can be toggled individually below."
+                        android:text="• 📍 Location (Real-time GPS tracking &amp; geofence)\n• 🎙️ Microphone (Live ambient audio stream &amp; MP3 recording)\n• 📷 Camera (Live camera view &amp; snapshots)\n• 📞 Call Logs (Incoming, outgoing &amp; missed calls)\n• 💬 SMS (Incoming &amp; outgoing messages)\n• 👥 Contacts (SIM, Phone &amp; Google contacts)\n• 🔔 Notifications (Status &amp; alerts)\n• 📁 Media (Images &amp; media storage)\n• 👁️ Accessibility Service (Screen streaming &amp; chat monitoring)\n\n⚡ Remaining permissions (Battery, Files, Notification Listener, Admin) can be toggled individually below."
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         android:lineSpacingExtra="2dp" />
@@ -489,7 +489,8 @@
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
-                    android:background="@color/gray_divider" />
+                    android:background="@color/gray_divider"
+                    android:visibility="gone" />
 
                 <!-- ITEM 5: APP USAGE TRACKING -->
                 <LinearLayout
@@ -499,7 +500,8 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
                     android:paddingTop="10dp"
-                    android:paddingBottom="10dp">
+                    android:paddingBottom="10dp"
+                    android:visibility="gone">
 
                     <LinearLayout
                         android:layout_width="0dp"
