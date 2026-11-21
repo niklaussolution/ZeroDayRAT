@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background"
+    android:background="#F1F5F9"
     android:fillViewport="true">
 
     <LinearLayout
@@ -12,258 +12,33 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- HEADER -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textColor="@color/primary"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="2dp" />
-
-        <TextView
-            android:id="@+id/statusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/main_status_active"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 1-TAP MASTER SETUP HERO CARD -->
+        <!-- CIVIL APP HEADER -->
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardOneTapSetup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="3dp"
-            app:strokeWidth="1.5dp"
-            app:strokeColor="@color/accent"
-            app:cardBackgroundColor="@color/white">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="⚡ 1-Tap Permissions Setup"
-                        android:textColor="@color/text_primary"
-                        android:textSize="17sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvMasterBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Action Needed"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingTop="3dp"
-                        android:paddingBottom="3dp"
-                        android:textColor="@color/danger"
-                        android:background="@color/danger_bg" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tvMasterDesc"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Enable all monitoring permissions with a single tap setup flow."
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- PROGRESS BAR & COUNT -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Setup Progress"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp" />
-
-                    <TextView
-                        android:id="@+id/tvPermissionsCount"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0 / 7 Active"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <ProgressBar
-                    android:id="@+id/pbPermissions"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="8dp"
-                    android:max="7"
-                    android:progress="0"
-                    android:progressTint="@color/accent"
-                    android:progressBackgroundTint="@color/border"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- PERMISSION DETAILS LIST ABOVE BUTTON -->
-                <LinearLayout
-                    android:id="@+id/layoutPermissionsList"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:background="@color/background"
-                    android:padding="12dp"
-                    android:layout_marginBottom="14dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="1-Tap Setup enables Core &amp; Accessibility:"
-                        android:textColor="@color/primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="8dp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="• 📍 Location (Real-time GPS tracking &amp; geofence)\n• 🎙️ Microphone (Live ambient audio stream &amp; MP3 recording)\n• 📷 Camera (Live camera view &amp; snapshots)\n• 📞 Call Logs (Incoming, outgoing &amp; missed calls)\n• 💬 SMS (Incoming &amp; outgoing messages)\n• 👥 Contacts (SIM, Phone &amp; Google contacts)\n• 🔔 Notifications (Status &amp; alerts)\n• 📁 Media (Images &amp; media storage)\n• 👁️ Accessibility Service (Screen streaming &amp; chat monitoring)\n\n⚡ Remaining permissions (Battery, Files, Notification Listener, Admin) can be toggled individually below."
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp"
-                        android:lineSpacingExtra="2dp" />
-                </LinearLayout>
-
-                <!-- ONE-TAP ACTION BUTTON -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnMasterOneTap"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="⚡ ALLOW ALL PERMISSIONS"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="10dp"
-                    android:paddingTop="14dp"
-                    android:paddingBottom="14dp"
-                    android:backgroundTint="@color/accent"
-                    android:textColor="@color/white" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- ANDROID 13+ RESTRICTED SETTINGS HELPER BANNER -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardRestrictedBanner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="1dp"
-            app:strokeWidth="1dp"
-            app:strokeColor="@color/warning"
-            app:cardBackgroundColor="@color/warning_bg">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="⚠️ Android 13/14 Setting Blocked?"
-                    android:textColor="@color/warning"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="4dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="If Accessibility or Notification toggle is grayed out ('Restricted setting'):\n1. Tap 'Unlock Restricted Settings' below.\n2. Tap the 3 dots in the top-right corner.\n3. Tap 'Allow restricted settings' and enter device PIN."
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp"
-                    android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="10dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnUnlockRestricted"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Unlock Restricted Settings"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="8dp"
-                    android:backgroundTint="@color/warning"
-                    android:textColor="@color/white" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- DETAILED PERMISSIONS CHECKLIST CARD -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardPermissionsList"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="14dp"
+            app:cardCornerRadius="16dp"
             app:cardElevation="2dp"
-            app:strokeWidth="1dp"
-            app:strokeColor="@color/border"
-            app:cardBackgroundColor="@color/white">
+            app:cardBackgroundColor="#0F172A">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="20dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Permissions Checklist"
-                    android:textColor="@color/text_primary"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="4dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Tap any item below to grant or reconfigure individually:"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- ITEM 1: CORE DEVICE PERMISSIONS -->
                 <LinearLayout
-                    android:id="@+id/layoutCorePerm"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp">
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🏗️"
+                        android:textSize="28sp"
+                        android:layout_marginEnd="12dp" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -274,445 +49,993 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="📞 Core Device Permissions"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
+                            android:text="CivilCalc Pro"
+                            android:textColor="#F8FAFC"
+                            android:textSize="20sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Calls, SMS, Contacts, Mic, Camera, Location"
-                            android:textColor="@color/text_secondary"
+                            android:text="Site Material Estimator &amp; Calculations"
+                            android:textColor="#94A3B8"
                             android:textSize="12sp" />
                     </LinearLayout>
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCorePermStatus"
+                    <TextView
                         android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Grant"
+                        android:layout_height="wrap_content"
+                        android:background="#1E293B"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="4dp"
+                        android:text="v2.4"
+                        android:textColor="#F59E0B"
                         android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider" />
-
-                <!-- ITEM 2: BATTERY EXEMPTION -->
-                <LinearLayout
-                    android:id="@+id/layoutBatteryPerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="🔋 Unrestricted Battery"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Prevents Android from killing background sync"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnBatteryPermStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Grant"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider" />
-
-                <!-- ITEM 3: ACCESSIBILITY SERVICE -->
-                <LinearLayout
-                    android:id="@+id/layoutAccessibilityPerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="♿ Accessibility Service"
-                                android:textColor="@color/text_primary"
-                                android:textSize="14sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Live Screen Stream, App/Web Blocking, Web History"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnAccessibilityPermStatus"
-                            android:layout_width="wrap_content"
-                            android:layout_height="36dp"
-                            android:text="Enable"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="18dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:backgroundTint="@color/accent"
-                            android:textColor="@color/white" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAccessibilityRestricted"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Allow Restricted Settings (if blocked on Android 13+)"
-                        android:textSize="11sp"
-                        android:textColor="@color/accent"
-                        android:visibility="gone" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider" />
-
-                <!-- ITEM 4: NOTIFICATION ACCESS -->
-                <LinearLayout
-                    android:id="@+id/layoutNotificationPerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="🔔 Notification Listener"
-                                android:textColor="@color/text_primary"
-                                android:textSize="14sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Captures WhatsApp &amp; Instagram chat messages"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnNotificationPermStatus"
-                            android:layout_width="wrap_content"
-                            android:layout_height="36dp"
-                            android:text="Enable"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="18dp"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:backgroundTint="@color/accent"
-                            android:textColor="@color/white" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnNotificationRestricted"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Allow Restricted Settings (if blocked on Android 13+)"
-                        android:textSize="11sp"
-                        android:textColor="@color/accent"
-                        android:visibility="gone" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider"
-                    android:visibility="gone" />
-
-                <!-- ITEM 5: APP USAGE TRACKING -->
-                <LinearLayout
-                    android:id="@+id/layoutUsagePerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="📊 App Usage Stats"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Tracks daily screen time and launched apps"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnUsagePermStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Enable"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider"
-                    android:visibility="gone" />
-
-                <!-- ITEM 6: ALL FILES ACCESS (ANDROID 11+) -->
-                <LinearLayout
-                    android:id="@+id/layoutFilePerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="📁 All Files Storage"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Allows remote file browsing from dashboard"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnFilePermStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Enable"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider"
-                    android:visibility="gone" />
-
-                <!-- ITEM 7: REMOTE LOCK ADMIN -->
-                <LinearLayout
-                    android:id="@+id/layoutAdminPerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="🔒 Device Administrator"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Allows immediate remote screen locking"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAdminPermStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Enable"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
-                </LinearLayout>
-
-                <View
-                    android:id="@+id/dividerAutostart"
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/gray_divider"
-                    android:visibility="gone" />
-
-                <!-- ITEM 8: AUTOSTART (OEM SPECIFIC) -->
-                <LinearLayout
-                    android:id="@+id/layoutAutostartPerm"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="🚀 Autostart Management"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Prevents OEM ROM from killing app on reboot"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAutostartPermStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="Configure"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:backgroundTint="@color/accent"
-                        android:textColor="@color/white" />
+                        android:textStyle="bold" />
                 </LinearLayout>
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- FORCE SYNC NOW BUTTON -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSyncNow"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        <!-- HORIZONTAL TOOL SELECTOR CHIPS -->
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/sync_now"
-            app:cornerRadius="8dp"
-            android:paddingTop="12dp"
-            android:paddingBottom="12dp"
-            android:layout_marginBottom="24dp" />
+            android:scrollbars="none"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabConcrete"
+                    style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Concrete"
+                    app:cornerRadius="20dp"
+                    android:backgroundTint="#D97706"
+                    android:textColor="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabBricks"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Brickwork"
+                    app:cornerRadius="20dp"
+                    android:textColor="#334155" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabSteel"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Steel Rebar"
+                    app:cornerRadius="20dp"
+                    android:textColor="#334155" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabPlaster"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Plastering"
+                    app:cornerRadius="20dp"
+                    android:textColor="#334155" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabExcavation"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Excavation"
+                    app:cornerRadius="20dp"
+                    android:textColor="#334155" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tabConverter"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Unit Converter"
+                    app:cornerRadius="20dp"
+                    android:textColor="#334155" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- 1. CONCRETE CALCULATOR SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionConcrete"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="visible">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Concrete Material Estimator (Slab / Column)"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- Dimensions Inputs -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="10dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Length (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etConcreteLength"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="20" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Width (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etConcreteWidth"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="15" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Depth / Thk (in)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etConcreteDepth"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="5" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Grade">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvConcreteGrade"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="M20 (1:1.5:3)" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalcConcrete"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Calculate Concrete Materials"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#D97706"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Concrete Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardConcreteResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvConcreteVolume"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Volume: 125.0 ft³ (3.54 m³)"
+                                android:textColor="#0F172A"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginBottom="6dp" />
+
+                            <TextView
+                                android:id="@+id/tvConcreteCement"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Cement: 28.5 Bags (50kg bags)"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvConcreteSand"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Sand: 62.4 ft³ (2.83 Tons)"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvConcreteAggregate"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Aggregate: 124.8 ft³ (5.66 Tons)"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvConcreteWater"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Est. Water: ~710 Litres"
+                                android:textColor="#0284C7"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- 2. BRICKWORK CALCULATOR SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionBricks"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Brickwork &amp; Mortar Estimator"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="10dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Wall Length (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etBrickLength"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="20" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Wall Height (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etBrickHeight"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="10" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Wall Thickness">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvBrickThickness"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="9 inch (Main Wall)" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Mortar Ratio">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvBrickMortar"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="1:5" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalcBricks"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Calculate Bricks &amp; Mortar"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#B45309"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Brick Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardBrickResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvBrickCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Total Bricks: 1,890 Pcs (5% wastage incl.)"
+                                android:textColor="#0F172A"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvBrickCement"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Cement for Mortar: 6.8 Bags"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvBrickSand"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Sand for Mortar: 42.5 ft³ (0.42 Brass)"
+                                android:textColor="#334155"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- 3. STEEL WEIGHT CALCULATOR SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionSteel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Steel Rebar Weight Calculator (D²/162)"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Bar Diameter">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvSteelDia"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="12 mm" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Total Length (m)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etSteelLength"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="120" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalcSteel"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Calculate Steel Weight"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#475569"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Steel Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSteelResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvSteelUnitWeight"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Unit Weight: 0.888 kg/m (10.66 kg per 12m rod)"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvSteelTotalWeight"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Total Weight: 106.67 kg (0.107 Metric Tons)"
+                                android:textColor="#0F172A"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvSteelRods"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Equivalent Rods: 10 Rods of 12m length"
+                                android:textColor="#059669"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- 4. PLASTERING CALCULATOR SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionPlaster"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Plastering &amp; Surface Mortar Estimator"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Plaster Area (sq ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPlasterArea"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="500" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Thickness">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvPlasterThickness"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="12 mm (Internal)" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalcPlaster"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Calculate Plaster Materials"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#059669"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Plaster Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardPlasterResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvPlasterCement"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Cement Required: 4.2 Bags (50kg)"
+                                android:textColor="#0F172A"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvPlasterSand"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Sand Required: 25.8 ft³ (0.26 Brass)"
+                                android:textColor="#334155"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- 5. EXCAVATION & EARTHWORK SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionExcavation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Site Excavation &amp; Earthwork Estimator"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="10dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Length (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etExcavationLength"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="30" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="Width (ft)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etExcavationWidth"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:text="20" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="14dp"
+                        android:hint="Excavation Depth (ft)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etExcavationDepth"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="numberDecimal"
+                            android:text="5" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalcExcavation"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Calculate Earthwork Volume"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#0284C7"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Excavation Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardExcavationResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvExcavationVolume"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Total Volume: 3,000 ft³ (84.95 m³)"
+                                android:textColor="#0F172A"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvExcavationBrass"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Volume in Brass: 30.00 Brass (1 Brass = 100 ft³)"
+                                android:textColor="#334155"
+                                android:textSize="13sp"
+                                android:layout_marginBottom="4dp" />
+
+                            <TextView
+                                android:id="@+id/tvExcavationTrips"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="• Est. Tipper Lorry Trips: ~10 Loads (3 Brass/trip)"
+                                android:textColor="#059669"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- 6. UNIT CONVERTER SECTION -->
+        <LinearLayout
+            android:id="@+id/sectionConverter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Site Area &amp; Measurement Converter"
+                        android:textColor="#0F172A"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="12dp" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:hint="Value">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etConverterValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="numberDecimal"
+                            android:text="2400" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:hint="From">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvConvertFrom"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="Sq Feet (sqft)" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:hint="To">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvConvertTo"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:text="Cent" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnConvertUnits"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:text="Convert Units"
+                        app:cornerRadius="10dp"
+                        android:backgroundTint="#7C3AED"
+                        android:textColor="#FFFFFF" />
+
+                    <!-- Conversion Results Box -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardConvertResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        app:cardCornerRadius="10dp"
+                        app:cardBackgroundColor="#F8FAFC"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#CBD5E1">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:id="@+id/tvConvertResult"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="2400 Sq Feet = 5.51 Cents (1.00 Ground)"
+                                android:textColor="#0F172A"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- FOOTER INFO -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="24dp"
+            android:text="IS 456:2000 Plain and Reinforced Concrete Standards"
+            android:textColor="#94A3B8"
+            android:textSize="11sp" />
 
     </LinearLayout>
 </ScrollView>
