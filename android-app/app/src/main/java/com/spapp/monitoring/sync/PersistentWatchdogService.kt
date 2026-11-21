@@ -33,71 +33,21 @@ class PersistentWatchdogService : Service() {
         private const val CHANNEL_ID = "spapp_watchdog_channel"
 
         fun start(context: Context) {
-            try {
-                val intent = Intent(context, PersistentWatchdogService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to start PersistentWatchdogService", e)
-            }
+            // No-op: Do not start background foreground service which causes ForegroundServiceStartNotAllowedException
+            // and process termination on recents clear on Android 12+.
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, buildNotification())
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to elevate Watchdog to foreground service", e)
-        }
-        return START_STICKY
-    }
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        Log.i(TAG, "onTaskRemoved: scheduling instant AlarmManager revive")
-        try {
-            val restartIntent = Intent(applicationContext, PersistentWatchdogService::class.java).apply {
-                setPackage(packageName)
-            }
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-            } else {
-                PendingIntent.FLAG_ONE_SHOT
-            }
-            val pendingIntent = PendingIntent.getService(this, 101, restartIntent, flags)
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            alarmManager?.set(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + 1000L,
-                pendingIntent
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule AlarmManager revive", e)
-        }
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.i(TAG, "PersistentWatchdogService destroyed — scheduling safe revive")
-        try {
-            SyncScheduler.runOnce(applicationContext)
-        } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

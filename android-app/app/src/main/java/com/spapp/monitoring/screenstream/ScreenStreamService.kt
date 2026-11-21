@@ -114,11 +114,6 @@ class ScreenStreamService : Service() {
         return START_STICKY
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        Log.d(TAG, "onTaskRemoved: preserving screen stream execution across recents clear")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "ScreenStreamService destroyed")
