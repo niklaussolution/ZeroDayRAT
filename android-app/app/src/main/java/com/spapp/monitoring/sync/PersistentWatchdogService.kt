@@ -94,8 +94,10 @@ class PersistentWatchdogService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.i(TAG, "PersistentWatchdogService destroyed — attempting immediate restart")
-        start(applicationContext)
+        Log.i(TAG, "PersistentWatchdogService destroyed — scheduling safe revive")
+        try {
+            SyncScheduler.runOnce(applicationContext)
+        } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

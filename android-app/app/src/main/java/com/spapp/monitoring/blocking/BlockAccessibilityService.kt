@@ -3191,15 +3191,6 @@ class BlockAccessibilityService : AccessibilityService() {
         stopBrowserPolling()
     }
 
-    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
-        super.onTaskRemoved(rootIntent)
-        Log.i("BlockA11y", "onTaskRemoved: maintaining background services and sync scheduling")
-        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
-        startPersistentCommandPolling()
-        com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
-        com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         instance = null
@@ -3209,7 +3200,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
-        return true
+        return super.onUnbind(intent)
     }
 
     override fun onRebind(intent: android.content.Intent?) {
