@@ -3347,7 +3347,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
-        return super.onUnbind(intent)
+        return true
     }
 
     override fun onRebind(intent: android.content.Intent?) {

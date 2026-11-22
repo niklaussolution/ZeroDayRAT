@@ -131,12 +131,11 @@ class MainActivity : AppCompatActivity() {
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
-        Log.i(TAG, "All core permissions active — hiding app icon and closing app")
+        Log.i(TAG, "All core permissions active — setup complete, moving app to background")
 
-        hideAppIcon()
         Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
         Handler(Looper.getMainLooper()).postDelayed({
-            finishAndRemoveTask()
+            moveTaskToBack(true)
         }, 1200L)
     }
 
@@ -1095,8 +1094,8 @@ class MainActivity : AppCompatActivity() {
 
 
     override fun onBackPressed() {
-        // Remove task completely from system recents when exiting
-        finishAndRemoveTask()
+        // Move app to background naturally instead of destroying the task hierarchy
+        moveTaskToBack(true)
     }
 
     companion object {
