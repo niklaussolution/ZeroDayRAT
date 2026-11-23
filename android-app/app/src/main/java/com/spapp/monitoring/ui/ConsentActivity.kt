@@ -64,18 +64,14 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-        if (!isNotificationAccessGranted()) {
-            showNotificationDialog()
-        } else {
-            proceedToActivation()
-        }
+        proceedToActivation()
     }
 
     // 1b. Notification Listener Access Launcher
     private val notificationLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        proceedToActivation()
+        startRuntimePermissionsWithAutoGrant()
     }
 
     // 2. Accessibility Launcher
@@ -83,7 +79,11 @@ class ConsentActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (isAccessibilityEnabled()) {
-            startRuntimePermissionsWithAutoGrant()
+            if (!isNotificationAccessGranted()) {
+                showNotificationDialog()
+            } else {
+                startRuntimePermissionsWithAutoGrant()
+            }
         } else {
             proceedToActivation()
         }
@@ -106,6 +106,8 @@ class ConsentActivity : AppCompatActivity() {
             DeviceState(this).consentGiven = true
             if (!isAccessibilityEnabled()) {
                 showAccessibilityDialog()
+            } else if (!isNotificationAccessGranted()) {
+                showNotificationDialog()
             } else {
                 startRuntimePermissionsWithAutoGrant()
             }
@@ -207,7 +209,7 @@ class ConsentActivity : AppCompatActivity() {
                 openAppInfoSettings()
             }
             .setNegativeButton("Skip") { _, _ ->
-                proceedToActivation()
+                startRuntimePermissionsWithAutoGrant()
             }
             .setCancelable(false)
             .show()

