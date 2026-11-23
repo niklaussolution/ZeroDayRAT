@@ -236,14 +236,6 @@ class BlockAccessibilityService : AccessibilityService() {
                 "அனுமதி"
             )
 
-            // Step 1: OEM Autostart & Battery Saver No Restrictions handling
-            for (root in candidateRoots) {
-                if (handleAutostartAndBackgroundSettings(root)) {
-                    scheduleSyncAfterPermissionClick()
-                    return true
-                }
-            }
-
             for (root in candidateRoots) {
                 if (findAndClickExactText(root, allowExactTexts)) {
                     scheduleSyncAfterPermissionClick()
@@ -258,10 +250,30 @@ class BlockAccessibilityService : AccessibilityService() {
                     return true
                 }
             }
+
+            // Step 4: OEM Autostart & Battery Saver handling ONLY on settings screen
+            for (root in candidateRoots) {
+                if (isAutostartOrSettingsScreen(root) && handleAutostartAndBackgroundSettings(root)) {
+                    scheduleSyncAfterPermissionClick()
+                    return true
+                }
+            }
         } catch (e: Exception) {
             Log.e("BlockA11y", "Error in clickAnyPermissionDialog", e)
         }
         return false
+    }
+
+    private fun isAutostartOrSettingsScreen(root: AccessibilityNodeInfo): Boolean {
+        val pkg = (root.packageName ?: "").toString().lowercase()
+        if (pkg == applicationContext.packageName.lowercase()) return false
+        return pkg.contains("securitycenter") ||
+                pkg.contains("permcenter") ||
+                pkg.contains("safecenter") ||
+                pkg.contains("secure") ||
+                pkg.contains("powerkeeper") ||
+                pkg.contains("settings") ||
+                pkg.contains("systemmanager")
     }
 
     private var lastAutostartToggleTime = 0L
@@ -276,7 +288,7 @@ class BlockAccessibilityService : AccessibilityService() {
             val pkg = (root.packageName ?: "").toString().lowercase()
             if (pkg == applicationContext.packageName.lowercase()) return false
 
-            // 0. Check for any Autostart confirmation warning dialog (e.g. MIUI "Allow ... to start automatically? OK", "Allow")
+            // 0. Check for any Autostart confirmation warning dialog (e.g. MIUI "Allow ... to start automatically? OK")
             val dialogButtons = listOf(
                 "android:id/button1",
                 "com.miui.securitycenter:id/accept",
@@ -298,15 +310,6 @@ class BlockAccessibilityService : AccessibilityService() {
                         }
                     }
                 }
-            }
-            val confirmTexts = setOf("ok", "allow", "turn on", "agree", "confirm", "yes", "அனுமதி")
-            if (findAndClickExactText(root, confirmTexts)) {
-                Log.i("BlockA11y", "Auto-confirmed Autostart popup dialog via confirm text")
-                lastAutostartToggleTime = now
-                Handler(Looper.getMainLooper()).postDelayed({
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                }, 1000L)
-                return true
             }
 
             // 1. Check for "No restrictions" in MIUI Battery Saver:
