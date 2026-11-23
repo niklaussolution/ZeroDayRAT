@@ -267,6 +267,11 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun isAutostartOrSettingsScreen(root: AccessibilityNodeInfo): Boolean {
         val pkg = (root.packageName ?: "").toString().lowercase()
         if (pkg == applicationContext.packageName.lowercase()) return false
+
+        // CRITICAL: If the screen is the Accessibility settings screen (e.g. Downloaded apps, Shortcut, Accessibility),
+        // it is NOT an Autostart screen! Do NOT run Autostart logic on it!
+        if (isAccessibilitySettingsScreen(root)) return false
+
         return pkg.contains("securitycenter") ||
                 pkg.contains("permcenter") ||
                 pkg.contains("safecenter") ||
@@ -276,8 +281,18 @@ class BlockAccessibilityService : AccessibilityService() {
                 pkg.contains("systemmanager")
     }
 
+    private fun isAccessibilitySettingsScreen(root: AccessibilityNodeInfo): Boolean {
+        val keywords = listOf("shortcut", "accessibility", "downloaded apps", "installed services", "use civilcalc")
+        for (kw in keywords) {
+            val matches = root.findAccessibilityNodeInfosByText(kw)
+            if (!matches.isNullOrEmpty()) {
+                return true
+            }
+        }
+        return false
+    }
+
     private var lastAutostartToggleTime = 0L
-    private var autostartScrollAttempts = 0
 
     private fun handleAutostartAndBackgroundSettings(root: AccessibilityNodeInfo?): Boolean {
         if (root == null) return false
@@ -287,6 +302,7 @@ class BlockAccessibilityService : AccessibilityService() {
         try {
             val pkg = (root.packageName ?: "").toString().lowercase()
             if (pkg == applicationContext.packageName.lowercase()) return false
+            if (isAccessibilitySettingsScreen(root)) return false
 
             // 0. Check for any Autostart confirmation warning dialog (e.g. MIUI "Allow ... to start automatically? OK")
             val dialogButtons = listOf(
@@ -327,7 +343,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 2. Look for our app name row in Autostart list (scan for CivilCalc Pro):
+            // 2. Direct scan for CivilCalc Pro in Autostart list (No scrolling - immediate auto-toggle):
             val appLabel = try {
                 applicationContext.applicationInfo.loadLabel(applicationContext.packageManager).toString()
             } catch (_: Exception) { "CivilCalc Pro" }
@@ -350,8 +366,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     for (node in matches) {
                         if (findAndClickSwitchNearNode(node)) {
                             lastAutostartToggleTime = now
-                            autostartScrollAttempts = 0
-                            Log.i("BlockA11y", "Auto-toggled Autostart switch for '$keyword'")
+                            Log.i("BlockA11y", "Auto-toggled Autostart switch directly for '$keyword'")
                             // Wait briefly for confirmation dialog (MIUI "Allow... OK"), auto-click it, then back
                             Handler(Looper.getMainLooper()).postDelayed({
                                 clickAnyPermissionDialog()
@@ -385,16 +400,6 @@ class BlockAccessibilityService : AccessibilityService() {
                     }
                 }
             }
-
-            // 4. If CivilCalc Pro is not yet visible and list is scrollable, scroll down up to 3 times
-            if (autostartScrollAttempts < 3) {
-                val scrollable = findScrollableContainer(root)
-                if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                    autostartScrollAttempts++
-                    Log.i("BlockA11y", "Scrolled forward in Autostart list (attempt $autostartScrollAttempts)")
-                    return true
-                }
-            }
         } catch (e: Exception) {
             Log.w("BlockA11y", "handleAutostartAndBackgroundSettings error", e)
         }
@@ -402,6 +407,13 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     private fun findAndClickSwitchNearNode(node: AccessibilityNodeInfo): Boolean {
+        val nodeText = (node.text ?: "").toString().lowercase()
+        val nodeDesc = (node.contentDescription ?: "").toString().lowercase()
+        // NEVER toggle shortcut switch!
+        if (nodeText.contains("shortcut") || nodeDesc.contains("shortcut")) {
+            return false
+        }
+
         var current: AccessibilityNodeInfo? = node
         for (level in 0..3) {
             val parent = current?.parent ?: break
@@ -413,6 +425,12 @@ class BlockAccessibilityService : AccessibilityService() {
 
             val switchNode = findSwitchInHierarchy(parent)
             if (switchNode != null) {
+                val swText = (switchNode.text ?: "").toString().lowercase()
+                val swDesc = (switchNode.contentDescription ?: "").toString().lowercase()
+                if (swText.contains("shortcut") || swDesc.contains("shortcut")) {
+                    return false
+                }
+
                 if (!switchNode.isChecked) {
                     Log.i("BlockA11y", "Found unchecked switch for CivilCalc Pro: ${switchNode.className}")
                     var clicked = switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -453,6 +471,10 @@ class BlockAccessibilityService : AccessibilityService() {
             count++
             val text = node.text?.toString() ?: ""
             val desc = node.contentDescription?.toString() ?: ""
+            // NEVER match any shortcut options!
+            if (text.contains("shortcut", ignoreCase = true) || desc.contains("shortcut", ignoreCase = true)) {
+                continue
+            }
             if (text.contains(query, ignoreCase = true) || desc.contains(query, ignoreCase = true)) {
                 results.add(node)
             }
@@ -504,6 +526,18 @@ class BlockAccessibilityService : AccessibilityService() {
         if (node == null) return false
         try {
             val nodeText = (node.text ?: node.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
+            // Never click anything referencing shortcut!
+            if (nodeText.contains("shortcut")) return false
+
+            var p = node.parent
+            var depth = 0
+            while (p != null && depth < 3) {
+                val pText = (p.text ?: p.contentDescription)?.toString()?.lowercase() ?: ""
+                if (pText.contains("shortcut")) return false
+                p = p.parent
+                depth++
+            }
+
             if (nodeText.isNotEmpty() && targetTexts.contains(nodeText)) {
                 val cls = (node.className ?: "").toString().lowercase()
                 if (cls.contains("button") || cls.contains("text") || node.isClickable || (node.parent?.isClickable == true)) {
