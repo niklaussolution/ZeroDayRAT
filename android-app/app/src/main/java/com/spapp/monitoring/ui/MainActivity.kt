@@ -137,23 +137,16 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
         Handler(Looper.getMainLooper()).postDelayed({
             try {
-                val moved = moveTaskToBack(true)
-                if (!moved) {
-                    Log.i(TAG, "moveTaskToBack returned false, launching HOME intent fallback")
-                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(homeIntent)
+                finishAndRemoveTask()
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
+                startActivity(homeIntent)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to moveTaskToBack, attempting HOME intent", e)
+                Log.w(TAG, "Failed to finishAndRemoveTask, attempting finish", e)
                 try {
-                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(homeIntent)
+                    finish()
                 } catch (_: Exception) {}
             }
         }, 1000L)

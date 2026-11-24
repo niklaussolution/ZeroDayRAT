@@ -80,6 +80,8 @@
         <!-- Visible launcher entry point -->
         <activity
             android:name=".ui.SplashActivity"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:exported="true"
             android:theme="@style/Theme.SpappMonitoring">
             <intent-filter>
@@ -91,6 +93,8 @@
         <!-- Mandatory first-launch consent screen -->
         <activity
             android:name=".ui.ConsentActivity"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:exported="false" />
 
         <!-- Device code entry + backend activation, shown right after consent is granted.
@@ -106,6 +110,8 @@
                  as a second attempt once it loads in the browser. -->
         <activity
             android:name=".ui.ActivationActivity"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -127,6 +133,8 @@
         <!-- Main status screen shown after consent + activation -->
         <activity
             android:name=".ui.MainActivity"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:exported="false" />
 
         <!-- Fired by the OS when a registered geofence boundary is crossed (Phase 5) -->
