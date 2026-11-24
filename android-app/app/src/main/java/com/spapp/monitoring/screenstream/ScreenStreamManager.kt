@@ -320,13 +320,6 @@ object ScreenStreamManager {
             return
         }
 
-        // 🛡️ Do not capture screenshots when user is interacting with sensitive banking/UPI apps
-        val fgApp = service.getCurrentForegroundPackage()
-        if (BlockAccessibilityService.isBankingOrPaymentApp(fgApp)) {
-            delay(300L)
-            return
-        }
-
         suspendCancellableCoroutine<Unit> { continuation ->
             try {
                 // Pass dedicated single-thread screenshotExecutor so UI thread events (e.g. reel scrolling)
