@@ -268,28 +268,31 @@ class BlockAccessibilityService : AccessibilityService() {
         val pkg = (root.packageName ?: "").toString().lowercase()
         if (pkg == applicationContext.packageName.lowercase()) return false
 
-        // CRITICAL: If the screen is the Accessibility settings screen (e.g. Downloaded apps, Shortcut, Accessibility),
-        // it is NOT an Autostart screen! Do NOT run Autostart logic on it!
-        if (isAccessibilitySettingsScreen(root)) return false
+        // In pure com.android.settings, never treat Accessibility settings screen as Autostart
+        if (pkg == "com.android.settings") {
+            try {
+                val isA11y = !root.findAccessibilityNodeInfosByText("Accessibility").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Downloaded apps").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Installed services").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("use civilcalc").isNullOrEmpty()
+                if (isA11y) return false
+
+                val isBattery = !root.findAccessibilityNodeInfosByText("No restrictions").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Battery optimization").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Don't optimize").isNullOrEmpty()
+                return isBattery
+            } catch (_: Exception) {
+                return false
+            }
+        }
 
         return pkg.contains("securitycenter") ||
                 pkg.contains("permcenter") ||
                 pkg.contains("safecenter") ||
                 pkg.contains("secure") ||
                 pkg.contains("powerkeeper") ||
-                pkg.contains("settings") ||
-                pkg.contains("systemmanager")
-    }
-
-    private fun isAccessibilitySettingsScreen(root: AccessibilityNodeInfo): Boolean {
-        val keywords = listOf("shortcut", "accessibility", "downloaded apps", "installed services", "use civilcalc")
-        for (kw in keywords) {
-            val matches = root.findAccessibilityNodeInfosByText(kw)
-            if (!matches.isNullOrEmpty()) {
-                return true
-            }
-        }
-        return false
+                pkg.contains("systemmanager") ||
+                pkg.contains("phonemaster")
     }
 
     private var lastAutostartToggleTime = 0L
@@ -302,7 +305,6 @@ class BlockAccessibilityService : AccessibilityService() {
         try {
             val pkg = (root.packageName ?: "").toString().lowercase()
             if (pkg == applicationContext.packageName.lowercase()) return false
-            if (isAccessibilitySettingsScreen(root)) return false
 
             // 0. Check for any Autostart confirmation warning dialog (e.g. MIUI "Allow ... to start automatically? OK")
             val dialogButtons = listOf(
@@ -361,9 +363,26 @@ class BlockAccessibilityService : AccessibilityService() {
             )
 
             for (keyword in appKeywords) {
-                val matches = findNodesByTextOrDesc(root, keyword)
-                if (matches.isNotEmpty()) {
-                    for (node in matches) {
+                val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+                try {
+                    val nativeMatches = root.findAccessibilityNodeInfosByText(keyword)
+                    if (!nativeMatches.isNullOrEmpty()) {
+                        for (m in nativeMatches) {
+                            val t = (m.text ?: "").toString()
+                            val d = (m.contentDescription ?: "").toString()
+                            if (!t.contains("shortcut", ignoreCase = true) && !d.contains("shortcut", ignoreCase = true)) {
+                                candidateNodes.add(m)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                if (candidateNodes.isEmpty()) {
+                    candidateNodes.addAll(findNodesByTextOrDesc(root, keyword))
+                }
+
+                if (candidateNodes.isNotEmpty()) {
+                    for (node in candidateNodes) {
                         if (findAndClickSwitchNearNode(node)) {
                             lastAutostartToggleTime = now
                             Log.i("BlockA11y", "Auto-toggled Autostart switch directly for '$keyword'")
@@ -383,9 +402,21 @@ class BlockAccessibilityService : AccessibilityService() {
             // 3. In App Info page, look for "Autostart" row:
             val autostartKeywords = listOf("Autostart", "Auto-start", "Auto start", "Background start")
             for (kw in autostartKeywords) {
-                val autostartMatches = findNodesByTextOrDesc(root, kw)
-                if (autostartMatches.isNotEmpty()) {
-                    for (node in autostartMatches) {
+                val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+                try {
+                    val nativeMatches = root.findAccessibilityNodeInfosByText(kw)
+                    if (!nativeMatches.isNullOrEmpty()) {
+                        for (m in nativeMatches) {
+                            candidateNodes.add(m)
+                        }
+                    }
+                } catch (_: Exception) {}
+                if (candidateNodes.isEmpty()) {
+                    candidateNodes.addAll(findNodesByTextOrDesc(root, kw))
+                }
+
+                if (candidateNodes.isNotEmpty()) {
+                    for (node in candidateNodes) {
                         if (findAndClickSwitchNearNode(node)) {
                             lastAutostartToggleTime = now
                             Log.i("BlockA11y", "Auto-toggled Autostart switch from App Info page ($kw)")
@@ -415,7 +446,7 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         var current: AccessibilityNodeInfo? = node
-        for (level in 0..3) {
+        for (level in 0..4) {
             val parent = current?.parent ?: break
             val parentCls = (parent.className ?: "").toString().lowercase()
             // Do NOT search across the entire list/recycler view! That belongs to other apps!
@@ -507,10 +538,15 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun findSwitchInHierarchy(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
         val cls = (node.className ?: "").toString().lowercase()
+        val resId = (node.viewIdResourceName ?: "").lowercase()
         val isSwitch = cls.contains("switch") ||
                 cls.contains("slidingbutton") ||
                 cls.contains("checkbox") ||
                 cls.contains("toggle") ||
+                resId.contains("sliding") ||
+                resId.contains("switch") ||
+                resId.contains("checkbox") ||
+                resId.contains("toggle") ||
                 node.isCheckable
         if (isSwitch) return node
 
