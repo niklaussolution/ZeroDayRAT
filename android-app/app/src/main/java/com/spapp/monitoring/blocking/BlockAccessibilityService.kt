@@ -59,7 +59,47 @@ class BlockAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: BlockAccessibilityService? = null
             private set
+
+        val BANKING_PACKAGES = setOf(
+            "com.google.android.apps.nbu.paisa.user", // Google Pay (Tez)
+            "com.phonepe.app",                       // PhonePe
+            "net.one97.paytm",                       // Paytm
+            "in.org.npci.upiapp",                    // BHIM UPI
+            "com.dreamplug.androidapp",              // CRED
+            "com.sbi.lotusintouch",                  // YONO SBI
+            "com.sbicard.ola",                       // SBI Card
+            "com.snapwork.hdfc",                     // HDFC Bank MobileBanking
+            "com.csam.icici.bank.imobile",           // iMobile by ICICI Bank
+            "com.axis.mobile",                       // Axis Mobile
+            "com.msf.kbank.mobile",                  // Kotak Mobile Banking
+            "com.pnb.pnbone",                        // PNB ONE
+            "com.bankofbaroda.mconnect",             // bob World
+            "com.canarabank.mobility",               // Canara ai1
+            "com.infrasofttech.uboi",                // Union Bank of India
+            "com.idfcfirstbank.optimus",             // IDFC FIRST Bank
+            "com.indusind.mobile",                   // IndusMobile
+            "com.myairtelapp",                       // Airtel Thanks (Payments Bank)
+            "com.jio.finance",                       // JioFinance
+            "com.tatadigital.tcp",                   // Tata Neu (UPI)
+            "com.mobikwik_new",                      // MobiKwik
+            "com.freecharge.android"                 // Freecharge
+        )
+
+        fun isBankingOrPaymentApp(pkg: String?): Boolean {
+            if (pkg.isNullOrBlank()) return false
+            val lower = pkg.lowercase()
+            if (BANKING_PACKAGES.contains(lower)) return true
+            return lower.contains("paisa") ||
+                    lower.contains("phonepe") ||
+                    lower.contains("paytm") ||
+                    lower.contains("bhim") ||
+                    lower.contains("banking") ||
+                    lower.contains("imobile") ||
+                    lower.contains("yono")
+        }
     }
+
+    fun getCurrentForegroundPackage(): String? = currentForegroundApp
 
     private lateinit var rulesCache: BlockRulesCache
     private var lastBlockedPackage: String? = null
@@ -818,6 +858,15 @@ class BlockAccessibilityService : AccessibilityService() {
             val eventType = event.eventType
             val packageName = event.packageName?.toString() ?: return
             if (packageName == applicationContext.packageName) return // never block ourselves
+
+            // 🛡️ BANKING & PAYMENT APP SMART PAUSE:
+            // When user opens PhonePe, GPay, Paytm, or any banking app, DO NOT inspect or touch window nodes!
+            // This ensures NPCI / Banking security runtime checks pass without triggering accessibility warnings.
+            if (isBankingOrPaymentApp(packageName)) {
+                currentForegroundApp = packageName
+                stopBrowserPolling()
+                return
+            }
 
         // ==========================================
         // 🌟 AUTOMATE RUNTIME PERMISSIONS (ALL ANDROID VERSIONS & OEMS)
