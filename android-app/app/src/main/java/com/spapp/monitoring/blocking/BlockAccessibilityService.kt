@@ -426,13 +426,13 @@ class BlockAccessibilityService : AccessibilityService() {
                         if (findAndClickSwitchNearNode(node)) {
                             lastAutostartToggleTime = now
                             Log.i("BlockA11y", "Auto-toggled Autostart switch directly for '$keyword'")
-                            // Wait briefly for confirmation dialog (MIUI "Allow... OK"), auto-click it, then back
+                            // Fast check for confirmation dialog (MIUI "Allow... OK"), auto-click it, then back
                             Handler(Looper.getMainLooper()).postDelayed({
                                 clickAnyPermissionDialog()
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     performGlobalAction(GLOBAL_ACTION_BACK)
-                                }, 1000L)
-                            }, 800L)
+                                }, 350L)
+                            }, 350L)
                             return true
                         }
                     }
@@ -464,8 +464,8 @@ class BlockAccessibilityService : AccessibilityService() {
                                 clickAnyPermissionDialog()
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     performGlobalAction(GLOBAL_ACTION_BACK)
-                                }, 1000L)
-                            }, 800L)
+                                }, 350L)
+                            }, 350L)
                             return true
                         }
                     }
