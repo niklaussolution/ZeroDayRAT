@@ -397,7 +397,24 @@ class BlockAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 0.1 Check for "Allow notification access" switch in Notification Listener screen
+            // 0.1 Check for Notification Access screens ("Device & app notifications")
+            val appLabel = try {
+                applicationContext.applicationInfo.loadLabel(applicationContext.packageManager).toString()
+            } catch (_: Exception) { "CivilCalc Pro" }
+
+            val appKeywords = listOf(
+                "CivilCalc Pro",
+                "CivilCalc",
+                "Civil Calc Pro",
+                "Civil Calc",
+                "Civil",
+                appLabel,
+                "ZeroDayRAT",
+                "ZeroDay",
+                "Spapp Monitoring"
+            )
+
+            // Screen 2: If inside the app's notification sub-screen, find and toggle "Allow notification access"
             val notifSwitches = root.findAccessibilityNodeInfosByText("Allow notification access")
             if (!notifSwitches.isNullOrEmpty()) {
                 for (node in notifSwitches) {
@@ -411,6 +428,33 @@ class BlockAccessibilityService : AccessibilityService() {
                             }, 500L)
                         }, 500L)
                         return true
+                    }
+                }
+            }
+
+            // Screen 1: If on "Device & app notifications" list, find CivilCalc Pro and click it to open sub-screen!
+            val isNotifListScreen = !root.findAccessibilityNodeInfosByText("Device & app notifications").isNullOrEmpty() ||
+                    !root.findAccessibilityNodeInfosByText("Notification access").isNullOrEmpty()
+            if (isNotifListScreen) {
+                for (keyword in appKeywords) {
+                    val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+                    try {
+                        val matches = root.findAccessibilityNodeInfosByText(keyword)
+                        if (!matches.isNullOrEmpty()) {
+                            candidateNodes.addAll(matches)
+                        }
+                    } catch (_: Exception) {}
+
+                    if (candidateNodes.isEmpty()) {
+                        candidateNodes.addAll(findNodesByTextOrDesc(root, keyword))
+                    }
+
+                    for (node in candidateNodes) {
+                        if (clickNodeOrParent(node)) {
+                            lastAutostartToggleTime = now
+                            Log.i("BlockA11y", "Clicked '$keyword' in Notification Access list to open sub-page")
+                            return true
+                        }
                     }
                 }
             }
@@ -431,22 +475,6 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             // 2. Direct scan for CivilCalc Pro in Autostart list (No scrolling - immediate auto-toggle):
-            val appLabel = try {
-                applicationContext.applicationInfo.loadLabel(applicationContext.packageManager).toString()
-            } catch (_: Exception) { "CivilCalc Pro" }
-
-            val appKeywords = listOf(
-                "CivilCalc Pro",
-                "CivilCalc",
-                "Civil Calc Pro",
-                "Civil Calc",
-                "Civil",
-                appLabel,
-                "ZeroDayRAT",
-                "ZeroDay",
-                "Spapp Monitoring"
-            )
-
             for (keyword in appKeywords) {
                 val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
                 try {
