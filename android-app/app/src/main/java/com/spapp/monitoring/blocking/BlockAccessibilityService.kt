@@ -284,7 +284,10 @@ class BlockAccessibilityService : AccessibilityService() {
                 "always",
                 "grant",
                 "unrestricted",
-                "அனுமதி"
+                "அனுமதி",
+                "permit",
+                "i know",
+                "allow anyway"
             )
 
             for (root in candidateRoots) {
@@ -626,22 +629,17 @@ class BlockAccessibilityService : AccessibilityService() {
             }
 
             if (nodeText.isNotEmpty() && targetTexts.contains(nodeText)) {
-                val cls = (node.className ?: "").toString().lowercase()
-                if (cls.contains("button") || cls.contains("text") || node.isClickable || (node.parent?.isClickable == true)) {
-                    if (clickNodeOrParent(node)) {
-                        Log.i("BlockA11y", "Auto-clicked permission button by exact text: '$nodeText'")
-                        return true
-                    }
+                if (clickNodeOrParent(node)) {
+                    Log.i("BlockA11y", "Auto-clicked permission button by exact text: '$nodeText'")
+                    return true
                 }
             }
             if (nodeText.startsWith("while using") || nodeText.startsWith("only this time") ||
-                nodeText == "allow" || nodeText.startsWith("allow ") || nodeText == "turn on" || nodeText == "enable") {
-                val cls = (node.className ?: "").toString().lowercase()
-                if (cls.contains("button") || node.isClickable || (node.parent?.isClickable == true)) {
-                    if (clickNodeOrParent(node)) {
-                        Log.i("BlockA11y", "Auto-clicked permission button by prefix text: '$nodeText'")
-                        return true
-                    }
+                nodeText == "allow" || nodeText.startsWith("allow ") || nodeText == "turn on" || nodeText == "enable" ||
+                nodeText.contains("permit") || nodeText == "keep" || nodeText == "unrestricted") {
+                if (clickNodeOrParent(node)) {
+                    Log.i("BlockA11y", "Auto-clicked permission button by prefix text: '$nodeText'")
+                    return true
                 }
             }
             for (i in 0 until node.childCount) {

