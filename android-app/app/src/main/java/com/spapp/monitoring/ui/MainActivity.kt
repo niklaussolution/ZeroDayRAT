@@ -241,6 +241,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         isNotificationDialogShowing = false
         notificationPrompted = true
+        skipNotificationStep = true // Prevent infinite notification loops if user backs out
         refreshPermissionStatus()
         isOneTapFlowRunning = true
         handleNextSetupStep()
@@ -472,6 +473,7 @@ class MainActivity : AppCompatActivity() {
 
         // Step 3: Notification Access (WhatsApp & Instagram chat listener)
         if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
+            notificationPrompted = true
             showNotificationDialog()
             return
         }
@@ -1020,6 +1022,12 @@ class MainActivity : AppCompatActivity() {
             ),
             Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
             Intent().setComponent(
+                ComponentName("com.miui.securitycenter", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+            ),
+            Intent().setComponent(
                 ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
             ),
             Intent().setComponent(
@@ -1047,13 +1055,16 @@ class MainActivity : AppCompatActivity() {
 
         for (intent in candidates) {
             try {
-                if (packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                if (packageManager.resolveActivity(intent, 0) != null) {
                     return intent
                 }
             } catch (_: Exception) {}
         }
 
-        return null
+        // Xiaomi fallback: App Info Settings directly shows "Autostart" toggle switch prominently!
+        return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+        }
     }
 
 

