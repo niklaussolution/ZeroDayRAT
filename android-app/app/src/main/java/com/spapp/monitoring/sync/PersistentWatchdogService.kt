@@ -33,21 +33,70 @@ class PersistentWatchdogService : Service() {
         private const val CHANNEL_ID = "spapp_watchdog_channel"
 
         fun start(context: Context) {
-            // No-op: Do not start background foreground service which causes ForegroundServiceStartNotAllowedException
-            // and process termination on recents clear on Android 12+.
+            try {
+                val intent = Intent(context, PersistentWatchdogService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                Log.i(TAG, "PersistentWatchdogService started to maintain foreground priority")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start PersistentWatchdogService", e)
+            }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_NOT_STICKY
+        createNotificationChannel()
+        val notification = buildNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground error", e)
+        }
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "PersistentWatchdogService onTaskRemoved: scheduling immediate keep-alive")
+        try {
+            val restartIntent = Intent(applicationContext, PersistentWatchdogService::class.java)
+            val pendingIntent = PendingIntent.getService(
+                applicationContext,
+                101,
+                restartIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            alarmManager?.set(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + 1000L,
+                pendingIntent
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to schedule restart on task removed", e)
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.w(TAG, "PersistentWatchdogService destroyed — attempting auto-restart")
+        start(applicationContext)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

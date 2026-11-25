@@ -1,6 +1,7 @@
 package com.spapp.monitoring.blocking
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -157,6 +158,16 @@ class BlockAccessibilityService : AccessibilityService() {
             com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         } catch (e: Exception) {
             Log.e("BlockA11y", "Failed during onServiceConnected background initialization", e)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "onTaskRemoved detected: keeping persistent service alive")
+        try {
+            com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to re-start watchdog onTaskRemoved", e)
         }
     }
 
