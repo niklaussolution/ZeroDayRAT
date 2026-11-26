@@ -119,6 +119,13 @@ app.get("/api/diag/db-test", async (req, res) => {
 // Route mounts (added as each module is built)
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/tenants", require("./routes/tenant.routes"));
+// Registered BEFORE the /api/devices routers on purpose. command.routes.js and
+// blockrule.routes.js apply requireAuth to every path under this prefix, so any
+// /api/devices/* path those routers do not match is answered with a misleading
+// 401 instead of falling through. Mounting the public claim handler first keeps
+// the fresh-install bootstrap working regardless of router ordering.
+app.post("/api/devices/claim", require("./routes/device.routes").claimHandler);
+
 app.use("/api/devices", require("./routes/device.routes"));
 app.use("/api/devices", require("./routes/command.routes"));
 app.use("/api/devices", require("./routes/blockrule.routes"));

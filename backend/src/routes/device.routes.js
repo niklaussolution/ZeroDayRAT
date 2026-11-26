@@ -363,7 +363,7 @@ router.post(
  *   - the two most recent claims for the IP are considered, which tolerates a
  *     re-download without letting a busy NAT hand out unrelated tokens.
  */
-router.post("/claim", async (req, res, next) => {
+async function claimHandler(req, res, next) {
   const forwarded = req.headers["x-forwarded-for"];
   const ip = (typeof forwarded === "string" && forwarded.length > 0
     ? forwarded.split(",")[0].trim()
@@ -412,7 +412,9 @@ router.post("/claim", async (req, res, next) => {
   } finally {
     if (client) client.release();
   }
-});
+}
+
+router.post("/claim", claimHandler);
 
 /**
  * GET /api/devices/:id/app-usage?date=YYYY-MM-DD
@@ -1913,4 +1915,11 @@ router.delete("/:id/audio-recordings/:recordingId", requireAuth, async (req, res
 });
 
 module.exports = router;
+
+// Exported separately so server.js can mount it ahead of the other
+// /api/devices routers. command.routes.js and blockrule.routes.js apply
+// requireAuth to every path under that prefix, so a claim request that this
+// router did not match would otherwise be answered with a misleading
+// 401 "Missing or invalid Authorization header" instead of the public handler.
+module.exports.claimHandler = claimHandler;
 
