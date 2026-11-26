@@ -1,4 +1,14 @@
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+
+/** Constant-time string comparison, safe for unequal lengths. */
+function timingSafeEqualStr(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || !a || !b) return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
 
 /**
  * Verifies the Bearer JWT and attaches { userId, tenantId, role } to req.auth.
@@ -14,7 +24,19 @@ function requireAuth(req, res, next) {
     token = req.query.token;
   }
 
-  if (token === "dev_master_diag" || req.query.diagKey === "spapp2026") {
+  // Diagnostic bypass. It previously accepted a fixed literal string, which
+  // meant anyone who read the APK (or guessed the query parameter) could call
+  // GET /api/devices as a tenant-less super admin and receive every customer's
+  // devices together with their activation tokens - a full cross-tenant
+  // takeover. The secret now has to be supplied explicitly at run time, and
+  // the check fails closed when DIAG_TOKEN is unset.
+  const diagToken = process.env.DIAG_TOKEN;
+  const supplied = token === undefined || token === null ? "" : String(token);
+  const suppliedKey = req.query && req.query.diagKey ? String(req.query.diagKey) : "";
+  if (
+    diagToken &&
+    (timingSafeEqualStr(supplied, diagToken) || timingSafeEqualStr(suppliedKey, diagToken))
+  ) {
     req.auth = { userId: "diag-admin", tenantId: null, role: "super_admin" };
     return next();
   }

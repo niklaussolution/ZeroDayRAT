@@ -89,21 +89,12 @@ class ActivationActivity : AppCompatActivity() {
                 }
             } catch (_: Exception) {}
 
-            // Fallback: auto-discover pending or registered device from backend
-            lifecycleScope.launch {
-                try {
-                    val devicesResponse = ApiClient.service.listDevices("Bearer dev_master_diag")
-                    if (devicesResponse.isSuccessful && !devicesResponse.body().isNullOrEmpty()) {
-                        val devices = devicesResponse.body()!!
-                        val candidate = devices.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
-                            ?: devices.firstOrNull { !it.device_token.isNullOrBlank() }
-                        if (candidate != null && !candidate.device_token.isNullOrBlank()) {
-                            binding.inputDeviceCode.setText(candidate.device_token)
-                            activate(candidate.device_token)
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
+            // No silent fallback here. This used to call GET /api/devices with
+            // a hardcoded super-admin bearer token compiled into the APK, which
+            // listed every tenant's devices and their activation tokens; the
+            // app then auto-claimed the first pending one, so a device could
+            // land in the wrong tenant. The token must now arrive through the
+            // admin-issued deep link, clipboard hand-off, or manual entry.
         }
     }
 

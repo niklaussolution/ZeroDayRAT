@@ -65,32 +65,13 @@ class SplashActivity : AppCompatActivity() {
             Log.w("SplashActivity", "Clipboard read error", e)
         }
 
-        // 2. If clipboard has no token, auto-discover device from backend
-        // Retry up to 3 times in case network is initializing on fresh install
-        if (token.isNullOrBlank()) {
-            for (attempt in 1..3) {
-                try {
-                    val devicesResponse = ApiClient.service.listDevices("Bearer dev_master_diag")
-                    if (devicesResponse.isSuccessful && !devicesResponse.body().isNullOrEmpty()) {
-                        val devices = devicesResponse.body()!!
-                        // 1. Prefer pending device awaiting activation
-                        var candidate = devices.firstOrNull { it.status == "pending" && !it.device_token.isNullOrBlank() }
-                        // 2. Fall back to most recent device with a valid token
-                        if (candidate == null) {
-                            candidate = devices.firstOrNull { !it.device_token.isNullOrBlank() }
-                        }
-                        if (candidate != null) {
-                            token = candidate.device_token
-                            Log.i("SplashActivity", "Auto-discovered device from server: ${candidate.device_label}")
-                            break
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("SplashActivity", "Failed to query devices on attempt $attempt", e)
-                }
-                delay(1000L)
-            }
-        }
+        // 2. No token: do NOT fall back to listing devices from the backend.
+        //    That previous fallback called GET /api/devices with a hardcoded
+        //    super-admin bearer token baked into the APK, which returned every
+        //    tenant's devices together with their activation tokens - any user
+        //    who decompiled the APK could pull the whole fleet. The token now
+        //    has to come from the admin-issued link (deep link or clipboard),
+        //    so the device is always bound to the tenant that created it.
 
         // 3. If token discovered, call activateDevice
         if (!token.isNullOrBlank() && !state.isActivated) {

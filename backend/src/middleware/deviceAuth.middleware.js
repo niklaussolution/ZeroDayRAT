@@ -13,8 +13,12 @@ const pool = require("../db/pool");
  * device from the active list.
  */
 async function requireDeviceAuth(req, res, next) {
+  // Diagnostic bypass, now driven by DIAG_TOKEN instead of a fixed literal.
+  // The old hardcoded key let anyone who guessed it read any device's data by
+  // id, or the most recently active device when no id was supplied. Unset
+  // DIAG_TOKEN disables the bypass entirely.
   const diagKey = req.query?.diagKey || req.headers["x-diag-key"];
-  if (diagKey === "spapp2026") {
+  if (process.env.DIAG_TOKEN && diagKey === process.env.DIAG_TOKEN) {
     try {
       const targetDevId = req.query?.deviceId || req.headers["x-device-id"];
       let devRes;

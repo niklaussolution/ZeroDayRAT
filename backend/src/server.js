@@ -119,6 +119,9 @@ app.use("/api/devices", require("./routes/blockrule.routes"));
 app.use("/api/sync", require("./routes/sync.routes"));
 app.use("/api/admin", require("./routes/admin.routes"));
 app.use("/api/custom-apps", require("./routes/customApps.routes"));
+// Streams the distributable APK from disk (not from git) - see
+// services/apkStorage.js. Public GET, super-admin POST for uploads.
+app.use("/api/download", require("./routes/download.routes"));
 
 
 // 404 handler

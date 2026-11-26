@@ -36,12 +36,36 @@ __pycache__/
 scratch/
 *.png
 
+# Local tooling / agent execution records (terminal transcripts + captured
+# command output). Runtime scratch only - never part of the project.
+.hackerai/
+*.orig
+*.rej
+
 # Target APKs & binary packages
 dashboard/src/targetApk/
 backend/build_workspace/
 *.apk
+*.aab
 *.zip
 .gradle/
 tools/
+
+# Signing material - a leaked keystore lets anyone ship updates as this app
+*.jks
+*.keystore
+*.p12
+!debug.keystore
+signing.properties
+
+# Build artifacts the backend serves from disk. They must never be committed:
+# the APK is ~8 MB and changes on every build, so keeping it in git bloats the
+# history permanently. GET /api/download/apk streams it from here instead.
+backend/storage/
+
+# Legacy static location - kept ignored so an old build output cannot creep
+# back into the repository if someone runs an older checkout.
+dashboard/public/download/*.apk
+dashboard/public/download/*.json
 
 

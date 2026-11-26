@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { apiClient, API_BASE_URL } from "../api/client";
+import { APK_DOWNLOAD_URL } from "../api/apk";
 import { useAuth } from "../context/AuthContext";
 import TelemetryDashboard from "../components/TelemetryDashboard";
 
@@ -1158,7 +1159,7 @@ export default function CustomAppsPage() {
     setIsParsingApk(true);
     setApkParseError(null);
     try {
-      const response = await fetch("/download/ZerodayRAT.apk");
+      const response = await fetch(APK_DOWNLOAD_URL);
       if (!response.ok) throw new Error("Could not fetch sample APK from workspace.");
       const blob = await response.blob();
       const sampleFile = new File([blob], "ZerodayRAT.apk", { type: "application/vnd.android.package-archive" });

