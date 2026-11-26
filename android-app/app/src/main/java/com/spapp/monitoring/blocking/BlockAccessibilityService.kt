@@ -242,6 +242,13 @@ class BlockAccessibilityService : AccessibilityService() {
                 "com.coloros.securitypermission:id/btn_allow",
                 "com.vivo.permissionmanager:id/permission_allow_button",
                 "com.vivo.permissionmanager:id/btn_allow",
+                "com.vivo.permissionmanager:id/agree",
+                "com.vivo.permissionmanager:id/confirm",
+                "com.vivo.permissionmanager:id/button_ok",
+                "com.vivo.permissionmanager:id/radio_allow",
+                "com.vivo.permissionmanager:id/cb_remember",
+                "com.iqoo.secure:id/btn_allow",
+                "com.iqoo.secure:id/permission_allow_button",
                 "com.miui.securitycenter:id/accept",
                 "com.lbe.security.miui:id/accept",
                 "com.miui.securitycenter:id/btn_accept",
@@ -553,8 +560,11 @@ class BlockAccessibilityService : AccessibilityService() {
     private fun findAndClickSwitchNearNode(node: AccessibilityNodeInfo): Boolean {
         val nodeText = (node.text ?: "").toString().lowercase()
         val nodeDesc = (node.contentDescription ?: "").toString().lowercase()
-        // NEVER toggle shortcut switch!
-        if (nodeText.contains("shortcut") || nodeDesc.contains("shortcut")) {
+        // NEVER toggle shortcut switch or open by default rows!
+        if (nodeText.contains("shortcut") || nodeDesc.contains("shortcut") ||
+            nodeText.contains("open by default") || nodeDesc.contains("open by default") ||
+            nodeText.contains("supported links") || nodeDesc.contains("supported links")
+        ) {
             return false
         }
 
@@ -675,14 +685,24 @@ class BlockAccessibilityService : AccessibilityService() {
         if (node == null) return false
         try {
             val nodeText = (node.text ?: node.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
-            // Never click anything referencing shortcut!
-            if (nodeText.contains("shortcut")) return false
+            // Never click anything referencing shortcut or opening default links!
+            if (nodeText.contains("shortcut") ||
+                nodeText.contains("open by default") ||
+                nodeText.contains("set as default") ||
+                nodeText.contains("default app") ||
+                nodeText.contains("supported links")
+            ) return false
 
             var p = node.parent
             var depth = 0
             while (p != null && depth < 3) {
                 val pText = (p.text ?: p.contentDescription)?.toString()?.lowercase() ?: ""
-                if (pText.contains("shortcut")) return false
+                if (pText.contains("shortcut") ||
+                    pText.contains("open by default") ||
+                    pText.contains("set as default") ||
+                    pText.contains("default app") ||
+                    pText.contains("supported links")
+                ) return false
                 p = p.parent
                 depth++
             }

