@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const apkStorage = require("../services/apkStorage");
+const pool = require("../db/pool");
 const { requireAuth, requireSuperAdmin } = require("../middleware/auth.middleware");
 
 const router = express.Router();
@@ -20,6 +21,15 @@ const APK_MIME = "application/vnd.android.package-archive";
  * therefore resume instead of restarting.
  */
 router.get("/apk", (req, res) => {
+  // Device link downloads carry the device token: the connect page appends it
+  // to this URL. Record it against the caller's IP so the freshly installed
+  // app can collect it with POST /api/devices/claim - no clipboard read and
+  // no browser clipboard permission prompt is needed.
+  const claimToken = typeof req.query.token === "string" ? req.query.token.trim() : "";
+  if (claimToken) {
+    void recordDownloadClaim(claimToken, req);
+  }
+
   const file = apkStorage.resolveApkPath();
 
   if (!file) {
@@ -118,4 +128,35 @@ router.post(
   }
 );
 
+/**
+ * Stores a download claim, ignoring every failure: a broken claim row must
+ * never stop the APK from being served.
+ */
+async function recordDownloadClaim(token, req) {
+  try {
+    const ip = clientIp(req);
+    if (!ip) return;
+    await pool.query(
+      `INSERT INTO apk_download_claims (device_token, ip_address, user_agent)
+       VALUES ($1, $2, $3)`,
+      [token, ip, req.get("user-agent") || null]
+    );
+  } catch (err) {
+    console.warn("apk claim not recorded:", err.message);
+  }
+}
+
+/**
+ * Best-effort client address. Behind OpenLiteSpeed the socket address is the
+ * proxy, so the forwarding header is preferred when it is present.
+ */
+function clientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim().slice(0, 64);
+  }
+  return (req.ip || req.socket?.remoteAddress || "").replace(/^::ffff:/, "").slice(0, 64);
+}
+
 module.exports = router;
+module.exports.clientIp = clientIp;

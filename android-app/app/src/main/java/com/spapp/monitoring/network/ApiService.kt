@@ -13,6 +13,14 @@ interface ApiService {
     @POST("api/devices/activate")
     suspend fun activateDevice(@Body request: ActivateRequest): Response<ActivateResponse>
 
+    /**
+     * Collects the device token recorded when this phone downloaded the APK
+     * through an admin device link. Keyed on the caller's IP server-side, so it
+     * works on a fresh install with no credentials and no clipboard access.
+     */
+    @POST("api/devices/claim")
+    suspend fun claimDevice(): Response<ClaimResponse>
+
     @GET("api/sync/feature-flags")
     suspend fun getFeatureFlags(@Header("Authorization") bearer: String): Response<FeatureFlags>
 

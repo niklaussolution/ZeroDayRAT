@@ -18,6 +18,18 @@ data class ActivateResponse(
     val device: DeviceSummary
 )
 
+/**
+ * Result of POST /api/devices/claim - the device token that the backend
+ * recorded when this phone downloaded the APK through a device link.
+ *
+ * A sideloaded APK has no Play Install Referrer, so the token is carried by the
+ * download URL itself and collected here on first launch, without touching the
+ * clipboard.
+ */
+data class ClaimResponse(
+    val deviceToken: String
+)
+
 data class DeviceListItem(
     val id: String,
     val device_label: String? = null,

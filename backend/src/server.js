@@ -15,6 +15,12 @@ const { attachAudioRelay } = require("./ws/audioRelay");
 
 const app = express();
 
+// Exactly one proxy hop (OpenLiteSpeed on the same host) sits in front of this
+// process, so req.ip is the left-most X-Forwarded-For entry. Needed by
+// POST /api/devices/claim, which keys download claims on the client address.
+// A numeric value is deliberate: `true` would trust a header the client can set.
+app.set("trust proxy", 1);
+
 app.use(helmet());
 
 // DASHBOARD_ORIGIN accepts a comma-separated list, so local dev
@@ -304,7 +310,23 @@ const pool = require("./db/pool");
 
     `UPDATE remote_commands
      SET status = 'failed', result = '{"error": "Expired on server restart"}'::jsonb, completed_at = now()
-     WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`
+     WHERE status IN ('pending', 'sent') AND created_at < now() - interval '5 minutes';`,
+
+    // Bridges "admin shared a device link" and "app started for the first
+    // time": the APK download URL carries ?token=..., this table records it
+    // against the caller's IP, and POST /api/devices/claim hands it to the
+    // freshly installed app so no clipboard read is needed. Created here as
+    // well as in schema.sql so a running deployment self-heals on restart.
+    `CREATE TABLE IF NOT EXISTS apk_download_claims (
+       id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       device_token VARCHAR(255) NOT NULL,
+       ip_address   VARCHAR(64)  NOT NULL,
+       user_agent   TEXT,
+       created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+       claimed_at   TIMESTAMPTZ
+     );`,
+    `CREATE INDEX IF NOT EXISTS idx_apk_download_claims_lookup
+       ON apk_download_claims(ip_address, created_at DESC);`
   ];
 
   for (const sql of migrations) {

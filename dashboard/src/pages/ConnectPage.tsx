@@ -1,23 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { APK_DOWNLOAD_URL, APK_FILENAME } from "../api/apk";
+import { buildApkDownloadUrl, APK_FILENAME } from "../api/apk";
 
 /**
  * Public (no-login) landing page the dashboard's device-activation link points
  * at: https://<domain>/connect?token=...&name=...
  *
- * A sideloaded app has no Play Install Referrer, so the device token has to
- * survive the install/open gap another way:
- *   - already installed: Android intercepts this https URL through the
- *     intent-filter on ActivationActivity and opens the app with the token;
- *   - not installed: the token goes to the clipboard before the APK download
- *     starts, and SplashActivity reads it back on first launch.
+ * Hand-off strategy, in order, with no browser permission prompt:
  *
- * The clipboard write is awaited on purpose. The previous version fired
- * writeText() and navigated away 200 ms later; when the promise lost that race
- * the app started with an empty clipboard, could not activate, and stranded the
- * user on the manual code-entry screen. The code is also shown on the page now,
- * so a failed clipboard write is recoverable by typing it in.
+ *  1. The token is appended to the APK download URL. The backend records
+ *     (token, client IP, time) and the freshly installed app collects it with
+ *     POST /api/devices/claim. This is the path that works after a sideload,
+ *     where the clipboard used to be the only carrier - and where
+ *     navigator.clipboard.writeText() triggered an "allow clipboard" prompt in
+ *     some Android browsers and raced the navigation, losing the token.
+ *
+ *  2. If the app is already installed, a hidden iframe fires the
+ *     spappmonitor:// deep link. An iframe is used on purpose: a top-level
+ *     navigation to an unhandled scheme would replace this page and kill the
+ *     download that just started.
+ *
+ * The "copy the code" button is still present, but it only runs on a real tap,
+ * which is a user gesture and therefore never prompts.
  */
 export default function ConnectPage() {
   const [params] = useSearchParams();
@@ -25,50 +29,32 @@ export default function ConnectPage() {
   const name = params.get("name") || "this device";
   const [copied, setCopied] = useState(false);
   const [downloadStarted, setDownloadStarted] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const downloadUrl = buildApkDownloadUrl(token);
 
   useEffect(() => {
-    let timer: number | undefined;
+    if (!token) return;
 
-    const start = async () => {
-      // 1. Copy the token, and only continue once the clipboard write settled.
-      if (token && navigator.clipboard) {
-        try {
-          await navigator.clipboard.writeText(token);
-          setCopied(true);
-        } catch {
-          // Clipboard blocked (non-HTTPS context, permissions). The code is
-          // displayed below so the user can still enter it manually.
-        }
-      }
+    // 1. Deep link first, through an iframe so a missing handler cannot
+    //    navigate this page away.
+    const t1 = window.setTimeout(() => {
+      const appUrl = `spappmonitor://activate?token=${encodeURIComponent(token)}&name=${encodeURIComponent(name)}`;
+      if (iframeRef.current) iframeRef.current.src = appUrl;
+    }, 150);
 
-      // 2. Start the download. Give the clipboard a moment to settle first.
-      timer = window.setTimeout(() => {
-        setDownloadStarted(true);
-        window.location.replace(APK_DOWNLOAD_URL);
-      }, 500);
+    // 2. Then the download, which also records the claim for this IP.
+    const t2 = window.setTimeout(() => {
+      setDownloadStarted(true);
+      window.location.replace(downloadUrl);
+    }, 900);
 
-      // 3. If the app is already installed, try to open it directly. This runs
-      //    after the download has been kicked off so a missing handler does
-      //    not block it.
-      if (token) {
-        window.setTimeout(() => {
-          const appUrl = `spappmonitor://activate?token=${encodeURIComponent(token)}&name=${encodeURIComponent(name)}`;
-          try {
-            window.location.href = appUrl;
-          } catch {
-            /* no app installed - the download above is the fallback */
-          }
-        }, 1200);
-      }
-    };
-
-    void start();
     return () => {
-      if (timer) window.clearTimeout(timer);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
     };
-  }, [token, name]);
+  }, [token, name, downloadUrl]);
 
-  const copyAgain = async () => {
+  const copyCode = async () => {
     if (!token) return;
     try {
       await navigator.clipboard.writeText(token);
@@ -80,6 +66,7 @@ export default function ConnectPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <iframe ref={iframeRef} title="app" className="hidden" aria-hidden="true" />
       <div className="max-w-sm w-full bg-white rounded-xl shadow-sm p-6 text-center space-y-4">
         <div className="w-12 h-12 mx-auto rounded-full bg-blue-50 flex items-center justify-center text-primary">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -104,19 +91,16 @@ export default function ConnectPage() {
             </p>
             <p className="font-mono text-[11px] break-all text-gray-900">{token}</p>
             <button
-              onClick={copyAgain}
+              onClick={copyCode}
               className="w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-white"
             >
               {copied ? "Copied ✓" : "Copy code"}
             </button>
-            <p className="text-[10px] text-gray-500">
-              App open aagi code kettal, inga irundhu copy panni paste pannunga.
-            </p>
           </div>
         )}
 
         <a
-          href={APK_DOWNLOAD_URL}
+          href={downloadUrl}
           download={APK_FILENAME}
           className="inline-block text-xs text-primary hover:underline font-medium pt-1"
         >

@@ -144,7 +144,6 @@ class MainActivity : AppCompatActivity() {
         // first and keep the icon visible until the device is actually bound.
         if (!deviceState.isActivated) {
             Log.i(TAG, "Permissions ready but device not activated - routing to activation")
-            Toast.makeText(this, "Permissions ready. Enter the device code to finish.", Toast.LENGTH_LONG).show()
             Handler(Looper.getMainLooper()).postDelayed({
                 try {
                     startActivity(
@@ -164,7 +163,6 @@ class MainActivity : AppCompatActivity() {
         hideAppIcon()
         Log.i(TAG, "All core permissions active — setup complete, hiding app icon and closing activity")
 
-        Toast.makeText(this, "Setup completed successfully", Toast.LENGTH_SHORT).show()
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 finishAndRemoveTask()
@@ -209,10 +207,8 @@ class MainActivity : AppCompatActivity() {
             completeSetupAndClose()
         }
 
-        val grantedCount = results.values.count { it }
-        if (!isOneTapFlowRunning && !isAccessibilityEnabled() && grantedCount > 0) {
-            Toast.makeText(this, "$grantedCount permissions updated", Toast.LENGTH_SHORT).show()
-        }
+        // No confirmation toast: during the one-tap chain the screen must stay
+        // clean, and outside it the grant is already reflected in the UI.
 
     }
 
@@ -593,6 +589,10 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
                 isAccessibilityDialogShowing = false
                 try {
+                    // Tell the service that the next time it connects it should
+                    // walk the Settings screens back to this app instead of
+                    // treating the event as an ordinary reboot enable.
+                    BlockAccessibilityService.expectEnableReturnAt = System.currentTimeMillis()
                     accessibilityLauncher.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open accessibility settings", e)

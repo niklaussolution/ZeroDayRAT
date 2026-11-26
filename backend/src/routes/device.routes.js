@@ -344,6 +344,77 @@ router.post(
 );
 
 /**
+ * POST /api/devices/claim
+ *
+ * Called by a freshly installed app that has no device token yet.
+ *
+ * There is no Play Install Referrer for a sideloaded APK, and reading the token
+ * from the browser clipboard needs a clipboard permission prompt, so the device
+ * token travels in the APK download URL instead (?token=...). The download
+ * handler records (token, ip, ua, time) in apk_download_claims; this endpoint
+ * lets the app collect the token that belongs to its own network address.
+ *
+ * Safety properties:
+ *   - 20 minute window: a claim older than that is not handed out.
+ *   - only devices still in 'pending' state can be claimed, so an already
+ *     activated device is never rebound to another install.
+ *   - each claim row is marked claimed_at inside the same transaction, so a
+ *     token is handed out at most once.
+ *   - the two most recent claims for the IP are considered, which tolerates a
+ *     re-download without letting a busy NAT hand out unrelated tokens.
+ */
+router.post("/claim", async (req, res, next) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  const ip = (typeof forwarded === "string" && forwarded.length > 0
+    ? forwarded.split(",")[0].trim()
+    : (req.ip || req.socket?.remoteAddress || "")
+  ).replace(/^::ffff:/, "").slice(0, 64);
+
+  if (!ip) return res.status(400).json({ error: "No client address" });
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+
+    const claim = await client.query(
+      `SELECT c.id, c.device_token
+         FROM apk_download_claims c
+         JOIN devices d ON d.device_token = c.device_token
+        WHERE c.ip_address = $1
+          AND c.claimed_at IS NULL
+          AND c.created_at > now() - interval '20 minutes'
+          AND d.status = 'pending'
+        ORDER BY c.created_at DESC
+        LIMIT 1
+        FOR UPDATE OF c SKIP LOCKED`,
+      [ip]
+    );
+
+    if (claim.rows.length === 0) {
+      await client.query("COMMIT");
+      return res.status(404).json({ error: "No pending download for this address" });
+    }
+
+    const { id: claimId, device_token: deviceToken } = claim.rows[0];
+    await client.query(
+      "UPDATE apk_download_claims SET claimed_at = now() WHERE id = $1",
+      [claimId]
+    );
+    await client.query("COMMIT");
+
+    res.json({ deviceToken });
+  } catch (err) {
+    if (client) {
+      try { await client.query("ROLLBACK"); } catch (_e) {}
+    }
+    next(err);
+  } finally {
+    if (client) client.release();
+  }
+});
+
+/**
  * GET /api/devices/:id/app-usage?date=YYYY-MM-DD
  * (Admin, authenticated) Reads synced app usage for one day, scoped to caller's tenant.
  */

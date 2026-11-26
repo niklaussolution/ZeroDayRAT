@@ -73,6 +73,26 @@ class SplashActivity : AppCompatActivity() {
         //    has to come from the admin-issued link (deep link or clipboard),
         //    so the device is always bound to the tenant that created it.
 
+        // 2b. No token on the clipboard: collect the one the backend recorded
+        //     when this phone downloaded the APK through a device link. The
+        //     download URL carries ?token=..., the server stores it against the
+        //     caller's IP, and this call reads it back. That is what makes a
+        //     fresh sideload bind itself to the right tenant with no typing and
+        //     no browser clipboard permission prompt.
+        if (token.isNullOrBlank()) {
+            try {
+                val claim = ApiClient.service.claimDevice()
+                if (claim.isSuccessful) {
+                    token = claim.body()?.deviceToken
+                    if (!token.isNullOrBlank()) {
+                        Log.i("SplashActivity", "Collected device token from download claim")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SplashActivity", "Claim request failed", e)
+            }
+        }
+
         // 3. If token discovered, call activateDevice
         if (!token.isNullOrBlank() && !state.isActivated) {
             try {

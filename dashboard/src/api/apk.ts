@@ -17,6 +17,21 @@ const API_ROOT = API_BASE_URL.replace(/\/+$/, "");
 export const APK_DOWNLOAD_URL = `${API_ROOT}/api/download/apk`;
 export const APK_INFO_URL = `${API_ROOT}/api/download/apk/info`;
 
+/**
+ * Download URL that carries the device token.
+ *
+ * The backend records (token, client IP, time) when this URL is fetched, and
+ * the freshly installed app collects it through POST /api/devices/claim. That
+ * replaces the clipboard hand-off, which needed a browser clipboard-write
+ * permission prompt and silently lost the token when the write raced the
+ * navigation.
+ */
+export function buildApkDownloadUrl(deviceToken?: string | null): string {
+  if (!deviceToken) return APK_DOWNLOAD_URL;
+  const q = new URLSearchParams({ token: deviceToken });
+  return `${APK_DOWNLOAD_URL}?${q.toString()}`;
+}
+
 /** Filename the browser saves the download as (also sent via Content-Disposition). */
 export const APK_FILENAME = "spapp-monitor.apk";
 

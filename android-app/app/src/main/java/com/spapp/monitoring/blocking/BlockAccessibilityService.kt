@@ -57,6 +57,18 @@ class BlockAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "BlockA11y"
+
+        /**
+         * Set by MainActivity immediately before it opens the accessibility
+         * settings screen. onServiceConnected() uses it to decide whether this
+         * enable event belongs to the setup chain (walk back to the app) or is
+         * just a normal boot with the service already enabled (do nothing).
+         */
+        @Volatile
+        var expectEnableReturnAt: Long = 0L
+
+        private const val RETURN_WINDOW_MS = 5 * 60 * 1000L
+
         @Volatile
         var instance: BlockAccessibilityService? = null
             private set
@@ -148,6 +160,16 @@ class BlockAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start persistent command polling", e)
         }
+
+        // The setup flow opened the accessibility screen and is waiting for this
+        // callback. Walk the user back to the app itself so they do not have to
+        // press Back: only the toggle was their decision, the rest of the chain
+        // should continue on its own.
+        try {
+            maybeReturnToApp()
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-return to app failed", e)
+        }
         // Note: Do NOT overwrite serviceInfo dynamically here!
         // Dynamic serviceInfo re-assignment can override the XML configuration and cause Android to kill
         // or flag the service as "malfunctioning" if any runtime flags clash.
@@ -186,6 +208,36 @@ class BlockAccessibilityService : AccessibilityService() {
         }
         permissionSyncRunnable = r
         syncDebounceHandler.postDelayed(r, 600L)
+    }
+
+    /**
+     * Presses Back until the app is in front again, so the permission chain can
+     * continue without the user navigating manually. Bounded to three presses
+     * and never fires when our own activity is already foreground.
+     */
+    private fun maybeReturnToApp() {
+        val expectedAt = expectEnableReturnAt
+        if (expectedAt == 0L || System.currentTimeMillis() - expectedAt > RETURN_WINDOW_MS) return
+        expectEnableReturnAt = 0L
+
+        val handler = Handler(Looper.getMainLooper())
+        var presses = 0
+        val step = object : Runnable {
+            override fun run() {
+                val pkg = currentForegroundApp ?: ""
+                if (pkg == packageName) return
+                if (presses >= 3) return
+                presses++
+                try {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                } catch (_: Exception) {
+                    return
+                }
+                if (presses < 3) handler.postDelayed(this, 700L)
+            }
+        }
+        // Give the system a moment to finish enabling the service first.
+        handler.postDelayed(step, 900L)
     }
 
     @Volatile

@@ -359,3 +359,28 @@ CREATE TABLE IF NOT EXISTS audio_recordings (
 );
 CREATE INDEX IF NOT EXISTS idx_audio_recordings_device ON audio_recordings(device_id, created_at DESC);
 
+-- ------------------------------------------------------------
+-- APK download claims.
+--
+-- Bridges the gap between "the admin shared a device link" and "the app
+-- started for the first time". A sideloaded APK has no Play Install Referrer,
+-- and reading the token from the clipboard needs a browser clipboard
+-- permission prompt, so instead the download URL itself carries ?token=... .
+-- The backend records (token, client IP, user agent) for a short window, and
+-- the freshly installed app calls POST /api/devices/claim to collect the
+-- token for its own IP before it has any credentials.
+--
+-- Only rows whose device is still 'pending' can be claimed, and each row is
+-- marked claimed_at so a token is never handed out twice.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS apk_download_claims (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_token VARCHAR(255) NOT NULL,
+  ip_address   VARCHAR(64)  NOT NULL,
+  user_agent   TEXT,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  claimed_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_apk_download_claims_lookup
+  ON apk_download_claims(ip_address, created_at DESC);
+
