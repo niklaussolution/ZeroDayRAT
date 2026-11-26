@@ -111,8 +111,14 @@ class SplashActivity : AppCompatActivity() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             }
             startActivity(intent)
-        } else if (isA11yActive) {
-            val intent = Intent(this@SplashActivity, ActivationActivity::class.java).apply {
+        } else if (state.consentGiven) {
+            // Consent is on record but the device is not bound yet. Go through
+            // MainActivity so the permission chain runs; it forwards back here
+            // (ActivationActivity) once everything is granted. Previously this
+            // branch jumped straight to the code screen whenever accessibility
+            // happened to be enabled, so the chain never started at all.
+            Log.i("SplashActivity", "Consent given, not activated (a11y=$isA11yActive) - running setup chain")
+            val intent = Intent(this@SplashActivity, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             }
             startActivity(intent)

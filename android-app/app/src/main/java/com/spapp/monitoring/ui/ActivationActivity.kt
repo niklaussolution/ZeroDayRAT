@@ -3,6 +3,7 @@ package com.spapp.monitoring.ui
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -130,7 +131,22 @@ class ActivationActivity : AppCompatActivity() {
                     finish()
                 } else {
                     setLoading(false)
-                    Toast.makeText(this@ActivationActivity, getString(R.string.activation_error), Toast.LENGTH_LONG).show()
+                    // Log the status and body: a bare "activation failed" toast
+                    // gives nothing to debug with when a token is rejected.
+                    val detail = try {
+                        response.errorBody()?.string()?.take(300)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    Log.w(
+                        "ActivationActivity",
+                        "Activation failed: HTTP ${response.code()} token=${deviceCode.take(4)}… body=$detail"
+                    )
+                    Toast.makeText(
+                        this@ActivationActivity,
+                        "${getString(R.string.activation_error)} (HTTP ${response.code()})",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } catch (e: Exception) {
                 setLoading(false)

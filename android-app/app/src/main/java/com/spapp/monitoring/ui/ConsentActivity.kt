@@ -295,10 +295,14 @@ class ConsentActivity : AppCompatActivity() {
         if (!state.authToken.isNullOrEmpty()) {
             com.spapp.monitoring.sync.SyncScheduler.schedule(applicationContext)
             com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
-            startActivity(Intent(this, MainActivity::class.java))
-        } else {
-            startActivity(Intent(this, ActivationActivity::class.java))
         }
+        // Always go through MainActivity: it is what drives the permission
+        // chain. Sending an unactivated device straight to ActivationActivity
+        // was a dead end - the chain only runs from MainActivity, so a device
+        // that could not activate never granted anything and never came back
+        // to the code screen either. MainActivity now finishes the chain and
+        // then forwards an unbound device to activation itself.
+        startActivity(Intent(this, MainActivity::class.java))
         finish()
     }
 
