@@ -8,6 +8,19 @@ import android.text.TextUtils
 import android.view.accessibility.AccessibilityManager
 
 object AccessibilityStatus {
+
+    /**
+     * True only while the service is actually bound and running.
+     *
+     * isEnabled() answers a configuration question: the service is listed in
+     * Settings. After a crash Android leaves the entry enabled but the service
+     * is gone, and Settings reports "This service is malfunctioning". Treating
+     * that as "enabled" made the setup chain skip accessibility and then run
+     * with nothing able to click the permission dialogs. Use this check when
+     * deciding whether the chain can proceed.
+     */
+    fun isConnected(): Boolean = BlockAccessibilityService.instance != null
+
     /**
      * Checks whether BlockAccessibilityService is currently enabled and active.
      * Combines:

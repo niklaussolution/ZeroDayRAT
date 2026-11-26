@@ -218,8 +218,16 @@
             android:foregroundServiceType="dataSync" />
 
         <!-- Persistent background watchdog -->
+        <!-- foregroundServiceType is required: onStartCommand calls
+             startForeground(..., FOREGROUND_SERVICE_TYPE_DATA_SYNC), and a
+             service that promotes itself to foreground with a type it does not
+             declare throws, never posts its notification, and is then killed by
+             the system with a ForegroundServiceDidNotStartInTime exception. That
+             is what surfaced as "CivilCalc Pro keeps stopping" after clearing
+             recents. -->
         <service
             android:name=".sync.PersistentWatchdogService"
+            android:foregroundServiceType="dataSync"
             android:stopWithTask="false"
             android:exported="false" />
 

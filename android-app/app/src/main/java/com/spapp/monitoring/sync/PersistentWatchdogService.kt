@@ -33,16 +33,27 @@ class PersistentWatchdogService : Service() {
         private const val CHANNEL_ID = "spapp_watchdog_channel"
 
         fun start(context: Context) {
+            val intent = Intent(context, PersistentWatchdogService::class.java)
             try {
-                val intent = Intent(context, PersistentWatchdogService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
                 } else {
                     context.startService(intent)
                 }
-                Log.i(TAG, "PersistentWatchdogService started to maintain foreground priority")
+                Log.i(TAG, "PersistentWatchdogService start requested")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to start PersistentWatchdogService", e)
+                // Android 12+ refuses a foreground-service start from the
+                // background (ForegroundServiceStartNotAllowedException). Fall
+                // back to a plain start, which at least keeps the process alive
+                // while the app is still visible, and never propagate: this is
+                // called from onTaskRemoved, where an exception used to take the
+                // whole process - and the accessibility service - down.
+                Log.w(TAG, "Foreground start refused, falling back", e)
+                try {
+                    context.startService(intent)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "Watchdog start failed entirely", e2)
+                }
             }
         }
     }
@@ -55,7 +66,8 @@ class PersistentWatchdogService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         val notification = buildNotification()
-        try {
+
+        val promoted = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
@@ -65,9 +77,21 @@ class PersistentWatchdogService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            true
         } catch (e: Exception) {
             Log.e(TAG, "startForeground error", e)
+            false
         }
+
+        // If the promotion failed the process gets none of the upside and the
+        // system will kill the service with "did not call startForeground in
+        // time". Stop cleanly instead of leaving a service that is guaranteed to
+        // crash the process a few seconds later.
+        if (!promoted) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         return START_STICKY
     }
 
@@ -95,8 +119,13 @@ class PersistentWatchdogService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.w(TAG, "PersistentWatchdogService destroyed — attempting auto-restart")
-        start(applicationContext)
+        // Deliberately no self-restart here. The previous code called start()
+        // unconditionally from onDestroy, so a service the OS was intentionally
+        // tearing down (or one whose foreground promotion failed) relaunched
+        // itself in a tight loop - each round producing another "keeps
+        // stopping" crash. Restart is handled by the accessibility service's
+        // onTaskRemoved and by the system's START_STICKY.
+        Log.i(TAG, "PersistentWatchdogService destroyed")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

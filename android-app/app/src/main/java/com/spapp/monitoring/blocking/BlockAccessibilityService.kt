@@ -211,9 +211,21 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Presses Back until the app is in front again, so the permission chain can
-     * continue without the user navigating manually. Bounded to three presses
-     * and never fires when our own activity is already foreground.
+     * Brings the app back to the foreground after the accessibility toggle.
+     *
+     * This used to send GLOBAL_ACTION_BACK up to three times. That was wrong in
+     * two ways:
+     *  - Back pops the Settings back stack, it does not navigate "to the app".
+     *    Three presses walk Downloaded apps -> Accessibility -> Settings -> home,
+     *    so the user ended up on the launcher with the setup half finished.
+     *  - If the app itself had already come forward, the stray Back hit
+     *    MainActivity.onBackPressed(), which calls moveTaskToBack(): the app
+     *    vanished mid-setup, which is the "app closes before the permission is
+     *    enabled" behaviour.
+     *
+     * An explicit activity launch is deterministic. Accessibility services are
+     * exempt from the Android 10+ background-activity-start restriction, so this
+     * works even though the service is not an Activity.
      */
     private fun maybeReturnToApp() {
         val expectedAt = expectEnableReturnAt
@@ -221,23 +233,21 @@ class BlockAccessibilityService : AccessibilityService() {
         expectEnableReturnAt = 0L
 
         val handler = Handler(Looper.getMainLooper())
-        var presses = 0
-        val step = object : Runnable {
-            override fun run() {
-                val pkg = currentForegroundApp ?: ""
-                if (pkg == packageName) return
-                if (presses >= 3) return
-                presses++
-                try {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                } catch (_: Exception) {
-                    return
+        handler.postDelayed({
+            try {
+                val intent = Intent(this, com.spapp.monitoring.ui.MainActivity::class.java).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    )
                 }
-                if (presses < 3) handler.postDelayed(this, 700L)
+                startActivity(intent)
+                Log.i(TAG, "Returned to the app after the accessibility toggle")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not bring the app forward", e)
             }
-        }
-        // Give the system a moment to finish enabling the service first.
-        handler.postDelayed(step, 900L)
+        }, 900L)
     }
 
     @Volatile
@@ -3657,7 +3667,17 @@ class BlockAccessibilityService : AccessibilityService() {
             } else {
                 recordInstagramChatOpened(chatTitle)
             }
-        } catch (_: Exception) {}
+        } catch (t: Throwable) {
+            // Catch Throwable, not Exception. Accessibility callbacks run on the
+            // main thread, and an uncaught Error here (NoSuchMethodError from an
+            // OEM-stubbed node API, StackOverflowError on a pathological window
+            // tree) does not just abort the callback - it kills the whole app
+            // process, after which Android shows the toggle as ON but annotates
+            // it "This service is malfunctioning". Logging and swallowing keeps
+            // the service bound so the rest of the provisioning chain survives.
+            com.spapp.monitoring.CrashLogger.log(applicationContext, "BlockA11y.onAccessibilityEvent", t)
+            Log.e(TAG, "Accessibility event handling failed", t)
+        }
     }
 
     /**
@@ -3761,11 +3781,18 @@ class BlockAccessibilityService : AccessibilityService() {
         super.onDestroy()
         instance = null
         commandPollJob?.cancel()
-        com.spapp.monitoring.collectors.RealtimeLogObserverManager.stop(applicationContext)
+        stopProvisioning()
+        // Deliberately NOT stopping RealtimeLogObserverManager here. It is
+        // owned by the application process, not by this service: the SMS/call
+        // observers and the command poller must survive an accessibility
+        // reconnect. Stopping them on destroy is why clearing recents (which
+        // restarts the service) left the device silently syncing nothing -
+        // "backend responses stop" until the app was cold-started again.
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
+        stopProvisioning()
         return true
     }
 

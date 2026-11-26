@@ -196,8 +196,14 @@ object AutoGrantOrchestrator {
         }
 
         // 9. OEM autostart - only on firmware that actually has such a screen.
+        //
+        // Visited once, not up to MAX_ATTEMPTS times: autostart has no readable
+        // state on any of these ROMs, so "retry until granted" can never observe
+        // success and just bounces the user back into the same OEM screen. The
+        // screen is opened, the service tries to flip the toggle, then the chain
+        // moves on.
         if (SettingsNavigator.oem() != SettingsNavigator.Oem.OTHER &&
-            !exhausted(ctx, Step.AUTOSTART)
+            attempts(ctx, Step.AUTOSTART) == 0
         ) {
             val candidates = SettingsNavigator.autostart(ctx)
             val specific = candidates.dropLast(1) // last entry is the app-info fallback
@@ -261,6 +267,34 @@ object AutoGrantOrchestrator {
     }
 
     /** Human-readable summary used by the setup overlay. */
+    /**
+     * The grants that actually matter for the app to work, and that can all be
+     * verified through system APIs.
+     *
+     * Notification access, the SMS/dialer roles and OEM autostart are checked
+     * separately because they are best-effort: an OEM can refuse them, or the
+     * user can decline, and none of them has a reliable state API on every ROM.
+     * Requiring them here would keep the app visible (and the icon unhidden)
+     * forever on a device that simply declined one.
+     */
+    fun coreReady(ctx: Context): Boolean {
+        val runtimeOk = listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        ).all { granted(ctx, it) }
+
+        val allFilesOk = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+            Environment.isExternalStorageManager()
+
+        return AccessibilityStatus.isConnected() &&
+            runtimeOk &&
+            usageAccessGranted(ctx) &&
+            allFilesOk &&
+            batteryExempted(ctx) &&
+            SpappDeviceAdminReceiver.isActive(ctx)
+    }
+
     fun statusLines(ctx: Context): List<Pair<String, Boolean>> = listOf(
         "Accessibility service" to AccessibilityStatus.isEnabled(ctx),
         "Location / camera / microphone" to (

