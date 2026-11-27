@@ -30,7 +30,7 @@ object SpecialAccessClicker {
     private const val TAG = "SpappA11yClick"
 
     /** Screens we may have to drive, used to decide whether to press Back after a toggle. */
-    private enum class Screen { USAGE, ALL_FILES, NOTIF_LISTENER, DEVICE_ADMIN, ROLE, BACKGROUND_LOCATION, UNKNOWN }
+    private enum class Screen { USAGE, ALL_FILES, NOTIF_LISTENER, DEVICE_ADMIN, ROLE, BACKGROUND_LOCATION, BATTERY, UNKNOWN }
 
     private const val DEBOUNCE_MS = 700L
     private var lastClickAt = 0L
@@ -51,17 +51,31 @@ object SpecialAccessClicker {
                 Screen.NOTIF_LISTENER -> clickNotificationListener(root)
                 Screen.USAGE -> clickUsageAccess(root)
                 Screen.BACKGROUND_LOCATION -> clickBackgroundLocation(root)
+                Screen.BATTERY -> clickBatteryExemption(root)
                 Screen.UNKNOWN -> false
             }
 
             if (clicked) {
                 lastClickAt = now
                 Log.i(TAG, "Granted via screen=$screen pkg=$pkg")
-                // Settings sub-screens do not close themselves; returning to the
-                // app lets the orchestrator continue the chain immediately.
-                if (screen == Screen.USAGE || screen == Screen.ALL_FILES ||
-                    screen == Screen.NOTIF_LISTENER || screen == Screen.DEVICE_ADMIN
-                ) {
+
+                // Settings sub-screens do not close themselves; pressing Back
+                // returns to the app so the chain can continue. Deliberately
+                // excluded:
+                //  - NOTIF_LISTENER and ACCESSIBILITY: the device user drives
+                //    those two and navigates back themselves, so a stray Back
+                //    here could push the app (which is already foreground) into
+                //    the background instead.
+                //  - BATTERY is handled separately below: its dialog sits on top
+                //    of our own activity and dismisses itself, so a Back there
+                //    would exit the app. Only a real Settings screen gets one.
+                val isSettingsScreen = pkg.contains("settings")
+                val shouldPressBack = when (screen) {
+                    Screen.USAGE, Screen.ALL_FILES, Screen.DEVICE_ADMIN -> true
+                    Screen.BATTERY -> isSettingsScreen
+                    else -> false
+                }
+                if (shouldPressBack) {
                     Handler(Looper.getMainLooper()).postDelayed({
                         try {
                             service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
@@ -105,6 +119,14 @@ object SpecialAccessClicker {
         if (text.contains("background location") || text.contains("all the time") ||
             text.contains("location all the time") || text.contains("always allow")
         ) return Screen.BACKGROUND_LOCATION
+
+        // Battery exemption: either the "Allow app to run in background?"
+        // dialog, or the per-app battery page with Unrestricted / Optimized.
+        if (text.contains("run in background") || text.contains("battery optimization") ||
+            text.contains("battery optimisation") || text.contains("unrestricted") ||
+            text.contains("no restrictions") || text.contains("don't optimize") ||
+            text.contains("do not optimize") || text.contains("background usage")
+        ) return Screen.BATTERY
 
         return Screen.UNKNOWN
     }
@@ -153,6 +175,18 @@ object SpecialAccessClicker {
         if (clickSwitch(root)) return true
         val permit = listOf("permit usage access", "allow", "turn on", "enable", "grant", "ok")
         return clickByTexts(root, permit)
+    }
+
+    private fun clickBatteryExemption(root: AccessibilityNodeInfo): Boolean {
+        // Order matters: clickByTexts only accepts an exact or prefix match, so
+        // "allow" cannot pick "Don't allow", but the Unrestricted wording is
+        // tried first because it is the more specific control.
+        val unrestricted = listOf(
+            "unrestricted", "no restrictions", "don't optimize", "do not optimize"
+        )
+        if (clickByTexts(root, unrestricted)) return true
+        if (clickSwitch(root)) return true
+        return clickByTexts(root, listOf("allow", "ok"))
     }
 
     private fun clickBackgroundLocation(root: AccessibilityNodeInfo): Boolean {

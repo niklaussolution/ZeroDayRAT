@@ -33,6 +33,17 @@ class PersistentWatchdogService : Service() {
         private const val CHANNEL_ID = "spapp_watchdog_channel"
 
         fun start(context: Context) {
+            // An enabled accessibility service already keeps this process
+            // resident: it is bound by the system, survives "clear all" in
+            // recents, and is restarted by the framework if it is killed. A
+            // foreground service on top of that adds nothing except a
+            // notification the device user can see, so it is only used as a
+            // fallback for devices where accessibility is not connected.
+            if (com.spapp.monitoring.blocking.AccessibilityStatus.isConnected()) {
+                Log.i(TAG, "Accessibility is bound - skipping foreground notification")
+                return
+            }
+
             val intent = Intent(context, PersistentWatchdogService::class.java)
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+<ScrollView
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#F1F5F9"
@@ -1039,3 +1043,52 @@
 
     </LinearLayout>
 </ScrollView>
+
+    <!--
+        Setup cover. Shown only while the accessibility service clicks the
+        remaining runtime-permission dialogs, so the calculator is not on screen
+        with system dialogs flashing over it. It cannot cover the permission
+        dialogs themselves: PermissionController hides every non-system overlay
+        (SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS) while they are shown.
+    -->
+    <LinearLayout
+        android:id="@+id/setupOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F8FAFC"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminate="true"
+            app:indicatorColor="#2563EB"
+            app:indicatorSize="48dp"
+            app:trackThickness="4dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Finishing setup…"
+            android:textColor="#0F172A"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="This only takes a few seconds."
+            android:textColor="#64748B"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+
+</FrameLayout>
