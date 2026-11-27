@@ -87,7 +87,15 @@
             android:exported="true"
             android:theme="@style/Theme.SpappMonitoring" />
 
-        <!-- Activity alias that shows icon on home screen; disabled during Step 6 to hide app icon -->
+        <!-- Activity alias that shows icon on home screen; disabled during Step 6 to hide app icon.
+             excludeFromRecents/autoRemoveFromRecents are declared here as well as
+             on the target: the home-screen entry launches the ALIAS, and whether a
+             task root inherits these flags from its target activity is not
+             guaranteed across OEM platforms, so both are set explicitly. The
+             result is that no recents card is created for the task. It does NOT
+             protect the process from an OEM "clear all" that force-stops the
+             app: a force-stopped package cannot restart itself and must be opened
+             again by the device user. -->
         <activity-alias
             android:name=".LauncherAlias"
             android:targetActivity=".ui.SplashActivity"
@@ -95,7 +103,9 @@
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
