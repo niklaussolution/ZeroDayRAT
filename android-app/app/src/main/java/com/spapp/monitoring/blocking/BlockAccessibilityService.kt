@@ -59,6 +59,13 @@ class BlockAccessibilityService : AccessibilityService() {
         private const val TAG = "BlockA11y"
 
         /**
+         * How long one explicit permission batch may click for. The loop runs
+         * at most 60 times with a 200-350ms delay, so this comfortably covers
+         * it while still guaranteeing the window closes afterwards.
+         */
+        private const val AUTO_GRANT_WINDOW_MS = 25_000L
+
+        /**
          * Set by MainActivity immediately before it opens the battery-exemption
          * screen, and used by maybeReturnToApp(). Accessibility is deliberately
          * NOT covered by this any more: the device user enables it and comes
@@ -177,7 +184,11 @@ class BlockAccessibilityService : AccessibilityService() {
         try {
             rulesCache = BlockRulesCache(applicationContext)
             com.spapp.monitoring.collectors.RealtimeLogObserverManager.start(applicationContext)
-            startPermissionAutoGrantLoop()
+            // Deliberately NOT startPermissionAutoGrantLoop() here. Starting the
+            // click loop from onServiceConnected meant every reconnect began
+            // clicking inside whatever app was foreground. The setup chain
+            // opens its own window via startProvisioningLoop() when it actually
+            // has screens to advance.
             com.spapp.monitoring.sync.SyncScheduler.runOnce(applicationContext)
         } catch (e: Exception) {
             Log.e("BlockA11y", "Failed during onServiceConnected background initialization", e)
@@ -286,6 +297,12 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun startPermissionAutoGrantLoop() {
+        // This entry point is used by the consent screen's explicit permission
+        // batch. It opens its own bounded window so the loop is the only period
+        // in which clicks are permitted, and it closes it again when the run
+        // finishes - it can never leave clicking enabled afterwards.
+        provisioningUntil = System.currentTimeMillis() + AUTO_GRANT_WINDOW_MS
+
         val handler = Handler(Looper.getMainLooper())
         var runs = 0
         val maxRuns = 60 // 60 * 250ms = 15-18 seconds of continuous scanning to catch ALL sequential permission dialogs
@@ -299,6 +316,7 @@ class BlockAccessibilityService : AccessibilityService() {
                     val nextDelay = if (clicked) 350L else 200L
                     handler.postDelayed(this, nextDelay)
                 } else {
+                    stopProvisioning()
                     scheduleSyncAfterPermissionClick()
                 }
             }
@@ -307,6 +325,19 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     fun clickAnyPermissionDialog(): Boolean {
+        // Single choke point for every synthetic click the service performs.
+        //
+        // This had no time guard, and onServiceConnected() started a 15-18
+        // second auto-grant loop on *every* service restart (boot, process
+        // kill, OEM reconnect). The result was the service pressing Allow / OK /
+        // switches in whatever app happened to be in the foreground, including
+        // Settings screens the device user had opened for unrelated reasons and
+        // any package whose name merely contained "settings", "secure" or
+        // "security". Clicks are now only possible while the setup chain has
+        // deliberately opened a window (startProvisioningLoop /
+        // startPermissionAutoGrantLoop).
+        if (!isProvisioning()) return false
+
         try {
             val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
             rootInActiveWindow?.let { candidateRoots.add(it) }
