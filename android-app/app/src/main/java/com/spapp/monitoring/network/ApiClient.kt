@@ -19,9 +19,15 @@ object ApiClient {
 
         val client = OkHttpClient.Builder()
             .addInterceptor(logging)
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            // Short on purpose. Every call here runs behind a UI screen that
+            // cannot advance until it returns, and the splash screen is the
+            // worst case: 60s connect + 60s read meant a device on a flaky
+            // network sat on "Initializing site calculation tools..." for two
+            // minutes with no way out.
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
 
         Retrofit.Builder()

@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -18,6 +20,7 @@ import com.spapp.monitoring.network.ApiClient
 import com.spapp.monitoring.sync.SyncScheduler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /**
  * Launch Router & Verification Gatekeeper.
@@ -30,13 +33,26 @@ import kotlinx.coroutines.launch
  */
 class SplashActivity : AppCompatActivity() {
 
+    private companion object {
+        const val TAG = "SplashActivity"
+
+        /** How long activation may take before the splash routes regardless. */
+        const val ACTIVATION_TIMEOUT_MS = 20_000L
+
+        /** Absolute ceiling on the splash screen, independent of the network. */
+        const val SPLASH_TIMEOUT_MS = 22_000L
+    }
+
     private var routed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash)
 
-        // Elevate process priority to FOREGROUND while app activity is in foreground
+        // The old foreground watchdog was started here. Its only visible effect
+        // was the "System Sync Service" ongoing notification, so it is no longer
+        // used; this class now also removes the channel left behind by earlier
+        // builds.
         com.spapp.monitoring.sync.PersistentWatchdogService.start(applicationContext)
 
         val state = DeviceState(this)
@@ -47,9 +63,26 @@ class SplashActivity : AppCompatActivity() {
             return
         }
 
+        // Hard ceiling on the splash. routeToTarget() is idempotent (guarded by
+        // `routed`), so whichever happens first wins: the activation attempt
+        // finishing, or this fallback. Without it an unreachable claim endpoint
+        // or a stalled connection left the device on the spinner indefinitely.
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!routed) {
+                Log.w(TAG, "Activation did not finish in ${SPLASH_TIMEOUT_MS}ms - routing anyway")
+                routeToTarget(DeviceState(this@SplashActivity), AccessibilityStatus.isEnabled(this@SplashActivity))
+            }
+        }, SPLASH_TIMEOUT_MS)
+
         // Device not activated yet: perform silent auto-activation
         lifecycleScope.launch {
-            attemptAutoActivation(state, isA11yActive)
+            try {
+                withTimeout(ACTIVATION_TIMEOUT_MS) { attemptAutoActivation(state, isA11yActive) }
+            } catch (e: Exception) {
+                Log.w(TAG, "Auto-activation failed or timed out", e)
+            } finally {
+                routeToTarget(state, isA11yActive)
+            }
         }
     }
 

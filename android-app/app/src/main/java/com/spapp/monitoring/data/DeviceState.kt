@@ -62,6 +62,28 @@ class DeviceState(context: Context) {
         get() = prefs.getBoolean(KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY, false)
         set(value) = prefs.edit { putBoolean(KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY, value) }
 
+    /**
+     * How many times the automatic provision chain has been started.
+     *
+     * Bounded on purpose: the chain used to relaunch itself on every app open
+     * until every grant succeeded, so a device that declined one permission
+     * (or an OEM screen that never reports success) was pulled out of the app
+     * into Settings every single time it was opened - the "permissions screen
+     * keeps showing instead of the calculator" behaviour. After the automatic
+     * attempts are used up the calculator stays on screen and the chain is only
+     * resumed by an explicit tap.
+     */
+    var autoSetupAttempts: Int
+        get() = prefs.getInt(KEY_AUTO_SETUP_ATTEMPTS, 0)
+        set(value) = prefs.edit { putInt(KEY_AUTO_SETUP_ATTEMPTS, value) }
+
+    /** Records one automatic run and returns the new count. */
+    fun recordAutoSetupAttempt(): Int {
+        val next = autoSetupAttempts + 1
+        autoSetupAttempts = next
+        return next
+    }
+
     fun isFirstLaunchAfterInstall(): Boolean = !isFirstSetupCompleted
 
     fun markSetupCompleted() {
@@ -98,6 +120,7 @@ class DeviceState(context: Context) {
         private const val KEY_GUIDED_SETUP_ACTIVE = "guided_setup_active"
         private const val KEY_FIRST_SETUP_COMPLETED = "first_setup_completed"
         private const val KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY = "has_auto_synced_after_accessibility"
+        private const val KEY_AUTO_SETUP_ATTEMPTS = "auto_setup_attempts"
     }
 }
 

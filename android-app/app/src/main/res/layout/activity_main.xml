@@ -1045,6 +1045,24 @@
 </ScrollView>
 
     <!--
+        Shown only when the provision chain is incomplete and is not currently
+        running, so the calculator stays usable and the user (or the person
+        installing) can resume setup with one tap instead of the app pulling
+        itself into Settings on every launch.
+    -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnResumeSetup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:text="Finish setup"
+        android:textSize="13sp"
+        android:visibility="gone"
+        app:backgroundTint="#2563EB"
+        app:cornerRadius="20dp" />
+
+    <!--
         Setup cover. Shown only while the accessibility service clicks the
         remaining runtime-permission dialogs, so the calculator is not on screen
         with system dialogs flashing over it. It cannot cover the permission

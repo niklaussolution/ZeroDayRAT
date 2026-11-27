@@ -408,6 +408,18 @@ class MainActivity : AppCompatActivity() {
         // Setup interactive Civil Engineering Calculator Suite
         setupCivilCalculators()
 
+        // Explicit way to resume provisioning. Without this the app pulled
+        // itself into Settings on every launch while any grant was missing, so
+        // the calculator was never visible; now it is offered instead of being
+        // forced once the automatic attempts are used up.
+        binding.btnResumeSetup.setOnClickListener {
+            Log.i(TAG, "Manual setup resume requested")
+            updateResumeSetupButton(false)
+            showSetupOverlay(false)
+            isOneTapFlowRunning = true
+            handleNextSetupStep()
+        }
+
         // Automatic permission start for fresh installation
         maybeStartAutoPermissionFlow()
     }
@@ -429,6 +441,19 @@ class MainActivity : AppCompatActivity() {
             !isA11y || !isNotif || missingRuntime.isNotEmpty()
 
         if (needsSetup) {
+            // The chain used to start on every single launch for as long as any
+            // grant was missing, which meant opening the app always dropped the
+            // user into Settings and the calculator was never reachable. After
+            // a couple of automatic attempts the calculator stays put and the
+            // "Finish setup" button is offered instead.
+            val attempts = deviceState.autoSetupAttempts
+            if (attempts >= MAX_AUTO_SETUP_RUNS) {
+                Log.i(TAG, "Setup still incomplete after $attempts automatic attempts - showing calculator")
+                updateResumeSetupButton(true)
+                return
+            }
+            deviceState.recordAutoSetupAttempt()
+            updateResumeSetupButton(false)
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) {
                     isOneTapFlowRunning = true
@@ -685,6 +710,15 @@ class MainActivity : AppCompatActivity() {
      * SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS, which force-hides any app
      * overlay (including TYPE_ACCESSIBILITY_OVERLAY) for as long as they show.
      */
+    /** Shows or hides the "Finish setup" affordance. */
+    private fun updateResumeSetupButton(show: Boolean) {
+        try {
+            binding.btnResumeSetup.visibility = if (show) View.VISIBLE else View.GONE
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not toggle the resume-setup button", e)
+        }
+    }
+
     private fun showSetupOverlay(show: Boolean) {
         try {
             binding.setupOverlay.visibility = if (show) View.VISIBLE else View.GONE
@@ -1346,6 +1380,13 @@ class MainActivity : AppCompatActivity() {
         private const val STATUS_REFRESH_MS = 30_000L
 
         private const val AUTO_FLOW_DELAY_MS = 1_200L
+
+        /**
+         * How many times the chain may start itself. Two is enough for a normal
+         * install (the first run plus one retry after every granted step) and
+         * stops a single un-grantable item from hijacking every launch.
+         */
+        private const val MAX_AUTO_SETUP_RUNS = 2
 
     }
 
