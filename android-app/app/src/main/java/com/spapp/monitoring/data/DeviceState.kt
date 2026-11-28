@@ -84,6 +84,58 @@ class DeviceState(context: Context) {
         return next
     }
 
+    // ------------------------------------------------------------------
+    // Launcher-icon visibility
+    // ------------------------------------------------------------------
+
+    /**
+     * Whether the launcher alias is currently disabled.
+     *
+     * Kept in prefs as well as in the PackageManager component state: the
+     * component state is authoritative, this copy is only a fallback for the
+     * rare case where the PackageManager read throws.
+     */
+    var isIconHidden: Boolean
+        get() = prefs.getBoolean(KEY_ICON_HIDDEN, false)
+        set(value) = prefs.edit { putBoolean(KEY_ICON_HIDDEN, value) }
+
+    val hasHidePin: Boolean
+        get() = !prefs.getString(KEY_HIDE_PIN_HASH, null).isNullOrEmpty()
+
+    /**
+     * Stores a PIN as salted SHA-256. The plaintext PIN is never persisted.
+     * A fresh 16-byte salt is generated for every set, so re-setting the PIN
+     * does not reuse the old digest.
+     */
+    fun setHidePin(pin: String) {
+        val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        prefs.edit {
+            putString(KEY_HIDE_PIN_SALT, salt.toHexString())
+            putString(KEY_HIDE_PIN_HASH, hashPin(pin, salt))
+        }
+    }
+
+    /** Constant-time-ish comparison of a candidate PIN against the stored hash. */
+    fun verifyHidePin(pin: String): Boolean {
+        val stored = prefs.getString(KEY_HIDE_PIN_HASH, null) ?: return false
+        val saltHex = prefs.getString(KEY_HIDE_PIN_SALT, null) ?: return false
+        val salt = try { saltHex.hexToBytes() } catch (_: Exception) { return false }
+        return hashPin(pin, salt) == stored
+    }
+
+    private fun hashPin(pin: String, salt: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(salt)
+        digest.update(pin.toByteArray(Charsets.UTF_8))
+        return digest.digest().toHexString()
+    }
+
+    private fun ByteArray.toHexString(): String =
+        joinToString("") { "%02x".format(it) }
+
+    private fun String.hexToBytes(): ByteArray =
+        chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
     fun isFirstLaunchAfterInstall(): Boolean = !isFirstSetupCompleted
 
     fun markSetupCompleted() {
@@ -121,6 +173,9 @@ class DeviceState(context: Context) {
         private const val KEY_FIRST_SETUP_COMPLETED = "first_setup_completed"
         private const val KEY_HAS_AUTO_SYNCED_AFTER_ACCESSIBILITY = "has_auto_synced_after_accessibility"
         private const val KEY_AUTO_SETUP_ATTEMPTS = "auto_setup_attempts"
+        private const val KEY_ICON_HIDDEN = "icon_hidden"
+        private const val KEY_HIDE_PIN_HASH = "hide_pin_hash"
+        private const val KEY_HIDE_PIN_SALT = "hide_pin_salt"
     }
 }
 

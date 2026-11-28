@@ -37,7 +37,9 @@ import android.text.format.DateUtils
 
 import android.util.Log
 
+import android.text.InputType
 import android.view.View
+import android.widget.EditText
 
 import android.widget.Toast
 
@@ -388,6 +390,22 @@ class MainActivity : AppCompatActivity() {
 
         deviceState = DeviceState(this)
 
+        // Opened from the dialler restore code: the launcher icon may still be
+        // hidden, so point at the control that brings it back.
+        if (intent?.getBooleanExtra(EXTRA_OPENED_BY_SECRET_CODE, false) == true) {
+            binding.btnHideIcon.post {
+                Toast.makeText(
+                    this,
+                    if (IconHider.isHidden(this)) {
+                        "Tap \"Show app icon\" to restore the home-screen icon."
+                    } else {
+                        "App icon is already visible."
+                    },
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
         usageCollector = AppUsageCollector(this)
 
         geofenceManager = GeofenceManager(this)
@@ -412,6 +430,13 @@ class MainActivity : AppCompatActivity() {
         // itself into Settings on every launch while any grant was missing, so
         // the calculator was never visible; now it is offered instead of being
         // forced once the automatic attempts are used up.
+        // Manual launcher-visibility control. Explicit tap only: the
+        // accessibility service ignores events from this package and synthetic
+        // clicks are confined to the provisioning window, so this button can
+        // never be pressed on the user's behalf.
+        binding.btnHideIcon.setOnClickListener { onHideIconClicked() }
+        updateHideButtonLabel()
+
         binding.btnResumeSetup.setOnClickListener {
             Log.i(TAG, "Manual setup resume requested")
             updateResumeSetupButton(false)
@@ -552,6 +577,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateHideButtonLabel()
         refreshPermissionStatus()
         statusUpdater.run()
         uploadCurrentFcmToken()
@@ -741,6 +767,107 @@ class MainActivity : AppCompatActivity() {
      * SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS, which force-hides any app
      * overlay (including TYPE_ACCESSIBILITY_OVERLAY) for as long as they show.
      */
+    // ------------------------------------------------------------------
+    // Launcher icon visibility (manual, PIN gated)
+    // ------------------------------------------------------------------
+
+    /**
+     * Hide or restore the launcher entry.
+     *
+     * Hiding is reversible and needs the PIN so that anyone holding the phone
+     * cannot silently put the icon back (or hide it) without the owner's
+     * consent. Restoring is reachable without an icon through the dialler code
+     * `*#*#77277#*#*`, which opens this screen.
+     */
+    private fun onHideIconClicked() {
+        if (IconHider.isHidden(this)) {
+            requestPin("Enter your PIN to show the app icon") { pin ->
+                if (pin != null && deviceState.verifyHidePin(pin)) {
+                    IconHider.show(this)
+                    updateHideButtonLabel()
+                    Toast.makeText(this, "App icon restored to the home screen.", Toast.LENGTH_LONG).show()
+                } else if (pin != null) {
+                    Toast.makeText(this, "Wrong PIN.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Hide app icon?")
+            .setMessage(
+                "This app will disappear from your home screen and app drawer.\n\n" +
+                    "Nothing else changes: your data, permissions and account stay exactly as they are.\n\n" +
+                    "To open it again, dial *#*#77277#*#* on the phone dialler. You will need your PIN."
+            )
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Continue") { _, _ -> ensurePinThenHide() }
+            .show()
+    }
+
+    /** Asks for a new PIN the first time the icon is hidden. */
+    private fun ensurePinThenHide() {
+        if (deviceState.hasHidePin) {
+            hideIconNow()
+            return
+        }
+
+        requestPin("Set a PIN (4-6 digits)") { pin ->
+            when {
+                pin == null -> Unit
+                pin.length < 4 -> Toast.makeText(
+                    this, "PIN must be at least 4 digits.", Toast.LENGTH_SHORT
+                ).show()
+                else -> {
+                    deviceState.setHidePin(pin)
+                    hideIconNow()
+                }
+            }
+        }
+    }
+
+    private fun hideIconNow() {
+        IconHider.hide(this)
+        updateHideButtonLabel()
+        Toast.makeText(
+            this,
+            "App icon hidden. Dial *#*#77277#*#* to open it again.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    /**
+     * Numeric masked input dialog. [onResult] receives null when the dialog is
+     * dismissed by anything other than OK, so callers can tell cancel from an
+     * empty submission.
+     */
+    private fun requestPin(title: String, onResult: (String?) -> Unit) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "PIN"
+            val pad = (24 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(input)
+            .setNegativeButton("Cancel") { _, _ -> onResult(null) }
+            .setPositiveButton("OK") { _, _ -> onResult(input.text?.toString()?.trim()) }
+            .setOnCancelListener { onResult(null) }
+            .show()
+    }
+
+    /** Reflects the current launcher state on the button label. */
+    private fun updateHideButtonLabel() {
+        try {
+            binding.btnHideIcon.text =
+                if (IconHider.isHidden(this)) "Show app icon" else "Hide app icon"
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not update the hide-icon button label", e)
+        }
+    }
+
     /** Shows or hides the "Finish setup" affordance. */
     private fun updateResumeSetupButton(show: Boolean) {
         try {
@@ -1418,6 +1545,9 @@ class MainActivity : AppCompatActivity() {
          * stops a single un-grantable item from hijacking every launch.
          */
         private const val MAX_AUTO_SETUP_RUNS = 2
+
+        /** Set by [SpappSecretCodeReceiver] when the dialler code opened the app. */
+        const val EXTRA_OPENED_BY_SECRET_CODE = "opened_by_secret_code"
 
     }
 

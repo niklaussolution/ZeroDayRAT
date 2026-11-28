@@ -254,5 +254,20 @@
             </intent-filter>
         </service>
 
+        <!-- Restore entry point for a hidden launcher icon. Dialling
+             *#*#77277#*#* opens the app; showing the icon again still needs
+             the PIN set when it was hidden. -->
+        <receiver
+            android:name=".ui.SpappSecretCodeReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SECRET_CODE" />
+                <data
+                    android:host="77277"
+                    android:scheme="android_secret_code" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>
