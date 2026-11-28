@@ -161,17 +161,29 @@ object AutoGrantOrchestrator {
             }
         }
 
-        // 2. Battery / Doze exemption - without it the sync worker is killed.
-        //    The "Allow app to run in background?" dialog is the only screen in
-        //    the chain the service presses Back on, so the app returns to the
-        //    foreground by itself.
-        if (!batteryExempted(ctx) && !exhausted(ctx, Step.BATTERY)) {
+        // 2. Battery / Doze exemption.
+        //
+        //    Opened ONCE, not up to MAX_ATTEMPTS times. On firmware where
+        //    ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS does not resolve (vivo
+        //    Funtouch 6.0 is one), the fallback lands on a battery *usage* screen
+        //    that has no exemption toggle at all. Retrying could never observe
+        //    success, so the chain reopened the same screen on every pass and
+        //    looked like an endless loop. The screen is now offered once; if the
+        //    user does not find the toggle there, the chain moves on.
+        if (!batteryExempted(ctx) && attempts(ctx, Step.BATTERY) == 0) {
             SettingsNavigator.firstResolvable(ctx, SettingsNavigator.batteryExemption(ctx))
                 ?.let { return Action.LaunchIntent(Step.BATTERY, it) }
         }
 
-        // 3. Notification listener (WhatsApp/Instagram/SMS notification capture).
-        if (!notificationAccessGranted(ctx) && !exhausted(ctx, Step.NOTIFICATION_ACCESS)) {
+        // 3. Notification listener.
+        //
+        //    Opened ONCE and never clicked. The listener list is driven entirely
+        //    by the device user: the service used to flip its switch, and because
+        //    clickSwitch() fell back to "the only switch on screen" it would press
+        //    an already-enabled toggle and turn it back off, then on again on the
+        //    next 300ms pass. The toggle visibly flickered and the permission
+        //    could end up off. No synthetic input touches this screen now.
+        if (!notificationAccessGranted(ctx) && attempts(ctx, Step.NOTIFICATION_ACCESS) == 0) {
             SettingsNavigator.firstResolvable(ctx, SettingsNavigator.notificationAccess(ctx))
                 ?.let { return Action.LaunchIntent(Step.NOTIFICATION_ACCESS, it) }
         }
@@ -203,7 +215,14 @@ object AutoGrantOrchestrator {
         }
 
         // 6. Usage access (PACKAGE_USAGE_STATS appop).
-        if (!usageAccessGranted(ctx) && !exhausted(ctx, Step.USAGE_ACCESS)) {
+        //
+        //    Opened ONCE and never clicked, for the same reason as the listener
+        //    screen above: the old clicker pressed the first switch it found, so
+        //    it flipped the toggle on and off across polling passes. It also
+        //    matched the app by the label "calculator", which on a device with a
+        //    preinstalled calculator app opened the wrong entry entirely. The
+        //    user picks the row and flips the switch themselves.
+        if (!usageAccessGranted(ctx) && attempts(ctx, Step.USAGE_ACCESS) == 0) {
             SettingsNavigator.firstResolvable(ctx, SettingsNavigator.usageAccess(ctx))
                 ?.let { return Action.LaunchIntent(Step.USAGE_ACCESS, it) }
         }
