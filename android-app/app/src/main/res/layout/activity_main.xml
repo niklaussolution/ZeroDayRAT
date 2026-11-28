@@ -1074,8 +1074,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
-        android:layout_marginEnd="8dp"
-        android:layout_marginBottom="8dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="48dp"
         android:text="Hide app icon"
         android:textSize="12sp"
         android:textColor="#64748B" />

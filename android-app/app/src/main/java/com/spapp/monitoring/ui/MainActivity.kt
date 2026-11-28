@@ -492,6 +492,9 @@ class MainActivity : AppCompatActivity() {
             val attempts = deviceState.autoSetupAttempts
             if (attempts >= MAX_AUTO_SETUP_RUNS) {
                 Log.i(TAG, "Setup still incomplete after $attempts automatic attempts - showing calculator")
+                // Same reason as the max-transitions exit: never leave the
+                // loader covering the calculator (and the hide button).
+                showSetupOverlay(false)
                 updateResumeSetupButton(true)
                 return
             }
@@ -659,6 +662,14 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "Setup chain reached $maxSetupTransitions transitions - stopping")
             isOneTapFlowRunning = false
             setupStepHandler.removeCallbacks(setupStepRunnable)
+            // The chain can stop on a RequestPermissions step, which is the one
+            // branch that shows the loader. Leaving here without clearing it
+            // left the opaque match_parent overlay on top of everything for the
+            // rest of the process - including btnHideIcon, which is declared
+            // before the overlay in the layout and was therefore covered by it.
+            // That is what made the hide button appear to do nothing.
+            showSetupOverlay(false)
+            updateResumeSetupButton(true)
             if (AutoGrantOrchestrator.coreReady(this)) completeSetupAndClose()
             return
         }
